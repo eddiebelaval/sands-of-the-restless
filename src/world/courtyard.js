@@ -238,6 +238,34 @@ export function buildCourtyard(scene) {
   group.add(pyramid);
 
   const STEPS = 11;
+
+  /**
+   * How far each course reaches DOWN past the top of the one below it.
+   *
+   * Not cosmetic, and not a tolerance. Stacked face to face - course i topping
+   * out at exactly the height course i+1 starts - the two boxes share a plane,
+   * and then `erode` displaces each of them by up to a tenth of a unit using a
+   * DIFFERENT seed, because the seed is derived from the box's dimensions and
+   * every course is a different size. The shared plane stops being shared and a
+   * horizontal slot opens between the courses.
+   *
+   * That slot runs the full depth of the pyramid, and the inside of a course is
+   * back faces, which are culled. So the slot is not a dark line: it is a
+   * see-through gap, and what you see through it is the sky BEHIND the temple.
+   * Measured on the shipped build, from the middle of the avenue: two bands of
+   * open sky flanking the doorway, at y=3.8 - the joint between the first and
+   * second courses, at eye level, at the end of the avenue, in the exact spot
+   * the player walks toward for the whole game. Under the old flat noon key
+   * they were pale. Under the new one they were the brightest thing in frame.
+   *
+   * The chamfer widens the mouth of that slot by another 0.24 at each lip, and
+   * the bevels that would have closed it are not drawn (see the winding note in
+   * geometry.js). 0.7 of overlap is more than all three effects put together and
+   * costs nothing: the overlap is inset behind the course below, so it is buried
+   * in solid stone and the stepped profile the player sees is unchanged.
+   */
+  const COURSE_LAP = 0.7;
+
   for (let i = 0; i < STEPS; i++) {
     const w = 62 - i * 5.2;
     const h = 3.8;
@@ -245,11 +273,11 @@ export function buildCourtyard(scene) {
     // Each course is nudged off true and eroded. Eleven perfectly aligned
     // identical boxes is the other half of the "voxel game" read: real
     // masonry has settled, and settled courses are never flush.
-    const step = stone(w, h, w, M.limestone, DENSITY.limestone,
+    const step = stone(w, h + COURSE_LAP, w, M.limestone, DENSITY.limestone,
       { eroded: 0.10, chamfer: 0.24 });
     step.position.set(
       (rand() - 0.5) * 0.5,
-      h * 0.5 + i * h,
+      h * 0.5 + i * h - COURSE_LAP * 0.5,
       (rand() - 0.5) * 0.5
     );
     step.rotation.y = (rand() - 0.5) * 0.012;
@@ -414,9 +442,23 @@ export function buildCourtyard(scene) {
   terraceBase.position.set(tX, 0.20, tZ);
   group.add(terraceBase);
 
-  const terraceTop = stone(tW - 0.9, 0.78, tL - 0.6, M.limestone, DENSITY.limestone,
+  // The upper course now TOPS OUT at TERRACE.h and laps down into the base.
+  //
+  // Two separate errors, both of which the flat noon key hid and the new key
+  // does not. It used to be 0.78 tall centred at 0.92, so its top surface was
+  // at 1.31 while the west colonnade is seated on TERRACE.h = 1.35: every
+  // column on the terrace stood on four centimetres of nothing, and with a real
+  // sun that gap is a strip of daylight under a 3.3-metre plinth. Its underside
+  // was at 0.53 against a base course topping out at 0.51, so the two courses of
+  // the stylobate did not touch each other either.
+  //
+  // Sized from TERRACE.h down rather than from an authored centre, so the
+  // surface the colonnade stands on and the number the colonnade is seated at
+  // are the same number and cannot drift apart again.
+  const terraceTopH = TERRACE.h - 0.4;
+  const terraceTop = stone(tW - 0.9, terraceTopH, tL - 0.6, M.limestone, DENSITY.limestone,
     { eroded: 0.05, chamfer: 0.1 });
-  terraceTop.position.set(tX + 0.2, 0.92, tZ);
+  terraceTop.position.set(tX + 0.2, TERRACE.h - terraceTopH / 2, tZ);
   group.add(terraceTop);
 
   addWallRun(tX, tZ, tW * 0.5, TERRACE.h, 'z', tL);
@@ -727,6 +769,13 @@ export function buildCourtyard(scene) {
         // Close the wall above the lintel back up to the bay height. Without
         // this the alcove opening runs clear to the top of the wall and the
         // lintel reads as a floating slab rather than as a header.
+        //
+        // Deliberately NOT lapped down into the lintel, unlike every other
+        // stacked pair here. These two are the same depth in z, so an overlap
+        // puts two coplanar faces in the same place over the lapped band and
+        // trades a joint notch for z-fighting, which is worse. No hole was
+        // measured at this joint - the alcove jambs stand proud of it on both
+        // sides and there is solid wall behind - so it stays butted.
         const above = stone(3.0, 1.4, BAY - 0.6, M.limestone, DENSITY.limestone,
           { chamfer: 0.1 });
         above.position.set(x + side * 1.2, h + 0.7, z);
@@ -740,13 +789,25 @@ export function buildCourtyard(scene) {
         chapelSpots.push({ x: x + side * (DEPTH - 2.2), z, side, h });
 
       } else {
-        const w = stone(2.6, h, BAY + 0.4, M.limestone, DENSITY.limestone,
+        // Where a coping is going on, the wall runs up INTO it rather than
+        // stopping dead at the line the coping starts. Two chamfered boxes
+        // meeting at a shared plane leave a notch at the joint the width of both
+        // their bevels, and along the top of a wall that notch is against open
+        // sky, so it reads as a bright dash on the parapet. The coping is wider
+        // and longer than the wall in both axes, so the extra height is inside
+        // it and the silhouette is unchanged.
+        const capped = !ruined;
+        const wallH = capped ? h + 0.35 : h;
+
+        const w = stone(2.6, wallH, BAY + 0.4, M.limestone, DENSITY.limestone,
           { eroded: 0.07, chamfer: 0.14 });
-        w.position.set(x, h / 2, z);
+        w.position.set(x, wallH / 2, z);
         group.add(w);
+        // The COLLIDER stays on h. It is the wall's real height and half a dozen
+        // other systems are keyed to it; the extra 0.35 is buried masonry.
         addWallRun(x, z, 1.7, h, 'z', BAY + 0.4);
 
-        if (!ruined) {
+        if (capped) {
           const cap = stone(3.3, 0.8, BAY + 0.8, M.limestone, DENSITY.limestone,
             { chamfer: 0.1 });
           cap.position.set(x, h + 0.4, z);
@@ -950,12 +1011,46 @@ export function buildCourtyard(scene) {
     { x: 11.75, w: 9.5, h: AVENUE.height * 0.95 },
   ];
 
-  for (const bay of END_BAYS) {
-    const w = stone(bay.w, bay.h, 2.6, M.limestone, DENSITY.limestone, { eroded: 0.07 });
-    w.position.set(bay.x, bay.h / 2, END_Z);
-    group.add(w);
-    addWallRun(bay.x, END_Z, 1.7, bay.h, 'x', bay.w);
+  /**
+   * How far a bay runs on PAST the bay beside it.
+   *
+   * The four bays were authored edge to edge: -16.5 to -6.5, -6.5 to -3.2, then
+   * the gate mouth, then 3.2 to 7.0 and 7.0 to 16.5. Two of those numbers are
+   * shared edges, and a shared edge between two independently eroded boxes is
+   * not an edge for long - each one is displaced by up to a tenth of a unit on
+   * its own noise seed, and a vertical slot opens between them for the full
+   * height of the wall.
+   *
+   * That is the brightest defect in the turn-around frame: a crack of open sky
+   * running from the sand to the parapet, with the low sun directly behind it,
+   * three metres from where the player spawns. Lapping each bay past its
+   * neighbour cannot be undone by any amount of erosion.
+   *
+   * Only the shared edges lap. The mouth of the gate and the two outer ends are
+   * left exactly where the composition put them.
+   */
+  const END_LAP = 0.45;
 
+  for (let i = 0; i < END_BAYS.length; i++) {
+    const bay = END_BAYS[i];
+    const next = END_BAYS[i + 1];
+    const shared = next && Math.abs((bay.x + bay.w / 2) - (next.x - next.w / 2)) < 0.01;
+    const w0 = bay.w + (shared ? END_LAP : 0);
+    const x0 = bay.x + (shared ? END_LAP / 2 : 0);
+
+    // Same coping rule as the flanking walls: the bay runs up into its cap. This
+    // is the wall the player turns around and looks at, and its parapet is the
+    // only place in that frame where masonry meets open sky, so a notch at the
+    // joint has nothing behind it to hide in.
+    const wallH = bay.h + 0.35;
+    const w = stone(w0, wallH, 2.6, M.limestone, DENSITY.limestone, { eroded: 0.07 });
+    w.position.set(x0, wallH / 2, END_Z);
+    group.add(w);
+    addWallRun(x0, END_Z, 1.7, bay.h, 'x', w0);
+
+    // The coping stays on the AUTHORED bay, not on the lapped one: a cap that
+    // grew with the lap would cantilever over its neighbour's coping, which is
+    // the overhang rule this perimeter already had to be rebuilt once to fix.
     const cap = stone(bay.w + 0.5, 0.7, 3.1, M.limestone, DENSITY.limestone,
       { chamfer: 0.1 });
     cap.position.set(bay.x, bay.h + 0.35, END_Z);
@@ -1274,9 +1369,13 @@ export function buildCourtyard(scene) {
   for (const [cx, cz, h] of [
     [-WALL, WALL, 13.0], [WALL, WALL, 11.2], [-WALL, -WALL, 12.1], [WALL, -WALL, 9.4],
   ]) {
-    const t = stone(8.6, h, 8.6, M.limestone, DENSITY.limestone,
+    // Runs up into its cap, like every other coped wall here. A corner tower is
+    // read entirely as a silhouette against sky, so a notch at the cap joint is
+    // the one defect on it that is guaranteed to be visible.
+    const towerH = h + 0.35;
+    const t = stone(8.6, towerH, 8.6, M.limestone, DENSITY.limestone,
       { eroded: 0.08, chamfer: 0.2 });
-    t.position.set(cx, groundY(cx, cz) - 1.0 + h / 2, cz);
+    t.position.set(cx, groundY(cx, cz) - 1.0 + towerH / 2, cz);
     t.rotation.y = (brand() - 0.5) * 0.03;
     group.add(t);
 
@@ -1397,7 +1496,16 @@ export function buildCourtyard(scene) {
    */
   const revetment = (cx, cz, len, courses, yaw) => {
     const g = new THREE.Group();
-    g.position.set(cx, 0, cz);
+    // On the SAND, not on y=0. The dunes are damped inside the plaza but they
+    // are not flat: measured at the three revetment positions the floor sits at
+    // +0.20, +0.35 and +0.21, so a barrier built from y=0 loses between a third
+    // and a half of its bottom course, and the one on the right of the spawn was
+    // the worst of the three. That is a foreground object standing at chest
+    // height in the first frame of the game, and it was reading a course short.
+    // The 0.06 is the same bed every other ground object here gets: resting
+    // exactly on the sampled height floats at grazing angles, because the mesh
+    // dips below the sample between vertices.
+    g.position.set(cx, groundY(cx, cz) - 0.06, cz);
     g.rotation.y = yaw;
 
     const CH = 0.62;          // course height
@@ -1490,7 +1598,11 @@ export function buildCourtyard(scene) {
     // to give depth is also large enough to block the shot if it is centred.
     const dx = 8.6 + d * 0.5 + rand() * 0.3;
     const dz = 31.4 - d * (DRUM_H + 0.5);
-    g.position.set(dx, COL_R_BOT * 0.85, dz);
+    // 0.85 of the radius is a fifteen percent bed into the sand, which is what
+    // "settled" looks like. Measured against y=0 it was a THIRTY percent bed,
+    // because the floor here stands at +0.29 to +0.33 and the drum did not know
+    // that. Seated on the sampled height it beds the fraction it was authored to.
+    g.position.set(dx, groundY(dx, dz) + COL_R_BOT * 0.85, dz);
     g.rotation.z = Math.PI / 2;
     g.rotation.y = 0.35 + (rand() - 0.5) * 0.5;
     group.add(g);
@@ -1501,7 +1613,7 @@ export function buildCourtyard(scene) {
   // foreground breaks the grid of horizontals and verticals everything else in
   // the scene is made of.
   const leaner = stone(1.5, 3.4, 0.85, M.carved, DENSITY.carved, { eroded: 0.1 });
-  leaner.position.set(-8.0, 1.55, 24.6);
+  leaner.position.set(-8.0, groundY(-8.0, 24.6) + 1.55, 24.6);
   leaner.rotation.set(0.06, 0.5, 0.31);
   group.add(leaner);
   addCollider(-8.0, 24.6, 1.0, 3.2);

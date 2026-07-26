@@ -80,8 +80,13 @@ export function chamferedBox(w, h, d, chamfer = 0.06, tilesPerUnit = 0.25) {
   // -------------------------------------------------------------------------
 
   // +X and -X
-  quad([x, -yi, -zi], [x, -yi, zi], [x, yi, zi], [x, yi, -zi]);
-  quad([-x, -yi, zi], [-x, -yi, -zi], [-x, yi, -zi], [-x, yi, zi]);
+  //
+  // Both were reversed. Counter-clockwise seen from OUTSIDE is what the
+  // rasteriser culls on, and these two wound clockwise, so the +X and -X flats
+  // were back faces: culled when you looked at them, and drawn at the depth of
+  // the far side of the box when you did not.
+  quad([x, -yi, zi], [x, -yi, -zi], [x, yi, -zi], [x, yi, zi]);
+  quad([-x, -yi, -zi], [-x, -yi, zi], [-x, yi, zi], [-x, yi, -zi]);
 
   // +Y and -Y
   quad([-xi, y, zi], [xi, y, zi], [xi, y, -zi], [-xi, y, -zi]);
@@ -101,7 +106,10 @@ export function chamferedBox(w, h, d, chamfer = 0.06, tilesPerUnit = 0.25) {
   ];
   for (const [sx, sz] of vertical) {
     // Winding flips with the sign product so every bevel faces outward.
-    const flip = sx * sz > 0;
+    // The sense was inverted: all twelve bevels wound inward, so the chamfer -
+    // the whole reason this module exists, the bright line along every edge -
+    // was culled and never drawn once.
+    const flip = sx * sz < 0;
     const a = [sx * x,  -yi, sz * zi];
     const b = [sx * xi, -yi, sz * z ];
     const e = [sx * xi,  yi, sz * z ];
@@ -112,7 +120,7 @@ export function chamferedBox(w, h, d, chamfer = 0.06, tilesPerUnit = 0.25) {
   // Four edges along X (top and bottom, front and back).
   for (const sy of [1, -1]) {
     for (const sz of [1, -1]) {
-      const flip = sy * sz > 0;
+      const flip = sy * sz < 0;
       const a = [-xi, sy * y,  sz * zi];
       const b = [ xi, sy * y,  sz * zi];
       const e = [ xi, sy * yi, sz * z ];
@@ -124,7 +132,7 @@ export function chamferedBox(w, h, d, chamfer = 0.06, tilesPerUnit = 0.25) {
   // Four edges along Z (top and bottom, left and right).
   for (const sy of [1, -1]) {
     for (const sx of [1, -1]) {
-      const flip = sy * sx < 0;
+      const flip = sy * sx > 0;
       const a = [sx * xi, sy * y,  -zi];
       const b = [sx * xi, sy * y,   zi];
       const e = [sx * x,  sy * yi,  zi];
