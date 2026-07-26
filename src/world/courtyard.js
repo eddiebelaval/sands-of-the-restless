@@ -51,8 +51,48 @@ const AVENUE = {
 
 const BAY = 9;       // spacing of buttress pylons and wall bays
 
-/** Half-extent of the outer perimeter. */
+/** Half-extent of the outer perimeter. BACKDROP ONLY - never walked to. */
 const WALL = 52;
+
+/**
+ * The walkable exterior.
+ *
+ * This used to be the whole 99x99 metre field out to the perimeter, and that
+ * was the defect behind "half unrendered": the avenue was finished to a shipping
+ * standard and everything outside it was level-design blockout, so the player
+ * could walk out of a game and into a greybox in four seconds.
+ *
+ * The courtyard was never designed as a sandbox. It is the spawn area that
+ * funnels the player into the pyramid, so the walkable space is now the avenue
+ * plus the forecourt at the temple front, and the perimeter is a backdrop the
+ * player reads at forty metres and never reaches. Tightening beats finishing:
+ * every metre of mediocre space competes with the avenue for attention.
+ *
+ * Nothing here is an invisible wall. Each edge has real geometry on it - the
+ * flanking bays east and west, the end wall and its choked gate to the north,
+ * the terminal stubs and the temple front to the south - and the numbers below
+ * sit OUTSIDE that geometry, so they are a backstop against a collider gap
+ * rather than the thing the player actually stops against.
+ *
+ * The X extent is 23 rather than the 16.6 the avenue wall line would suggest,
+ * because the six side chapels are recessed seven metres INTO those walls and
+ * their back walls stand at x=+/-22. A rectangle drawn at the wall line put an
+ * invisible clamp two metres inside a room whose back wall the player can see,
+ * and a walk probe hit it in 36 of 192 directions. A backstop that fires inside
+ * a visible space is worse than no backstop at all.
+ *
+ * minZ is -33 and NOT the -30.2 the temple front would suggest, because the
+ * threshold that takes the player inside sits at z=-31.6 (doors.js ENTER_AT),
+ * deliberately a short walk PAST the doorway so that paying for the door is not
+ * itself the transition. Clamped at -30.2 the player bought the door, watched
+ * the slab grind open, walked into an invisible wall, and never got in: the
+ * interior suite went from green to 21 failures in one line of this file.
+ *
+ * The lesson generalises. A walkable bound is not a level-design number, it is
+ * a contract with every trigger volume inside it, and the triggers are in
+ * another file.
+ */
+const PLAY = { minX: -23.2, maxX: 23.2, minZ: -33.0, maxZ: 38.4 };
 
 /**
  * Disc UVs in world units.
@@ -85,6 +125,17 @@ function rng(seed) {
 export function buildCourtyard(scene) {
   const M = buildMaterials();
   const rand = rng(20260725);
+
+  /**
+   * A SECOND stream, for everything added by the boundary-and-backdrop pass.
+   *
+   * Sharing `rand` would have been simpler and wrong: every draw taken by new
+   * code shifts the whole sequence downstream of it, so adding four blocks to
+   * the gate would have silently moved the outer ruins, the palms, and the
+   * near-field jitter that the avenue was tuned around. A separate stream means
+   * the finished half of the map is bit-identical to what it was.
+   */
+  const brand = rng(51501);
 
   const group = new THREE.Group();
   group.name = 'courtyard';
@@ -155,6 +206,28 @@ export function buildCourtyard(scene) {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   group.add(ground);
+
+  /**
+   * The floor sampler, aliased for the placement loops below.
+   *
+   * Anything that stands outside the plaza radius and ignores this is placed at
+   * y=0 on a surface that is not at y=0, which is the mechanism behind "no
+   * ground contact": the dunes swell to +/-0.55 under the perimeter, so a block
+   * seated at zero either hovers or sinks by up to half a metre. Measured on
+   * the shipped build, 73 percent of backdrop meshes were off the surface.
+   */
+  const groundY = dunes.heightAt;
+
+  /** Rubble, seated on the real surface and bedded slightly into it. */
+  const bedded = (w, h, d, mat, density, x, z, { eroded = 0.17, bed = 0.35, yaw = null, tilt = 0.35 } = {}) => {
+    const m = stone(w, h, d, mat, density, { eroded });
+    m.position.set(x, groundY(x, z) + h * (0.5 - bed), z);
+    m.rotation.y = yaw === null ? brand() * Math.PI : yaw;
+    m.rotation.z = (brand() - 0.5) * tilt;
+    m.rotation.x = (brand() - 0.5) * tilt * 0.7;
+    group.add(m);
+    return m;
+  };
 
   // -------------------------------------------------------------------------
   // the pyramid: the destination, visible from spawn
@@ -323,7 +396,12 @@ export function buildCourtyard(scene) {
   // now a metre and a third higher than the other, which is the single loudest
   // asymmetry available for the cost: it changes the horizon line, the shadow
   // pattern, and the width of the walkable floor all at once.
-  const TERRACE = { xIn: -9.4, xOut: -15.2, zNear: -1.5, zFar: -47, h: 1.35 };
+  // zFar was -47, which is sixteen metres INSIDE the pyramid: its base step is
+  // 62 units square centred at z=-62, so its front face stands at z=-31 and
+  // everything past that is solid limestone. Measured on the shipped build,
+  // thirty meshes were sitting inside the temple mass. -29 puts the terrace's
+  // far end where the avenue's far end actually is.
+  const TERRACE = { xIn: -9.4, xOut: -15.2, zNear: -1.5, zFar: -29, h: 1.35 };
   const tW = TERRACE.xIn - TERRACE.xOut;
   const tL = TERRACE.zNear - TERRACE.zFar;
   const tX = (TERRACE.xIn + TERRACE.xOut) / 2;
@@ -355,11 +433,26 @@ export function buildCourtyard(scene) {
       const x = side * 13;
       const z = z0 - i * 7;
 
-      // The east colonnade has come down. Two columns are on the ground and one
-      // is snapped at chest height, so that side reads as ruin and the west
-      // reads as intact temple.
-      const toppled = !west && (i === 2 || i === 4);
-      const snapped = !west && i === 5;
+      // Stop at the temple front. Seven columns at seven metres runs to z=-48,
+      // and the pyramid's base step occupies everything past z=-31, so the last
+      // three per side were buried in sixty metres of stone: four invisible and
+      // two poking out of the first terrace as headless stubs. Six columns and
+      // roughly thirty meshes, paying render cost to be inside a solid.
+      //
+      // Cutting them does not shorten the colonnade the player sees - it ended
+      // at z=-27 either way - it just stops building the part nobody can look at.
+      if (z < AVENUE.zFar + 1) break;
+
+      // The east colonnade has come down. One column is on the ground and one is
+      // snapped at chest height, so that side reads as ruin and the west reads
+      // as intact temple.
+      //
+      // Renumbered because the loop now stops at four columns per side instead
+      // of seven: the toppled one was at i=4 and the snapped one at i=5, both of
+      // which were inside the pyramid, so the east side had quietly lost its
+      // second fallen column and its stub entirely.
+      const toppled = !west && i === 1;
+      const snapped = !west && i === 3;
 
       const col = new THREE.Group();
       col.position.set(x, baseY, z);
@@ -372,7 +465,19 @@ export function buildCourtyard(scene) {
         // A fallen shaft: the drums have rolled off the base and lie in a line
         // across the floor. Horizontal cylinders at knee height are exactly the
         // kind of mid-scale occluder the avenue floor has none of.
-        const dir = i === 2 ? 1 : -1;
+        //
+        // Positions here are LOCAL to `col`, which is already at (x, baseY, z).
+        // They used to be written in world coordinates and then added to a group
+        // that applies its own translation on top, so every drum rendered at
+        // TWICE its intended offset - the whole fallen column drew at (19..25,
+        // -34..-40), inside the pyramid's base step, while the colliders it
+        // registered stayed at the intended spot in the avenue.
+        //
+        // So the avenue carried five invisible obstacles the player collided
+        // with and could not see, and the object they belonged to was never on
+        // screen. That is the "too many obstacles" note in its purest form, and
+        // no amount of tuning collider radii would ever have found it.
+        const dir = 1;
         for (let d = 0; d < DRUMS; d++) {
           const drum = new THREE.Mesh(
             cylinderUV(
@@ -383,9 +488,9 @@ export function buildCourtyard(scene) {
           // Rolled apart, so the stack reads as collapsed rather than as a log.
           const spread = 1.0 + d * (DRUM_H + 0.35) + rand() * 0.4;
           drum.position.set(
-            x - side * spread * 0.72,
-            COL_R_BOT * 0.86,
-            z + dir * spread * 0.7
+            -side * spread * 0.72,
+            COL_R_BOT * 0.86 - baseY,
+            dir * spread * 0.7
           );
           drum.rotation.z = Math.PI / 2;
           drum.rotation.y = dir * 0.8 + (rand() - 0.5) * 0.4;
@@ -397,7 +502,7 @@ export function buildCourtyard(scene) {
 
         // The capital lands face down at the end of the run.
         const cap = capital();
-        cap.position.set(x - side * 4.6, 1.5, z + dir * 4.4);
+        cap.position.set(-side * 4.6, 1.5 - baseY, dir * 4.4);
         cap.rotation.z = Math.PI * 0.52;
         cap.rotation.y = dir * 0.6;
         col.add(cap);
@@ -445,7 +550,7 @@ export function buildCourtyard(scene) {
 
   for (const ob of OBELISKS) {
     const g = new THREE.Group();
-    g.position.set(ob.x, 0, ob.z);
+    g.position.set(ob.x, groundY(ob.x, ob.z), ob.z);
 
     const rBot = 1.05, rTop = 0.78;
 
@@ -480,10 +585,18 @@ export function buildCourtyard(scene) {
       // Down, and lying at an angle to the avenue, so it crosses the frame
       // diagonally instead of adding another line parallel to the walls.
       const yaw = 0.62;
+
+      // Resting height, not centre height. The shaft is a four-sided cylinder,
+      // so rBot=1.05 is its CIRCUMradius and the flat it actually lies on is
+      // 1.05*cos(45) = 0.74 below the axis. Seated at rBot + 0.35 the whole
+      // twelve-metre obelisk hovered two thirds of a metre clear of the sand,
+      // which on the largest single object in the avenue is not a small thing.
+      // The 0.12 buries it, the way everything else here beds into the surface.
+      const REST = rBot * Math.SQRT1_2 - 0.12;
       shaft.rotation.set(Math.PI / 2, 0, 0);
-      shaft.position.set(0, rBot + 0.35, 0);
+      shaft.position.set(0, REST, 0);
       cap.rotation.set(Math.PI / 2, 0, 0);
-      cap.position.set(0, rBot + 0.35, -(ob.h / 2 + 1.1));
+      cap.position.set(0, REST, -(ob.h / 2 + 1.1));
 
       const fall = new THREE.Group();
       fall.rotation.y = yaw;
@@ -619,7 +732,12 @@ export function buildCourtyard(scene) {
         above.position.set(x + side * 1.2, h + 0.7, z);
         group.add(above);
 
-        chapelSpots.push({ x: x + side * (DEPTH - 2.2), z, side });
+        // `h` travels with the spot. The banner the dressing hangs over this
+        // alcove mouth was pinned at 8.2 to 9.7 regardless, and a chapel bay is
+        // as short as 3.4 when the wall loop ruins it, so the banner hung in
+        // clear sky beside a stub - a red rectangle floating over nothing, which
+        // is exactly the "half rendered" read this pass is chasing out.
+        chapelSpots.push({ x: x + side * (DEPTH - 2.2), z, side, h });
 
       } else {
         const w = stone(2.6, h, BAY + 0.4, M.limestone, DENSITY.limestone,
@@ -682,8 +800,12 @@ export function buildCourtyard(scene) {
 
       // What came off the wall has to be somewhere. A breach with clean sand at
       // its foot reads as a wall that was built short, not one that fell.
+      // Three chunks, not five. The spill has a real job - a breach with clean
+      // sand at its foot reads as a wall that was built short rather than one
+      // that fell - and three big pieces do it as well as five for two fewer
+      // objects in a frame that has been called messy twice.
       if (breached) {
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 3; i++) {
           const bw = 1.5 + rand() * 2.4;
           const bh = 1.0 + rand() * 1.9;
           const bd = 1.4 + rand() * 2.0;
@@ -700,6 +822,114 @@ export function buildCourtyard(scene) {
         }
       }
     }
+  }
+
+  // --- the forecourt: where the avenue meets the temple ---------------------
+  //
+  // The bay loop covers z=36 down to z=-27 and the portal stands at z=-30.2, so
+  // the flanking walls stopped three metres short of the temple front and the
+  // player could walk out SIDEWAYS into open sand. A walk probe from the far end
+  // of the avenue reached (49.5, -49.5): straight through the gap, across the
+  // whole field, and into the perimeter. That gap is where every "standing in
+  // open sand surrounded by disconnected panels" frame was taken from.
+  //
+  // It closes with a terminal stub per side - the wall running on toward the
+  // pyramid and dying into what fell off it - and the forecourt between the
+  // stubs and the temple front stays open, because that is the room the sealed
+  // doorway wants around it.
+  const FORE_Z = -28.9;
+
+  for (const side of [-1, 1]) {
+    const x = side * AVENUE.halfWidth;
+    // Asymmetric, like the colonnade: the west wall runs on nearly to full
+    // height and the east one is broken down to shoulder height, so the
+    // forecourt is lit from one side and enclosed from the other.
+    const h = AVENUE.height * (side < 0 ? 0.54 : 0.33);
+
+    const stub = stone(2.6, h, 5.4, M.limestone, DENSITY.limestone,
+      { eroded: 0.12, chamfer: 0.14 });
+    stub.position.set(x, h / 2, FORE_Z);
+    group.add(stub);
+    addWallRun(x, FORE_Z, 1.7, h, 'z', 5.4);
+
+    // A jagged crown on the break, so the stub reads as a wall that came down
+    // rather than one that was built to this height and stopped.
+    const crown = stone(2.4, 0.95, 3.6, M.limestone, DENSITY.rubble, { eroded: 0.3 });
+    crown.position.set(x - side * 0.12, h + 0.3, FORE_Z - 0.6);
+    crown.rotation.set((brand() - 0.5) * 0.1, brand() * 0.5, side * 0.07);
+    group.add(crown);
+
+    // A fallen architrave, one end still lodged in the break and the other in
+    // the sand. This is the overhead structure for the one part of the map the
+    // player is guaranteed to end up standing in, and a diagonal in a scene
+    // otherwise built entirely from right angles.
+    // Seated so the low end beds into the sand and the high end lodges at the
+    // top of the stub. Both ends have to LAND on something: a beam floating at
+    // one end is the exact failure the architrave seating rule exists to stop.
+    const BEAM_MID = 2.35;
+    const beam = stone(10.4, 1.3, 2.0, M.carved, DENSITY.carved, { eroded: 0.06 });
+    beam.position.set(x - side * 5.4, BEAM_MID, FORE_Z + 1.5);
+    beam.rotation.set(0, side * 0.15, side * 0.42);
+    group.add(beam);
+
+    // Two discs on the low half only, and tight ones. Three at 1.1 walled off
+    // the whole corner and shoved the player against the stub with its face in
+    // the lens; the beam should be something you walk around, not a second wall.
+    for (let i = 0; i < 2; i++) {
+      const t = -3.6 + i * 1.8;                       // metres from the beam's centre
+      addCollider(x - side * (5.4 - t), FORE_Z + 1.5, 0.85, BEAM_MID + t * 0.41 + 0.65);
+    }
+
+    // The talus. Every vertical the player can walk up to gets a foot: a wall
+    // growing straight out of clean sand is the junction this whole pass exists
+    // to remove, and these are the closest ones to the camera at the end of the
+    // only route in the map.
+    for (let i = 0; i < 3; i++) {
+      const bw = 1.5 + brand() * 2.2;
+      const bh = 0.9 + brand() * 1.5;
+      const bx = x - side * (1.5 + brand() * 3.6);
+      const bz = FORE_Z + (brand() - 0.5) * 6.4;
+      bedded(bw, bh, bw * 0.85, M.limestone, DENSITY.rubble, bx, bz, { bed: 0.3 });
+      addCollider(bx, bz, Math.max(1.0, bw * 0.5), bh);
+    }
+  }
+
+  // The temple front is a wall, so give it one.
+  //
+  // The pyramid registers a single 32-unit cylinder at its centre, which is the
+  // right shape for a mass you see from across the yard and the wrong one for a
+  // face you walk up to: at the forecourt the cylinder has fallen behind the
+  // stepped base, so a player crossing to the corner of the door walked THROUGH
+  // sixty metres of limestone until the bounds clamp caught them. A walk probe
+  // ended on that clamp in 17 of 192 directions.
+  //
+  // A run along the face fixes both halves at once: the player is stopped by the
+  // temple they can see rather than by a number, and the clamp goes back to
+  // being a backstop that never fires.
+  // Two runs, not one, with the DOORWAY left open between them. A single run
+  // across the whole face walls off the entrance, which is the only reason the
+  // forecourt exists. The inner ends stop at x=+/-5.2, which leaves the player
+  // a 3.1-unit-wide channel on the centreline - wider than the 2.6 the entry
+  // threshold needs and wider than the 1.8 the door jambs allow - and the two
+  // inner discs still overlap the sealed slab's own collider, so while the door
+  // is shut there is no way around it either.
+  for (const side of [-1, 1]) {
+    addWallRun(side * 16, -31.3, 1.7, 8, 'x', 18);
+  }
+
+  // The temple front meeting the sand. A sixty-metre stepped mass rising out of
+  // a clean flat surface is the same bare junction as a wall with no talus, and
+  // this one is what the player walks toward for the whole game. The drift sits
+  // OUTSIDE the walkable clamp, so it needs no colliders: it is the thing the
+  // player stops in front of, not the thing that stops them.
+  for (let i = 0; i < 8; i++) {
+    const ax = -19 + i * 5.4 + (brand() - 0.5) * 2.2;
+    if (Math.abs(ax) < 5.4) continue;               // clear of the doorway
+    const az = -30.8 - brand() * 1.2;
+    const aw = 1.5 + brand() * 2.2;
+    const ah = 0.7 + brand() * 1.2;
+    bedded(aw, ah, 1.4 + brand() * 1.5, M.limestone, DENSITY.rubble, ax, az,
+      { eroded: 0.2, bed: 0.28, tilt: 0.3 });
   }
 
   // Close the near end behind the spawn, so the avenue is a room with one exit
@@ -739,7 +969,10 @@ export function buildCourtyard(scene) {
   group.add(gateLintel);
 
   // Fallen masonry choking the gate. Blocks the way, but lets light past.
-  for (let i = 0; i < 4; i++) {
+  // Two pieces here and three squared across the mouth below; five in total
+  // where there were seven, because a choked gate needs to READ choked, and
+  // past three or four pieces every extra block is just another object.
+  for (let i = 0; i < 2; i++) {
     const bw = 1.7 + rand() * 1.6;
     const bh = 1.4 + rand() * 1.7;
     const bx = (rand() - 0.5) * 5.4;
@@ -753,11 +986,34 @@ export function buildCourtyard(scene) {
     addCollider(bx, bz, bw * 0.55, bh + 1.4);
   }
 
+  // Actually seal it. The four chunks above LOOK like a choked gate and were
+  // not one: a walk probe sprinting north from the spawn drove straight between
+  // them, out through the end wall, and on to (34.7, 49.5) in the open field.
+  // Four blocks landing at random over a six-metre mouth leave a player-width
+  // gap most of the time.
+  //
+  // Three overlapping blocks squared across the mouth, plus one continuous
+  // collider run behind them, so what the frame shows and what the player can
+  // do finally agree. The opening ABOVE them is untouched: the point of the gate
+  // was always to let sky and desert through behind the player.
+  for (let i = 0; i < 3; i++) {
+    const bw = 2.9 + brand() * 1.2;
+    const bh = 2.3 + brand() * 1.0;
+    const bx = (i - 1) * 2.3 + (brand() - 0.5) * 0.6;
+    const bz = END_Z - 2.2 + (brand() - 0.5) * 0.8;
+    bedded(bw, bh, bw * 0.8, M.limestone, DENSITY.rubble, bx, bz,
+      { eroded: 0.18, bed: 0.22, tilt: 0.26 });
+  }
+  addWallRun(0, END_Z - 2.2, 1.5, 2.6, 'x', 7.2);
+
   // A talus of debris along the foot of the end wall. A wall meeting clean sand
   // is the "clean corner" tell, and it also keeps the player a couple of metres
   // off the masonry rather than letting them wedge their lens into it.
-  for (let i = 0; i < 9; i++) {
-    const tx = -15 + (i + rand() * 0.6) * 3.4;
+  // Four, spread wider. This is the wall directly behind the spawn point, so
+  // it is in frame on the turn-around and nowhere else; it needs a foot, not a
+  // rubble field.
+  for (let i = 0; i < 4; i++) {
+    const tx = -13.5 + (i + rand() * 0.6) * 7.6;
     if (Math.abs(tx) < 4.4) continue;      // leave the gate mouth clear
 
     const tw = 1.8 + rand() * 2.3;
@@ -809,110 +1065,232 @@ export function buildCourtyard(scene) {
     }
   }
 
-  // --- outer perimeter ------------------------------------------------------
-  // Kept so the arena still has a hard edge, but pushed well beyond the avenue
-  // so it is the avenue walls that actually enclose the player.
-  // Deliberately low: 6 units against the avenue's 13. Two wall lines at
-  // similar heights read as one confused silhouette, and the avenue is the one
-  // that should be doing the enclosing.
+  // --- outer perimeter: the backdrop ----------------------------------------
   //
-  // Built per bay rather than as one extruded box. Three boxes of identical
-  // height drew one dead level horizontal straight across every wide frame,
-  // which is the single most synthetic line the scene had: nothing in a
-  // three-thousand-year-old ruin is level over a hundred metres. Each bay now
-  // picks its own height, some are collapsed to a stub, some are missing
-  // outright, and towers punch above the run at intervals that differ per side.
-  const PERIM_H = 6;
+  // The player cannot reach this any more and that is the whole point of the
+  // change. Walkable exterior now stops at the avenue and its forecourt, so the
+  // perimeter's only job is to close the horizon: it is read at forty metres and
+  // over, through the breaches in the avenue wall and over the choked north
+  // gate, and never approached. Backdrop geometry is allowed to be cheap
+  // BECAUSE it is out of reach - that is what moving it out of reach buys.
+  //
+  // What it is not allowed to be is thirty-nine separate objects, which is what
+  // it was. Every bay picked its own height AND wore its own coping cap, 0.6
+  // wider than the bay in both axes, so wherever a tall bay stood beside a short
+  // one its cap cantilevered over open air. That is the "floating slab" read,
+  // and thirteen of them in a row is the "someone forgot to finish this" read.
+  //
+  // The intent behind the height variation was right: a level horizontal across
+  // a hundred metres is the most synthetic line a ruin can draw. Only the
+  // execution failed. So the variation stays and the mechanism that broke the
+  // run into separate objects goes:
+  //
+  //   1. A CONTINUOUS base course at one height for the whole run, in two
+  //      stepped slabs so the plinth has a profile, bedded below the lowest
+  //      ground along the run so it has contact everywhere. This is the single
+  //      change that makes the eye read one ruin rather than many stones.
+  //   2. All variation ABOVE that base. Missing upper courses, towers, a leaning
+  //      block, rubble spilling from every break. A bay that has lost its upper
+  //      course shows the base course, not sand: the silhouette breaks without
+  //      the object breaking apart.
+  //   3. Coping never overhangs ALONG the run - it is shorter than its own bay -
+  //      and projects only across the wall's thickness, where there is wall
+  //      underneath it for its whole length. It cannot cantilever into air.
+  //
+  // No colliders. Nothing that can reach this exists: the player is held by
+  // world.bounds and the avenue, and enemy spawn points are searched inside the
+  // same bounds. Registering two hundred cylinders for scenery nothing can touch
+  // was pure cost in the collision loop.
+  const PERIM_H = 7.0;
   const PERIM_BAY = 8.5;
-  const PERIM_THICK = 3;
+  const PERIM_THICK = 3.2;
+  const BASE_TOP = 2.5;                       // top of the continuous course
+  const RUN_LEN = WALL * 2 + 8;
 
-  const runs = [
-    // axis is the direction the run travels; the wall's thin dimension is the
-    // other one. Each run gets its own tower placement so no two sides match.
-    { axis: 'x', cx: 0, cz: WALL, towers: new Set([2, 6, 11]), gaps: new Set([8]) },
-    { axis: 'z', cx: -WALL, cz: 0, towers: new Set([1, 5, 9]), gaps: new Set([3, 11]) },
-    { axis: 'z', cx: WALL, cz: 0, towers: new Set([4, 10]), gaps: new Set([6, 7]) },
+  const perimRuns = [
+    // `axis` is the direction the run travels; the wall's thin dimension is the
+    // other one. Tower and gap placement differs per run so no two sides match.
+    { axis: 'x', cx: 0, cz: WALL, len: RUN_LEN, towers: [2, 7, 11], worn: [5, 9], lean: 4 },
+    { axis: 'z', cx: -WALL, cz: 0, len: RUN_LEN, towers: [1, 6, 10], worn: [3, 12], lean: 8 },
+    { axis: 'z', cx: WALL, cz: 0, len: RUN_LEN, towers: [4, 9], worn: [6, 7, 11], lean: 2 },
+
+    // The fourth side, which had no perimeter at all. It cannot simply cross:
+    // the pyramid's base occupies the middle of it, from x=-31 to x=+31. So it
+    // runs in from both corners and DIES INTO the temple mass, which is the
+    // framing the gap needed - the temenos wall abutting the thing it encloses,
+    // rather than an enclosure that is visibly missing a side.
+    { axis: 'x', cx: -43, cz: -WALL, len: 30, towers: [1], worn: [], lean: -1 },
+    { axis: 'x', cx: 43, cz: -WALL, len: 30, towers: [2], worn: [], lean: -1 },
   ];
 
-  const runLength = WALL * 2 + 4;
-  const perimBays = Math.round(runLength / PERIM_BAY);
+  for (const run of perimRuns) {
+    const at = (t) => ({
+      x: run.axis === 'x' ? run.cx + t : run.cx,
+      z: run.axis === 'x' ? run.cz : run.cz + t,
+    });
 
-  for (const run of runs) {
-    for (let b = 0; b < perimBays; b++) {
-      const t = (b + 0.5) / perimBays - 0.5;
-      const along = t * runLength;
-      const x = run.axis === 'x' ? run.cx + along : run.cx;
-      const z = run.axis === 'x' ? run.cz : run.cz + along;
+    // Inward normal, so spill and drift land on the face the player can see.
+    const inX = run.axis === 'z' ? -Math.sign(run.cx) : 0;
+    const inZ = run.axis === 'x' ? -Math.sign(run.cz) : 0;
 
-      // A missing bay is a hole in the silhouette, which is worth more than any
-      // amount of height jitter: it lets sky through at ground level. The
-      // player is still fenced in by world.bounds, so a gap costs nothing.
-      if (run.gaps.has(b)) {
-        for (let i = 0; i < 3; i++) {
-          const rw = 1.6 + rand() * 2.2;
-          const rh = 0.9 + rand() * 1.6;
-          const rx = x + (run.axis === 'x' ? (rand() - 0.5) * PERIM_BAY : (rand() - 0.5) * 5);
-          const rz = z + (run.axis === 'x' ? (rand() - 0.5) * 5 : (rand() - 0.5) * PERIM_BAY);
+    // The lowest ground anywhere along the run. The base course is bedded below
+    // this, so it is buried for its whole length rather than hovering wherever
+    // the dunes happen to dip. The dunes swell +/-0.55 out here; a slab seated
+    // at y=0 shows daylight under it from any grazing angle.
+    let floorLo = Infinity;
+    for (let i = 0; i <= 48; i++) {
+      const p = at((i / 48 - 0.5) * run.len);
+      floorLo = Math.min(floorLo, groundY(p.x, p.z));
+    }
 
-          const chunk = stone(rw, rh, rw * 0.85, M.limestone, DENSITY.rubble,
-            { eroded: 0.15 });
-          chunk.position.set(rx, rh * 0.45, rz);
-          chunk.rotation.y = rand() * Math.PI;
-          chunk.rotation.z = (rand() - 0.5) * 0.4;
-          group.add(chunk);
-        }
-        continue;
-      }
+    /** One unbroken slab spanning the whole run. */
+    const slabRun = (y0, y1, widen) => {
+      const w = PERIM_THICK + widen;
+      const s = stone(
+        run.axis === 'x' ? run.len : w,
+        y1 - y0,
+        run.axis === 'x' ? w : run.len,
+        M.limestone, DENSITY.limestone, { eroded: 0.05, chamfer: 0.18 });
+      s.position.set(run.cx, (y0 + y1) / 2, run.cz);
+      group.add(s);
+    };
 
-      const isTower = run.towers.has(b);
+    slabRun(floorLo - 1.1, BASE_TOP - 1.3, 1.9);      // footing, projecting
+    slabRun(BASE_TOP - 1.5, BASE_TOP, 0.5);           // base course, set back
 
-      // Ruined stubs and full-height bays, plus a per-bay jitter on top of both,
-      // so even the intact stretch never draws two courses at the same y.
-      const collapsed = !isTower && rand() < 0.22;
-      const h = isTower ? PERIM_H * (1.75 + rand() * 0.35)
-        : collapsed ? PERIM_H * (0.25 + rand() * 0.3)
-          : PERIM_H * (0.82 + rand() * 0.34);
+    const nb = Math.max(2, Math.round(run.len / PERIM_BAY));
+    const bayLen = run.len / nb;
+    let prevRise = 0;
 
-      const wide = isTower ? PERIM_THICK + 3.4 : PERIM_THICK;
-      const long = isTower ? PERIM_BAY * 0.8 : PERIM_BAY + 0.4;
-      const sw = run.axis === 'x' ? long : wide;
-      const sd = run.axis === 'x' ? wide : long;
+    for (let b = 0; b < nb; b++) {
+      const p = at(((b + 0.5) / nb - 0.5) * run.len);
+      const isTower = run.towers.includes(b);
+      const worn = !isTower && run.worn.includes(b);
 
-      const seg = stone(sw, h, sd, M.limestone, DENSITY.limestone,
-        { eroded: collapsed ? 0.22 : 0.07, chamfer: 0.16 });
-      seg.position.set(x, h / 2, z);
-      seg.rotation.y = (rand() - 0.5) * 0.02;
-      group.add(seg);
+      // Height ABOVE the base course, never above the ground. A worn bay has
+      // none of it, so what shows through is a gap in the parapet rather than a
+      // hole where the wall should meet the sand.
+      const rise = isTower ? PERIM_H * (1.3 + brand() * 0.34)
+        : worn ? 0
+          : PERIM_H * (0.44 + brand() * 0.30);
 
-      addWallRun(x, z, wide * 0.6, h, run.axis, long);
+      if (rise > 0) {
+        // Bays overlap along the run so consecutive courses share a joint
+        // instead of standing shoulder to shoulder with a seam between them.
+        const long = bayLen + (isTower ? -1.4 : 0.8);
+        const wide = isTower ? PERIM_THICK + 2.8 : PERIM_THICK - 0.5;
 
-      // A collapsed bay loses its coping, which is most of what makes the break
-      // read as damage rather than as a shorter wall.
-      if (!collapsed) {
-        const cap = stone(sw + 0.6, 0.7, sd + 0.6, M.limestone, DENSITY.limestone,
-          { chamfer: 0.1 });
-        cap.position.set(x, h + 0.35, z);
+        const seg = stone(
+          run.axis === 'x' ? long : wide,
+          rise + 0.5,
+          run.axis === 'x' ? wide : long,
+          M.limestone, DENSITY.limestone,
+          { eroded: isTower ? 0.06 : 0.12, chamfer: 0.16 });
+        seg.position.set(p.x, BASE_TOP - 0.25 + (rise + 0.5) / 2, p.z);
+        seg.rotation.y = (brand() - 0.5) * 0.02;
+        group.add(seg);
+
+        // Coping. SHORTER than its own bay along the run, and wider only across
+        // the thickness. This is the rule the old build broke, and breaking it
+        // is what put a cantilevered slab over open air at every height change.
+        const cap = stone(
+          run.axis === 'x' ? long - 1.2 : wide + 0.55, 0.55,
+          run.axis === 'x' ? wide + 0.55 : long - 1.2,
+          M.limestone, DENSITY.limestone, { chamfer: 0.1 });
+        cap.position.set(p.x, BASE_TOP + rise + 0.52, p.z);
         group.add(cap);
       }
 
       if (isTower) {
-        // Merlons: four blocks on the tower head, one of them knocked out. A
-        // toothed crown is a strong small-scale silhouette against sky, and the
-        // missing tooth is what stops it reading as a repeated stamp.
-        const drop = Math.floor(rand() * 4);
+        // Merlons: four blocks on the tower head, one knocked out. A toothed
+        // crown is the strongest small-scale silhouette a distant object can
+        // have against sky, and the missing tooth stops it reading as a stamp.
+        const long = bayLen - 1.4;
+        const wide = PERIM_THICK + 2.8;
+        const drop = Math.floor(brand() * 4);
         for (let mi = 0; mi < 4; mi++) {
           if (mi === drop) continue;
-          const off = (mi - 1.5) * (long / 4);
-          const mx = x + (run.axis === 'x' ? off : 0);
-          const mz = z + (run.axis === 'x' ? 0 : off);
-
-          const merlon = stone(run.axis === 'x' ? long / 5 : wide * 0.55, 1.15,
-            run.axis === 'x' ? wide * 0.55 : long / 5,
+          const off = (mi - 1.5) * (long / 4.2);
+          const merlon = stone(
+            run.axis === 'x' ? long / 5.2 : wide * 0.5, 1.2,
+            run.axis === 'x' ? wide * 0.5 : long / 5.2,
             M.limestone, DENSITY.limestone, { eroded: 0.08, chamfer: 0.1 });
-          merlon.position.set(mx, h + 1.28, mz);
+          merlon.position.set(
+            p.x + (run.axis === 'x' ? off : 0),
+            BASE_TOP + rise + 1.4,
+            p.z + (run.axis === 'x' ? 0 : off));
           group.add(merlon);
         }
       }
+
+      // Spill. Every change in the top line puts stone on the ground under it -
+      // that is the connective tissue the run had none of. A break with clean
+      // sand at its foot reads as a wall built short, not as one that fell.
+      const step = Math.abs(rise - prevRise);
+      if (step > 1.3 || worn) {
+        const n = worn ? 5 : 3;
+        for (let i = 0; i < n; i++) {
+          const t = ((b + (i + 0.5) / n) / nb - 0.5) * run.len + (brand() - 0.5) * 2.2;
+          const q = at(t);
+          const out = PERIM_THICK * 0.5 + 0.4 + brand() * 3.4;
+          const rw = 1.4 + brand() * 2.4;
+          const rh = 0.8 + brand() * 1.7;
+          bedded(rw, rh, rw * 0.85, M.limestone, DENSITY.rubble,
+            q.x + inX * out, q.z + inZ * out, { eroded: 0.16, bed: 0.3 });
+        }
+      }
+      prevRise = rise;
+
+      // One leaning stone per run: a block still standing but pushed off plumb,
+      // which says the wall MOVED rather than that it was modelled tidy.
+      if (b === run.lean && rise > 0) {
+        const tilt = 0.19 + brand() * 0.12;
+        const s = stone(2.4, 3.6, 2.2, M.limestone, DENSITY.limestone, { eroded: 0.14 });
+        const out = PERIM_THICK * 0.5 + 0.55;
+        s.position.set(
+          p.x + inX * out + (run.axis === 'x' ? (brand() - 0.5) * 3 : 0),
+          BASE_TOP + 1.5,
+          p.z + inZ * out + (run.axis === 'z' ? (brand() - 0.5) * 3 : 0));
+        s.rotation.set(inZ * tilt, brand() * 0.4, -inX * tilt);
+        group.add(s);
+      }
+    }
+
+    // Sand drift and fallen facing along the foot of the whole run, so the base
+    // course meets the desert in a scatter rather than at a drawn line.
+    for (let i = 0; i < 12; i++) {
+      const q = at((brand() - 0.5) * run.len * 0.98);
+      const out = PERIM_THICK * 0.5 + 0.5 + brand() * 2.6;
+      const dw = 1.1 + brand() * 2.4;
+      const dh = 0.45 + brand() * 1.0;
+      bedded(dw, dh, dw * 0.8, M.limestone, DENSITY.rubble,
+        q.x + inX * out, q.z + inZ * out, { eroded: 0.2, bed: 0.4, tilt: 0.5 });
+    }
+  }
+
+  // Corner towers. Four runs meeting at right angles need the corners built or
+  // the enclosure reads as four unrelated walls that happen to be parallel; the
+  // corner is the one place the eye can confirm they are the same structure.
+  for (const [cx, cz, h] of [
+    [-WALL, WALL, 13.0], [WALL, WALL, 11.2], [-WALL, -WALL, 12.1], [WALL, -WALL, 9.4],
+  ]) {
+    const t = stone(8.6, h, 8.6, M.limestone, DENSITY.limestone,
+      { eroded: 0.08, chamfer: 0.2 });
+    t.position.set(cx, groundY(cx, cz) - 1.0 + h / 2, cz);
+    t.rotation.y = (brand() - 0.5) * 0.03;
+    group.add(t);
+
+    const cap = stone(9.4, 0.7, 9.4, M.limestone, DENSITY.limestone, { chamfer: 0.12 });
+    cap.position.set(cx, groundY(cx, cz) - 1.0 + h + 0.35, cz);
+    group.add(cap);
+
+    for (let i = 0; i < 3; i++) {
+      const a = brand() * Math.PI * 2;
+      const d = 5.4 + brand() * 3.2;
+      const rw = 1.5 + brand() * 2.6;
+      const rh = 0.8 + brand() * 1.6;
+      bedded(rw, rh, rw * 0.85, M.limestone, DENSITY.rubble,
+        cx + Math.cos(a) * d, cz + Math.sin(a) * d, { eroded: 0.18, bed: 0.32 });
     }
   }
 
@@ -920,48 +1298,67 @@ export function buildCourtyard(scene) {
   // ruins, palms, braziers
   // -------------------------------------------------------------------------
 
-  for (let i = 0; i < 22; i++) {
+  // Ruins and palms: MID-GROUND ONLY, and far fewer of them.
+  //
+  // This loop used to drop 22 chunks on a ring from d=20 to d=46, which put
+  // most of them inside the walkable field, and the palm loop after it put 11
+  // more trunks in the same space. Between them they were the largest single
+  // source of the note this pass exists to answer: too many separate objects in
+  // the exterior frame, none of them part of anything.
+  //
+  // The bar for keeping any one of these is now explicit. It has to frame the
+  // shot, lead the eye to the temple entrance, or be cover worth fighting from.
+  // Rubble scattered on a ring for texture does none of the three, so almost
+  // all of it is gone, and what is left is pushed OUT of the walkable rectangle
+  // where it fills the gap between the avenue and the backdrop and is seen
+  // through the breaches rather than walked around.
+  //
+  // A near-empty approach with three deliberate objects photographs better than
+  // a field of thirty-nine, and it fixes the movement complaint as a side
+  // effect: every chunk deleted is a collider the player no longer snags on.
+  const outsidePlay = (x, z) =>
+    x < PLAY.minX - 3 || x > PLAY.maxX + 3 || z < PLAY.minZ - 3 || z > PLAY.maxZ + 3;
+
+  for (let i = 0; i < 7; i++) {
     const a = rand() * Math.PI * 2;
-    const d = 20 + rand() * 26;
+    const d = 26 + rand() * 20;
     const x = Math.cos(a) * d;
     const z = Math.sin(a) * d * 0.7 + 8;
 
-    // Keep the approach corridor clear, and keep a hard clearance around the
-    // spawn point. Without the second test, rubble lands on the player's face
-    // on the very first frame of the game.
-    if (Math.abs(x) < 16 && z < -2) continue;
-    if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < SPAWN_CLEARANCE) continue;
+    if (!outsidePlay(x, z)) continue;
 
-    const h = 1.4 + rand() * 3.2;
-    const w = 1.6 + rand() * 2.2;
-    const dd = 1.6 + rand() * 2.2;
+    // Bigger, and fewer. One two-storey block reads as a ruined building; four
+    // knee-high ones read as debris someone forgot to clear.
+    const h = 2.6 + rand() * 3.4;
+    const w = 2.4 + rand() * 3.0;
+    const dd = 2.4 + rand() * 3.0;
 
     const chunk = stone(w, h, dd, M.limestone, DENSITY.rubble, { eroded: 0.14 });
-    chunk.position.set(x, h * 0.5, z);
+    // Seated on the real surface and bedded into it. These sit well outside the
+    // plaza radius where the dunes damp out, so a block placed at y=0 is up to
+    // half a metre off the ground it is supposed to be resting on - hovering on
+    // one swell and buried in the next.
+    chunk.position.set(x, groundY(x, z) + h * 0.4, z);
     chunk.rotation.y = rand() * Math.PI;
     chunk.rotation.z = (rand() - 0.5) * 0.14;
     group.add(chunk);
-    addCollider(x, z, Math.max(w, dd) * 0.5, h);
   }
 
-  for (let i = 0; i < 11; i++) {
+  // Four palms, not eleven, and every one of them beyond the walkable edge.
+  // A palm is a silhouette against sky; it earns its place on the skyline and
+  // nowhere else. The trunk material still carries no map, so a close one fills
+  // the frame with a flat colour ramp.
+  let palms = 0;
+  for (let i = 0; i < 40 && palms < 4; i++) {
     const a = rand() * Math.PI * 2;
-    const d = 27 + rand() * 20;
+    const d = 30 + rand() * 17;
     const x = Math.cos(a) * d;
     const z = Math.sin(a) * d * 0.8 + 12;
 
-    // Palms are the one thing in the scene on a material with NO map at all,
-    // so a trunk close to the camera fills the frame with a flat colour ramp.
-    // A raycast probe at the end of the walked shot found exactly that: a
-    // CylinderGeometry 0.63 metres from the lens with no texture on it, which
-    // is the "untextured cylinder" the frame was actually showing. Until the
-    // trunk has a map, palms belong OUTSIDE the avenue, where they are a
-    // silhouette against sky rather than a near-field surface.
-    if (Math.abs(x) < AVENUE.halfWidth + 5 && z > AVENUE.zFar - 6 && z < AVENUE.zNear + 6) continue;
-    if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < SPAWN_CLEARANCE) continue;
+    if (!outsidePlay(x, z)) continue;
 
-    group.add(makePalm(x, z, rand, M));
-    addCollider(x, z, 0.5, 9);
+    group.add(makePalm(x, z, groundY(x, z) - 0.15, rand, M));
+    palms++;
   }
 
   const braziers = [];
@@ -969,7 +1366,7 @@ export function buildCourtyard(scene) {
   // way the avenue announced its own symmetry, and the light they cast doubled
   // the effect at night.
   for (const [x, z] of [[-6.5, -26], [7.6, -24], [-11.2, 3], [13.4, -8], [-4.2, 20]]) {
-    const b = makeBrazier(x, z, M);
+    const b = makeBrazier(x, z, groundY(x, z) - 0.08, M);
     group.add(b.group);
     braziers.push(b);
     addCollider(x, z, 0.85, 2.2);
@@ -1132,13 +1529,31 @@ export function buildCourtyard(scene) {
     exclusions: [
       ...colliders.map((c) => ({ x: c.x, z: c.z, r: c.r + 0.8 })),
       { x: SPAWN.x, z: SPAWN.z, r: 3.5 },
+
+      // Sweep the centre lane clear, the whole length of the avenue.
+      //
+      // The dressing already banks its loose goods into the gutters on the
+      // principle that a thoroughfare gets swept by traffic and the edges
+      // accumulate; the scatter was still carpeting the middle, which put a
+      // hundred small stones directly along the line the player walks and
+      // directly between them and the door they are walking to. Clearing it
+      // does three things at once: the avenue reads as processional, the eye
+      // runs straight to the entrance, and the busiest part of the frame is
+      // the part that gets quiet.
+      ...Array.from({ length: 18 }, (_, i) => ({
+        x: 0, z: AVENUE.zNear - i * 4, r: 3.4,
+      })),
     ],
     // Down from 6200-over-a-100-unit-square. Concentrating the same budget on
     // a third of the area tripled the density and it read as rock soup: an
     // even carpet of same-size, same-value pebbles is its own kind of "one
     // scale tier" failure, just a busier one. The tier 2 and tier 3 props are
     // what should fill this space, not more gravel.
-    count: 3400,
+    // Down again, from 3400. The exterior was called messy twice; an even
+    // carpet of pebbles is part of what "messy" means even though not one of
+    // them is an obstacle. The dune material and the weathering carry the
+    // ground now, and the scatter punctuates it rather than covering it.
+    count: 1500,
     seed: 20260725,
     centre: { x: 0, z: 3 },
     radius: 30,
@@ -1159,6 +1574,17 @@ export function buildCourtyard(scene) {
     avenue: AVENUE,
     bay: BAY,
     chapels: chapelSpots,
+    // The per-bay wall heights, so a span can be seated on the walls it is
+    // actually tied to. Handing over the avenue's nominal height and letting
+    // the dressing hang everything at 11.4 is the same mistake the architraves
+    // made and had to be fixed for: over a bay ruined to a three-metre stub, a
+    // line strung at 11.4 is anchored to nothing at both ends.
+    bayHeight,
+    bays,
+    // The forecourt at the temple front is walkable now that the flanks are
+    // closed, so it gets dressed rather than left as the one bare room on the
+    // route.
+    forecourt: { z: FORE_Z, halfWidth: AVENUE.halfWidth },
     seed: 77003,
   });
 
@@ -1168,7 +1594,17 @@ export function buildCourtyard(scene) {
     braziers,
     dust,
     dressing,
-    bounds: { min: -WALL + 2.5, max: WALL - 2.5 },
+    /**
+     * The walkable exterior, as a rectangle rather than a square.
+     *
+     * Both consumers already read the rectangular shape - the player controller
+     * takes `minX ?? min` because the interior is a long room, and the wave
+     * director builds its exterior spawn lattice from the same four numbers -
+     * so the exterior can stop pretending to be a 99-metre square without a
+     * change anywhere downstream. It also means enemies now spawn in the space
+     * the player is actually in, instead of over a field they can never enter.
+     */
+    bounds: PLAY,
 
     /**
      * Floor height at a world position. The controller samples the same
@@ -1200,9 +1636,9 @@ export function buildCourtyard(scene) {
 // props
 // ---------------------------------------------------------------------------
 
-function makePalm(x, z, rand, M) {
+function makePalm(x, z, y, rand, M) {
   const g = new THREE.Group();
-  g.position.set(x, 0, z);
+  g.position.set(x, y, z);
 
   const lean = (rand() - 0.5) * 0.18;
   const h = 6.5 + rand() * 3.5;
@@ -1305,9 +1741,9 @@ function makeFrondGeometry(length, width) {
   return geo;
 }
 
-function makeBrazier(x, z, M) {
+function makeBrazier(x, z, y, M) {
   const g = new THREE.Group();
-  g.position.set(x, 0, z);
+  g.position.set(x, y, z);
 
   // World-scale UVs, like everything else. Untouched, these two carried one
   // texture tile each: the probe measured the stem at 0.958 tiles/unit against

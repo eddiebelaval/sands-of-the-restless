@@ -41,6 +41,12 @@ function rng(seed) {
  * @param {object} opts.avenue  { halfWidth, zNear, zFar, height }
  * @param {number} opts.bay  bay spacing, so props align to the architecture
  * @param {Array} opts.chapels  [{ x, z, side }] focal points
+ * @param {Map} opts.bayHeight  `${side}:${bay}` -> { h, ruined }, the REAL wall
+ *   heights. Anything anchored to a wall has to be seated on this rather than
+ *   on avenue.height: the bays vary and some are ruined to a stub, and a line
+ *   strung at the nominal height over a three-metre stub hangs from nothing.
+ * @param {number} opts.bays  how many bays the wall loop built
+ * @param {object} opts.forecourt  { z, halfWidth } the room at the temple front
  */
 export function dressAvenue(parent, {
   heightAt = () => 0,
@@ -48,6 +54,9 @@ export function dressAvenue(parent, {
   avenue,
   bay = 9,
   chapels = [],
+  bayHeight = null,
+  bays = 7,
+  forecourt = null,
   seed = 77003,
 } = {}) {
   const rand = rng(seed);
@@ -154,6 +163,26 @@ export function dressAvenue(parent, {
   const mats = propMaterials();
   const spanTop = avenue.height - 1.6;
 
+  /**
+   * The bay index nearest a z, and the two wall tops there.
+   *
+   * Returns null when either wall is ruined at that bay. This is the same rule
+   * the architraves use and it exists for the same reason: an object anchored
+   * to two walls has to be anchored to the walls that are THERE. The failure it
+   * prevents is not subtle - a stone beam, or a rope, floating in mid air with
+   * nothing holding either end is precisely what makes a frame read as half
+   * built, and it is in this project's notes as having shipped once already.
+   */
+  const wallsAt = (z) => {
+    if (!bayHeight) return { top: spanTop };
+    const b = Math.round((avenue.zNear - z - bay / 2) / bay);
+    if (b < 0 || b >= bays) return null;
+    const w = bayHeight.get(`-1:${b}`);
+    const e = bayHeight.get(`1:${b}`);
+    if (!w || !e || w.ruined || e.ruined) return null;
+    return { top: Math.min(w.h, e.h) - 1.5, west: w.h, east: e.h };
+  };
+
   const spanZ = [];
   for (let z = avenue.zNear - bay * 0.5; z > avenue.zFar + bay; z -= bay * 0.85) {
     spanZ.push(z);
@@ -161,7 +190,9 @@ export function dressAvenue(parent, {
 
   for (let i = 0; i < spanZ.length; i++) {
     const z = spanZ[i] + (rand() - 0.5) * 1.6;
-    const y = spanTop - rand() * 1.4;
+    const w = wallsAt(z);
+    if (!w) continue;
+    const y = w.top - rand() * 1.4;
 
     // Alternate what is strung, so it does not read as a repeated fixture.
     const kind = i % 3;
@@ -195,8 +226,14 @@ export function dressAvenue(parent, {
       const z1 = z0 - bay * 1.6;
       if (z1 < avenue.zFar) continue;
 
+      // Seated on the LOWER of the two bays it runs between, for the same
+      // reason the crossing spans are: this line is tied to the pylons on one
+      // wall, and if either of those bays came down there is nothing to tie to.
+      const a = wallsAt(z0), b2 = wallsAt(z1);
+      if (!a || !b2) continue;
+
       const x = side * (avenue.halfWidth - 1.6);
-      const y = spanTop - 1.8 - rand() * 1.2;
+      const y = Math.min(a.top, b2.top) - 1.4 - rand() * 1.0;
 
       const geo = catenary(
         new THREE.Vector3(x, y, z0),
@@ -220,14 +257,24 @@ export function dressAvenue(parent, {
   const wallProps = ['grille', 'shutter', 'mashrabiya'];
   for (const side of [-1, 1]) {
     for (let b = 0; b < 7; b++) {
-      if (rand() > 0.55) continue;
+      // Thinner than it was. Wall furniture is surface relief rather than an
+      // object in the room, so it survives the cull - but at better than one
+      // bay in two it stopped being punctuation and became pattern.
+      if (rand() > 0.34) continue;
 
       const z = avenue.zNear - b * bay - bay / 2 + (rand() - 0.5) * 2;
       if (z < avenue.zFar) continue;
 
       const name = wallProps[Math.floor(rand() * wallProps.length)];
       const x = side * (avenue.halfWidth - 1.35);
-      const y = 3.2 + rand() * 4.5;
+
+      // Mounted on the wall that is actually there. A shutter hung at 7.5 on a
+      // bay ruined to 3.4 is a panel hanging in the sky beside a stub, which is
+      // the same class of defect as a floating beam and reads exactly as badly.
+      const wall = bayHeight ? bayHeight.get(`${side}:${b}`) : null;
+      const top = wall ? wall.h - 1.4 : 7.7;
+      if (top < 3.4) continue;
+      const y = 3.2 + rand() * Math.min(4.5, top - 3.2);
 
       placeWall(name, x, y, z, -side, 0, { scale: 0.85 + rand() * 0.5 });
     }
@@ -245,9 +292,21 @@ export function dressAvenue(parent, {
     'ammoCrates', 'sandbagEmplacement', 'waterTrough', 'bench', 'amphora',
   ];
 
+  // TWELVE, down from forty.
+  //
+  // The owner's note on the exterior, twice: too many obstacles, still messy.
+  // That is a composition note, not a physics one - a previous pass answered it
+  // by shrinking collider radii, which fixed the snagging and left the frame
+  // exactly as busy. Forty loose objects banked along two walls is a junk shop
+  // whatever their collision radius is.
+  //
+  // The bar each survivor has to clear: it frames the shot, it leads the eye
+  // toward the temple entrance, or it is cover worth fighting behind. Goods
+  // placed for texture alone are gone, and the ones left are spaced far enough
+  // apart to read individually instead of merging into a rubble margin.
   let attempts = 0;
   let wallPlaced = 0;
-  while (wallPlaced < 40 && attempts < 900) {
+  while (wallPlaced < 12 && attempts < 700) {
     attempts++;
 
     const side = rand() < 0.5 ? -1 : 1;
@@ -265,14 +324,21 @@ export function dressAvenue(parent, {
     // Face the avenue, roughly, with slop.
     const yaw = (side > 0 ? -Math.PI / 2 : Math.PI / 2) + (rand() - 0.5) * 0.9;
 
-    if (placeGround(name, x, z, { yaw, scale: 0.85 + rand() * 0.45 })) wallPlaced++;
+    // Hard minimum separation. Twelve props that clump into three piles read
+    // as three messy piles; twelve that are eight metres apart read as twelve
+    // deliberate placements, which is the whole difference being asked for.
+    if (placed.some((q) => Math.hypot(q.x - x, q.z - z) < 7.5)) continue;
+
+    if (placeGround(name, x, z, { yaw, scale: 0.9 + rand() * 0.45 })) wallPlaced++;
   }
 
   // Market stalls are big enough to be landmarks; place a few deliberately
   // rather than by rejection sampling, so they punctuate the avenue evenly.
-  for (let i = 0; i < 4; i++) {
+  // Two, one per side, well apart. A stall is a landmark; four of them down a
+  // sixty-metre avenue is a market, and a market is the busy read.
+  for (let i = 0; i < 2; i++) {
     const side = i % 2 === 0 ? -1 : 1;
-    const z = avenue.zNear - 8 - i * 12;
+    const z = avenue.zNear - 11 - i * 27;
     placeGround('marketStall', side * (avenue.halfWidth - 4.4), z, {
       yaw: side > 0 ? -Math.PI / 2 : Math.PI / 2,
       scale: 1.0,
@@ -281,8 +347,10 @@ export function dressAvenue(parent, {
 
   // Scaffolding against a couple of wall bays: tall, thin, and it overlaps the
   // wall behind it, which is what stops the wall reading as a flat plane.
-  for (let i = 0; i < 3; i++) {
-    const side = rand() < 0.5 ? -1 : 1;
+  // One. It exists to break the flat wall plane with something tall and thin,
+  // and one does that; three is a construction site.
+  for (let i = 0; i < 1; i++) {
+    const side = -1;
     const z = avenue.zFar + 6 + rand() * (avenue.zNear - avenue.zFar - 12);
     placeGround('scaffold', side * (avenue.halfWidth - 2.6), z, {
       yaw: side > 0 ? -Math.PI / 2 : Math.PI / 2,
@@ -291,7 +359,10 @@ export function dressAvenue(parent, {
   }
 
   // Poles and railings: pure thin geometry, deliberately in the mid-ground.
-  for (let i = 0; i < 10; i++) {
+  // Three, not ten. Thin geometry in the mid-ground is worth having and these
+  // are the cheapest source of it, but ten sets of posts along a corridor is
+  // ten more silhouettes competing with the colonnade.
+  for (let i = 0; i < 3; i++) {
     const side = rand() < 0.5 ? -1 : 1;
     // Hard against the wall. These were reaching 5.7 units inboard, which put
     // thin posts right where the player walks.
@@ -321,7 +392,11 @@ export function dressAvenue(parent, {
   const coverKinds = ['sandbagEmplacement', 'crateStack', 'cart', 'ammoCrates'];
   const coverLane = avenue.halfWidth - 6.2;
 
-  for (let i = 0; i < 6; i++) {
+  // Four. Cover is the one category the cull protects on its own terms - it is
+  // the reason a player moves the way they do in a firefight - but four pieces
+  // spread down sixty metres is already a fighting space, and every extra one
+  // is another object in a frame that has been called messy twice.
+  for (let i = 0; i < 4; i++) {
     // Alternate sides, and offset the two sides by half a step so a pair never
     // lines up into a chokepoint.
     const side = i % 2 === 0 ? -1 : 1;
@@ -353,12 +428,54 @@ export function dressAvenue(parent, {
     });
 
     // A banner hung above the alcove mouth, so the recess reads from down the
-    // avenue rather than only from in front of it.
-    if (rand() < 0.75) {
-      placeWall('banner', c.x - c.side * 5.4, 8.2 + rand() * 1.5, c.z,
-        -c.side, 0, { scale: 1.0 + rand() * 0.4 });
+    // avenue rather than only from in front of it. Hung BELOW the top of the
+    // bay it is nailed to: this bay can be as short as 3.4 units and the banner
+    // was pinned at 8.2 regardless, which put a red rectangle in clear sky with
+    // no wall behind it.
+    const top = (c.h ?? avenue.height) - 2.6;
+    if (top > 3.0 && rand() < 0.75) {
+      placeWall('banner', c.x - c.side * 5.4, Math.min(8.2 + rand() * 1.5, top),
+        c.z, -c.side, 0, { scale: 1.0 + rand() * 0.4 });
     }
   });
+
+  // -------------------------------------------------------------------------
+  // 5. THE FORECOURT
+  // -------------------------------------------------------------------------
+  //
+  // The room at the temple front. It was outside the dressed zone because it
+  // was outside the avenue, and it was outside the avenue because the flanks
+  // there were open and the space ran on into the desert. Now that the flanks
+  // are closed it is the END of the route and the last thing the player stands
+  // in.
+  //
+  // Two objects and two banners. Nothing else, and deliberately nothing else:
+  // the approach to the sealed doorway is the one piece of exterior
+  // choreography that already works, so the job here is to give the last twenty
+  // metres of it a pair of things to read the door against and then get out of
+  // the way. The centre stays swept all the way to the seal.
+
+  if (forecourt) {
+    const fz = forecourt.z;
+    const fw = forecourt.halfWidth;
+
+    // One offering point per side, squared to the doorway. These are what the
+    // approach reads against: an empty forecourt makes the door look like a
+    // texture on a cliff rather than the end of a procession.
+    for (const side of [-1, 1]) {
+      placeGround(side < 0 ? 'offeringTable' : 'brazier',
+        side * 8.6, fz + 1.6, {
+          yaw: side > 0 ? -Math.PI / 2 : Math.PI / 2, scale: 1.05,
+        });
+    }
+
+    // A banner on the inner face of each stub, so the forecourt has something
+    // thin and moving in it and the corner is not two flat stone planes.
+    for (const side of [-1, 1]) {
+      placeWall('banner', side * (fw - 1.4), 2.9 + rand() * 0.8, fz + 0.4,
+        -side, 0, { scale: 0.9 + rand() * 0.3 });
+    }
+  }
 
   return {
     group,
