@@ -118,6 +118,41 @@ const _dir = new THREE.Vector3();
 const _steer = new THREE.Vector3();
 const _probe = new THREE.Vector3();
 
+/**
+ * THE CHAMBER FLOOR: the smallest amount of self-illumination that stops a
+ * wrapped corpse being a hole in a dark room.
+ *
+ * MEASURED, not judged. Standing a shambler seven metres away in the Great
+ * Gallery and sampling its exact silhouette against the pixels it covers, 54
+ * PER CENT of its body was below luma 8 - flat black - while the eye sockets
+ * and the gilding stayed lit. That histogram is the "black robot with a
+ * glowing visor" reading in numbers, and it is a property of the ROOM, not of
+ * the linen: the same body in sun runs a lit-to-shadow ratio over 6.
+ *
+ * A floor fixes what a palette cannot, because it is additive. Against sunlit
+ * sand at luma 140 it is under one per cent and cannot be seen; against a
+ * chamber wall at luma 14 it is the difference between a silhouette and a
+ * void. Swept at 0.05 / 0.08 / 0.11 against the same background:
+ *
+ *              7 m chamber            14 m chamber          20 m sun
+ *              black px  legible      black px  legible     legible
+ *   none        54.2%     70.9         40.8%     75.6        81.8
+ *   0.05        45.7%     74.7         29.4%     72.1        79.5
+ *   0.08        36.3%     76.8         18.6%     70.0        77.9
+ *   0.11        21.5%     80.6          9.1%     65.3        78.5
+ *
+ * 0.08 halves the black end in both chambers and still leaves the body a clear
+ * 27 per cent DARKER than the wall behind it at fourteen metres. 0.11 keeps
+ * going and starts pulling the body up onto the background's own value, which
+ * is a different way to be invisible.
+ *
+ * It goes on the linen and the rags only. `deep` stays a void - the sockets
+ * under the brow are supposed to be holes - and `accent` is metal that already
+ * catches a highlight.
+ */
+const EMISSIVE_FLOOR = 0.08;
+const CHAMBER_FLOOR = new THREE.Color(0x6b5a3c).multiplyScalar(EMISSIVE_FLOOR);
+
 // ---------------------------------------------------------------------------
 // world queries, shared with the bosses
 // ---------------------------------------------------------------------------
@@ -294,16 +329,20 @@ function makeMaterials(spec) {
   const dh = (Math.random() - 0.5) * 0.02;
   const dl = (Math.random() - 0.5) * 0.09;
 
+  // The floor is set here as well as in setFlash so a material is never black
+  // between being built and being spawned.
   const wrap = new THREE.MeshStandardMaterial({
     color: jitter(spec.palette.wrap, dh, -0.03, dl),
     roughness: 0.96,
     metalness: 0.0,
+    emissive: CHAMBER_FLOOR.clone(),
   });
 
   const wrapDark = new THREE.MeshStandardMaterial({
     color: jitter(spec.palette.wrapDark, dh, 0.0, dl * 0.6),
     roughness: 0.98,
     metalness: 0.0,
+    emissive: CHAMBER_FLOOR.clone(),
   });
 
   // The skull, and everything else meant to read as a void in the wrappings.
@@ -341,6 +380,7 @@ function makeMaterials(spec) {
     roughness: 1.0,
     metalness: 0.0,
     side: THREE.DoubleSide,
+    emissive: CHAMBER_FLOOR.clone(),
   });
 
   return { wrap, wrapDark, deep, eye, accent, tatter };
@@ -797,10 +837,19 @@ export function createEnemy(spec, index) {
     // Every material carries the flash, so a hit anywhere on the body lights
     // the whole silhouette for a frame or two. Hitting one limb and lighting
     // only that limb reads as a rendering fault rather than as a hit.
+    //
+    // THE FLASH IS WRITTEN ON TOP OF THE CHAMBER FLOOR, NOT INSTEAD OF IT.
+    // update() calls setFlash(st.flash) on every live actor every frame, so a
+    // setFlash that wrote plain black at k = 0 would erase the floor before it
+    // was ever drawn. It would also erase anything a harness set from outside,
+    // which is exactly how the first sweep of this value measured a fight
+    // between the override and the frame loop and reported that emissive does
+    // nothing.
     const e = k * 0.9;
-    mats.wrap.emissive.setRGB(e * 0.75, e * 0.18, e * 0.10);
-    mats.wrapDark.emissive.setRGB(e * 0.75, e * 0.18, e * 0.10);
-    mats.tatter.emissive.setRGB(e * 0.55, e * 0.13, e * 0.07);
+    const f = CHAMBER_FLOOR;
+    mats.wrap.emissive.setRGB(f.r + e * 0.75, f.g + e * 0.18, f.b + e * 0.10);
+    mats.wrapDark.emissive.setRGB(f.r + e * 0.75, f.g + e * 0.18, f.b + e * 0.10);
+    mats.tatter.emissive.setRGB(f.r + e * 0.55, f.g + e * 0.13, f.b + e * 0.07);
     mats.wrap.emissiveIntensity = 1;
     mats.wrapDark.emissiveIntensity = 1;
     mats.tatter.emissiveIntensity = 1;
@@ -1122,6 +1171,45 @@ export const MUMMY = {
    * still has a lit half to lose, and wrapDark is the crease it loses it into:
    * shins, forearms, the binding across the chest, and the brow over the
    * sockets. Every one of those is a shadow line the eye can find.
+   *
+   * ---------------------------------------------------------------------
+   * A FOURTH PASS MEASURED THESE NUMBERS AND DELIBERATELY DID NOT MOVE THEM.
+   *
+   * Read this before swinging the palette a fourth time.
+   *
+   * The rebuilt lighting (sun at 27 degrees, environmentIntensity 0.34 -> 0.17)
+   * and the chamferedBox winding fix - which had 28 of every box's 44 triangles
+   * facing inward, so no enemy in this project had ever drawn a single bevel
+   * highlight - both landed AFTER the third palette pass. Against that scene,
+   * one shambler was staged at an exact 7 / 20 / 35 m, in sun and in shadow,
+   * and its body sampled per pixel against the pixels it covers:
+   *
+   *              body   behind   legible   lit:shadow   cast shadow
+   *   7 m sun    124.4    90.5     91.2%      6.13:1       128% of body
+   *   7 m shade  115.0   130.5     92.5%      5.17:1        65%
+   *   20 m sun   125.6   138.1     80.6%      3.27:1        16%
+   *   20 m shade 126.8   128.3     80.7%      2.73:1        12%
+   *   35 m sun   141.5   140.1     69.6%      2.11:1        10%
+   *   35 m shade 137.4   108.2     76.1%      2.24:1        14%
+   *
+   * It reads. It also casts a real ground shadow at every one of those
+   * distances, which two review rounds have now claimed it does not.
+   *
+   * What it DOES do is sit in the middle of the scene's value range, so its
+   * polarity flips with the backdrop: darker than the sand at 20 m, brighter at
+   * 35 m in shadow. That is aerial perspective compressing a figure toward the
+   * fog, and it is not a thing a base colour can fix - the same fog compresses
+   * whatever you replace it with. Four candidate repaints were rendered against
+   * IDENTICAL backgrounds and scored. Darkening plus saturation (0x8a7040 over
+   * 0x55402a) bought the mean separation everyone keeps asking for and LOST
+   * legibility at four of five stances: 75.6 -> 71.4 at 35 m sun, 76.6 -> 69.3
+   * at 35 m shadow, 56.6 -> 44.2 in the chamber. Lowering envMapIntensity did
+   * nothing measurable at any distance.
+   *
+   * So the palette is not the defect and this is the third consecutive pass to
+   * reach that conclusion from a different direction. The defect the numbers
+   * DID find was in the chamber, and it is fixed by EMISSIVE_FLOOR above.
+   * ---------------------------------------------------------------------
    */
   palette: {
     wrap: 0x9a8a6e,
