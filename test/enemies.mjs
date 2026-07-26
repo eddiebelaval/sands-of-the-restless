@@ -125,7 +125,7 @@ window.__E__ = {
    * plank. Probing with a bare raycaster rather than the weapon means the test
    * costs no ammunition and no impact particles.
    */
-  sightClear(actor, region) {
+  sightClear(actor, region, halfAngle = 0.008) {
     const g = window.__SANDS__;
     const THREE = g.THREE;
     const p = window.__E__.regionPoint(actor, region);
@@ -133,13 +133,43 @@ window.__E__ = {
     window.__E__.aimAt(p.x, p.y, p.z);
 
     const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(0, 0), g.camera);
-    ray.far = 120;
-    const its = ray.intersectObjects(g.world.hitTargets, true);
-    const first = its.find((h) => h.object.visible && !h.object.userData?.noHit);
-    return !!(first
-      && first.object.userData?.enemy === actor
-      && first.object.userData?.region === region);
+    const centre = new THREE.Vector2(0, 0);
+    const axis = new THREE.Vector3();
+    const perp = new THREE.Vector3();
+
+    // A CONE, not a line.
+    //
+    // A shot carries the weapon's aimed spread, so a single centre ray that
+    // clips the very edge of a skull reports a clean line for a shot that will
+    // sail past it into the scenery behind. That is a one-in-four flake, and
+    // one-in-four is worse than always failing: it teaches you to re-run.
+    // Probing the four corners of the cone as well makes the answer mean what
+    // the caller thinks it means.
+    for (let i = 0; i < 5; i++) {
+      ray.setFromCamera(centre, g.camera);
+      ray.far = 120;
+
+      if (i > 0) {
+        const dir = ray.ray.direction;
+        perp.set(0, 1, 0);
+        if (Math.abs(dir.dot(perp)) > 0.99) perp.set(1, 0, 0);
+        axis.crossVectors(dir, perp).normalize();
+        perp.crossVectors(dir, axis).normalize();
+
+        const roll = (i - 1) * Math.PI / 2;
+        dir.addScaledVector(axis, Math.tan(halfAngle) * Math.cos(roll));
+        dir.addScaledVector(perp, Math.tan(halfAngle) * Math.sin(roll));
+        dir.normalize();
+      }
+
+      const first = ray.intersectObjects(g.world.hitTargets, true)
+        .find((h) => h.object.visible && !h.object.userData?.noHit);
+
+      if (!(first
+        && first.object.userData?.enemy === actor
+        && first.object.userData?.region === region)) return false;
+    }
+    return true;
   },
 
   /** Put one enemy somewhere the player has a clean line to the named region. */
@@ -279,7 +309,12 @@ const approach = await page.evaluate(async () => {
   }
 
   // Let them walk. The player does not move, so any closing is theirs.
-  window.__E__.sim(9);
+  //
+  // Twenty simulated seconds, because a shambler covers 2.25 m/s and the
+  // placement band puts it twenty metres out. Nine seconds was inside the
+  // margin, and a test that fails when the horde is merely SLOW is a test that
+  // reports the wrong thing.
+  window.__E__.sim(20);
 
   const end = [];
   let closest = Infinity;

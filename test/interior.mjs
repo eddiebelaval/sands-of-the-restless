@@ -249,6 +249,17 @@ const earning = await page.evaluate(async () => {
     if (target) break;
   }
 
+  // An automatic weapon, held down.
+  //
+  // The pistol fires exactly once on a held trigger, so the whole measurement
+  // rode on a single round landing - and the target is a live actor that turns
+  // to face the player between the probe and the shot. One frame of that
+  // rotation is enough to move a 43 cm chest off the crosshair at thirteen
+  // metres, and the run then failed a payout that was working perfectly. A
+  // burst removes the coin flip without weakening what is being tested: every
+  // round still goes through weapons.update -> applyHits -> payout.
+  g.weapons.equip('carbine');
+
   // The live input flag, so the award runs through the frame loop's own
   // weapons.update -> payout -> economy.award chain rather than a shortcut.
   g.input.state.fire = true;
@@ -256,6 +267,7 @@ const earning = await page.evaluate(async () => {
   g.input.state.fire = false;
   await window.__H__.frames(2);
 
+  g.weapons.equip('mk9');
   g.director.reset();
   g.rig.reset(yaw0, pitch0);
   g.rig.update(1 / 60, g.player, false);

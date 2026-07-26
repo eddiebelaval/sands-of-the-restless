@@ -93,10 +93,13 @@ function buildScarab(spec, mats, actor) {
   body.add(neck);
   add(neck, sgeo(P.headW, P.headH, P.headD), mats.deep, 'head');
 
-  // The same eye slot every other variant carries. On something this low to the
-  // ground it is most of what the player sees of it at all.
-  add(neck, sgeo(P.headW * 0.7, 0.035, 0.04), mats.eye, 'head')
-    .position.set(0, P.headH * 0.18, P.headD * 0.55);
+  // Two sockets, matching the humanoids. A single wide slot here was the same
+  // visor mistake at a smaller size, and on a shell at knee height it read as a
+  // sensor bar on a drone.
+  for (const s of [-1, 1]) {
+    add(neck, sgeo(0.04, 0.035, 0.03), mats.eye, 'head')
+      .position.set(s * P.headW * 0.26, P.headH * 0.16, P.headD * 0.52);
+  }
 
   for (const side of [-1, 1]) {
     const m = add(neck, sgeo(0.045, 0.045, P.headD * 1.5), mats.accent, 'head');
@@ -217,14 +220,17 @@ export const HUSK = extend(MUMMY, {
   sepRadius: 0.85,
   voicePitch: 1.45,
 
+  // Charred rather than black. The husk has to be visibly DARKER than the
+  // shambler, which is what says burnt, and it still needs a lit half or it
+  // becomes the same flat cut-out the shambler was corrected out of being.
   palette: {
-    wrap: 0x4d3f2c,
-    wrapDark: 0x2b2014,
-    deep: 0x0d0906,
-    // Live coals in the sockets. On a fast enemy the tell has to survive being
-    // seen for a fifth of a second at forty metres, and emissive is the only
-    // channel that does not go to mud under the fog pass.
-    eye: 0xff4a10,
+    wrap: 0x7a674a,
+    wrapDark: 0x453623,
+    deep: 0x211810,
+    // Live coals in the sockets, warmer and a shade brighter than the
+    // shambler's. On a fast enemy the tell has to survive being seen for a
+    // fifth of a second, and it is still two recessed squares under a brow.
+    eye: 0xff5a18,
     accent: 0x8a6a34,
   },
 
@@ -236,12 +242,14 @@ export const HUSK = extend(MUMMY, {
     // single cheapest signal that a body is wrong.
     shoulderX: 0.18, shoulderY: 0.46, armW: 0.095, upperL: 0.50, foreL: 0.52,
     headY: 0.60, headW: 0.19, headH: 0.34, headD: 0.24,
-    tatterRest: 0.16,
-    // One trailing rag off the spine. Desiccated, not wrapped: the husk has
-    // burned out of most of its bindings, and the near-bare outline is half of
-    // why it does not read as a small shambler.
+    tatterRest: 0.34,
+    // Two rags, both trailing off the spine and one arm, and no hem. Desiccated
+    // rather than wrapped: the husk has burned out of most of its bindings, and
+    // the near-bare outline is half of why it does not read as a small
+    // shambler. What is left streams behind it when it runs.
     tatters: [
-      { on: 'torso', x: 0.0, y: 0.22, z: -0.10, w: 0.10, h: 0.66, yaw: 0.2, swing: 1.6 },
+      { on: 'torso', x: 0.0, y: 0.24, z: -0.10, w: 0.12, h: 0.78, yaw: 0.18, cut: 1, swing: 1.7 },
+      { on: 'arm', side: -1, x: 0, y: -0.30, z: 0, w: 0.09, h: 0.44, yaw: -1.0, cut: 2, swing: 1.9 },
     ],
   },
 
@@ -254,7 +262,10 @@ export const HUSK = extend(MUMMY, {
     // own - which is the read, and it is the opposite of the shambler's.
     armReach: 0.18,
     armSplay: 0.20,
-    elbowBend: 0.18,
+    // Barely bent. The husk's arms are long and dead-straight, swinging off a
+    // spine that is already pitched forward; a fold at the elbow would give it
+    // the shambler's reach, which is the one silhouette it must not share.
+    elbowBend: -0.10,
     // Bent hard, but not so far that a head-on view is looking down at its
     // back. At -0.62 the head vanished behind the shoulders from the one angle
     // the player sees it from most, and the outline became a table.
@@ -302,10 +313,10 @@ export const BOUND = extend(MUMMY, {
   voicePitch: 0.62,
 
   palette: {
-    wrap: 0x7b6f52,
-    wrapDark: 0x453a26,
-    deep: 0x120e09,
-    eye: 0x58a8ff,
+    wrap: 0xa2946f,
+    wrapDark: 0x60513a,
+    deep: 0x2b2218,
+    eye: 0x6ab4ff,
     accent: 0xd0a24e,
     accentMetal: 0.88,
     accentRough: 0.34,
@@ -320,10 +331,13 @@ export const BOUND = extend(MUMMY, {
     plate: { w: 0.52, h: 0.30 },
     shoulderSlab: { w: 0.26, h: 0.14, d: 0.42 },
     headdress: { w: 0.17, h: 0.40 },
-    tatterRest: 0.05,
+    tatterRest: 0.22,
+    // A heavy hem and two long ceremonial wraps. Slower and wider than the
+    // shambler's, so the rags read as weight rather than as decay.
     tatters: [
-      { on: 'torso', x: -0.24, y: 0.16, z: -0.20, w: 0.14, h: 0.78, yaw: 0.25, swing: 0.6 },
-      { on: 'torso', x: 0.24, y: 0.12, z: -0.20, w: 0.13, h: 0.66, yaw: -0.25, swing: 0.6 },
+      { on: 'torso', x: 0.0, y: -0.06, z: -0.02, w: 0.46, h: 0.50, yaw: 0.06, cut: 0, swing: 0.5 },
+      { on: 'torso', x: -0.24, y: 0.18, z: -0.21, w: 0.16, h: 0.86, yaw: 0.30, cut: 1, swing: 0.6 },
+      { on: 'torso', x: 0.24, y: 0.14, z: -0.21, w: 0.15, h: 0.72, yaw: -0.34, cut: 2, swing: 0.6 },
     ],
   },
 
@@ -380,10 +394,10 @@ export const SCARAB = extend(MUMMY, {
   voicePitch: 2.0,
 
   palette: {
-    wrap: 0x3a2c1c,
-    wrapDark: 0x241a10,
-    deep: 0x0e0a06,
-    eye: 0x6a3a08,
+    wrap: 0x5a4630,
+    wrapDark: 0x3a2c1c,
+    deep: 0x241a10,
+    eye: 0xd06a12,
     accent: 0x35281a,
     accentMetal: 0.55,
     accentRough: 0.32,

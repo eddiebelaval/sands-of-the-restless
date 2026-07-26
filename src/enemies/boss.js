@@ -167,25 +167,25 @@ export const GODS = [
     id: 'anubis', name: 'ANUBIS', crown: 'jackal',
     health: 5200, speed: 2.6, damage: 42,
     abilities: ['summon', 'charge'],
-    palette: { wrap: 0x8d7f62, wrapDark: 0x4a3f2b, deep: 0x14100b, eye: 0x64d0ff, accent: 0xd8b25c },
+    palette: { wrap: 0xa2947a, wrapDark: 0x5e5138, deep: 0x2b2318, eye: 0x64d0ff, accent: 0xd8b25c },
   },
   {
     id: 'ammit', name: 'AMMIT', crown: 'crocodile',
     health: 6800, speed: 2.1, damage: 52,
     abilities: ['slam', 'volley'],
-    palette: { wrap: 0x7f7554, wrapDark: 0x3d3a24, deep: 0x120f08, eye: 0xffc14a, accent: 0x9fae5c },
+    palette: { wrap: 0x968c6a, wrapDark: 0x504b30, deep: 0x282216, eye: 0xffc14a, accent: 0x9fae5c },
   },
   {
     id: 'apep', name: 'APEP', crown: 'serpent',
     health: 8200, speed: 2.4, damage: 46,
     abilities: ['teleport', 'volley'],
-    palette: { wrap: 0x6b6a74, wrapDark: 0x2e2d38, deep: 0x0d0c12, eye: 0x9a4aff, accent: 0x4e6fb0 },
+    palette: { wrap: 0x8a8892, wrapDark: 0x45444f, deep: 0x232230, eye: 0x9a4aff, accent: 0x4e6fb0 },
   },
   {
     id: 'sekhmet', name: 'SEKHMET', crown: 'lioness',
     health: 9600, speed: 3.0, damage: 58,
     abilities: ['charge', 'slam'],
-    palette: { wrap: 0xa3835a, wrapDark: 0x5c3f22, deep: 0x1a0f08, eye: 0xff7a20, accent: 0xe0a63e },
+    palette: { wrap: 0xb59767, wrapDark: 0x6c4d2c, deep: 0x2e1e12, eye: 0xff7a20, accent: 0xe0a63e },
   },
   {
     id: 'set', name: 'SET', crown: 'set',
@@ -193,7 +193,7 @@ export const GODS = [
     // Escalating: one more tell to read every quarter of its health bar.
     abilities: ['charge', 'slam', 'volley', 'teleport', 'summon'],
     escalating: true,
-    palette: { wrap: 0x7a5f52, wrapDark: 0x3b2620, deep: 0x120806, eye: 0xff2a2a, accent: 0xb03a2a },
+    palette: { wrap: 0x94756a, wrapDark: 0x4e352d, deep: 0x2a1a15, eye: 0xff2a2a, accent: 0xb03a2a },
   },
 ];
 
@@ -435,9 +435,12 @@ function createGod(god, effects) {
     deep: new THREE.MeshStandardMaterial({
       color: god.palette.deep, roughness: 0.8,
     }),
+    // Same ember, same reason, one notch up because a god is four metres tall
+    // and the socket subtends less of the frame than a shambler's does at the
+    // range you fight it from.
     eye: new THREE.MeshStandardMaterial({
-      color: god.palette.deep, roughness: 0.6,
-      emissive: god.palette.eye, emissiveIntensity: 2.6,
+      color: 0x1a120b, roughness: 0.7,
+      emissive: god.palette.eye, emissiveIntensity: 1.2,
     }),
     accent: new THREE.MeshStandardMaterial({
       color: god.palette.accent, roughness: 0.3, metalness: 0.85,
@@ -484,8 +487,12 @@ function createGod(god, effects) {
     // The gilding is the telegraph channel. It is the only surface on the body
     // with metalness high enough to hold a colour against a bloom pass, so a
     // ramp on it is visible across a gallery at 16 units of ceiling height.
-    mats.accent.emissiveIntensity = k * 3.2;
-    mats.eye.emissiveIntensity = 2.6 + k * 4.0;
+    // The GILDING carries the telegraph, not the sockets. Ramping the eyes was
+    // pushing a colossus toward the same lit-visor read the shamblers had to be
+    // corrected out of, and the metal holds a colour against the bloom pass far
+    // better than two recessed squares ever will.
+    mats.accent.emissiveIntensity = k * 3.6;
+    mats.eye.emissiveIntensity = 1.2 + k * 0.8;
     const e = st.flash * 0.9;
     mats.wrap.emissive.setRGB(e * 0.75, e * 0.18, e * 0.10);
     mats.wrapDark.emissive.setRGB(e * 0.75, e * 0.18, e * 0.10);

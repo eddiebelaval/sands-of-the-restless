@@ -82,9 +82,9 @@ const VIEW_COS = Math.cos(0.95);   // about 54 degrees off the view axis
  * THE SPLIT IS THE POINT. The courtyard's pyramid is a single cylinder of
  * radius 32, and widening every query by 32 makes the grid a linear scan with
  * extra steps: measured, it forced a 64-unit cell, which is most of the
- * playable yard. So anything bigger than the cell goes into a short list that
- * is always scanned instead. There are 39 of those against 422 in the grid, and
- * the whole structure is only worth building because that ratio holds.
+ * playable yard. So anything bigger than half a cell goes into a short list
+ * that is always scanned instead. Fewer than one collider in ten lands there,
+ * and the whole structure is only worth building because that ratio holds.
  */
 const CELL = 5;
 const BIG_R = CELL * 0.5;
@@ -333,6 +333,39 @@ export function createDirector({
     }
   }
 
+  /**
+   * How much stone stands between a candidate point and the player.
+   *
+   * THE COURTYARD IS NOT ONE OPEN ROOM. A colonnade wall runs the length of the
+   * avenue at x = plus or minus 15, and the yard reaches to 49. A spawn point
+   * outside that wall is thirty metres from the player as the crow flies and
+   * sixty as a shambler walks, because it has to go round the open end - and
+   * the horde then reads as a wave that never arrives, which is the same
+   * symptom as a horde that is broken.
+   *
+   * Sampling the straight line is not pathfinding and does not pretend to be.
+   * It answers one question - "is there a wall in the way of the obvious
+   * route" - and that is enough to keep the director from choosing the far side
+   * of a barrier when the near side is available. It scores rather than vetoes,
+   * so a map with no clear line still spawns.
+   *
+   * Returns 0 for a clean line, 1 for a solid one.
+   */
+  function obstruction(px, pz) {
+    const dx = player.position.x - px;
+    const dz = player.position.z - pz;
+    const d = Math.hypot(dx, dz);
+    if (d < 2) return 0;
+
+    const steps = Math.min(14, Math.max(3, Math.round(d / 3.5)));
+    let blocked = 0;
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (!isClear(px + dx * t, pz + dz * t, 0.5)) blocked++;
+    }
+    return blocked / (steps - 1);
+  }
+
   const _fwd = new THREE.Vector3();
 
   /**
@@ -372,6 +405,11 @@ export function createDirector({
       let score = 0;
       score -= Math.abs(d - (SPAWN_NEAR + 9)) * 0.6;
       if (d > SPAWN_FAR) score -= 60;
+
+      // Heavier than the view penalty on purpose. An enemy the player can see
+      // arrive is a small cost; an enemy that has to walk round a colonnade to
+      // arrive at all is the round not ending.
+      score -= obstruction(p.x, p.z) * 90;
 
       // In view is a heavy penalty, not a veto: in a small chamber with the
       // player facing the only doorway, every legal point is in front of them,

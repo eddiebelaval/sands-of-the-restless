@@ -19,7 +19,7 @@
  *   - Geometry is shared across every instance of a variant. Twelve shamblers
  *     are twelve scene graphs pointing at one set of BufferGeometries, so the
  *     pool costs memory once no matter how deep it is.
- *   - Materials are NOT shared, because the hit flash is per instance. Four
+ *   - Materials are NOT shared, because the hit flash is per instance. Five
  *     small MeshStandardMaterials per actor, allocated when the pool is built
  *     and never again.
  *
@@ -62,11 +62,44 @@ function partGeo(w, h, d) {
   return g;
 }
 
-function stripGeo(w, h) {
-  const key = `strip|${w}|${h}`;
+/**
+ * A torn wrap.
+ *
+ * NOT a rectangle. A flat quad hanging off a box-man is another box-man edge,
+ * and the whole reason to spend geometry on cloth is to break the axis-aligned
+ * outline that everything else in a primitives-only character has. So the strip
+ * tapers as it falls, its hem is torn at three different lengths, and it curls
+ * out of its own plane so it still reads from the side rather than vanishing
+ * edge-on.
+ *
+ * The jitter is seeded by `cut`, so the shapes are stable across a run - the
+ * geometry is shared by every instance that asks for the same one - and three
+ * cuts is enough that no two rags on one body are the same tear.
+ */
+function stripGeo(w, h, cut = 0) {
+  const key = `strip|${w}|${h}|${cut}`;
   let g = GEO.get(key);
   if (!g) {
-    g = plane(w, h, 3, PART_TILES);
+    g = plane(w, h, 4, PART_TILES);
+
+    let seed = (cut + 1) * 9301 + 49297;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i);
+      const t = (h / 2 - y) / h;                  // 0 at the top, 1 at the hem
+
+      pos.setX(i, x * (1 - t * (0.30 + rnd() * 0.34)));
+      if (t > 0.7) pos.setY(i, y + (rnd() - 0.55) * h * 0.30);
+      pos.setZ(i, (rnd() - 0.5) * w * 0.55 * t);  // the curl, growing downward
+    }
+
+    pos.needsUpdate = true;
+    g.computeVertexNormals();
     // Built in XY around its centre; the anchor wants to swing from the top,
     // so shift it down once here rather than on every instance.
     g.translate(0, -h / 2, 0);
@@ -105,9 +138,9 @@ export function groundAt(ctx, x, z, feetY) {
  *
  * Two passes, like the player, because escaping one collider can push you into
  * its neighbour. The collider set is queried through a uniform grid rather than
- * iterated: the courtyard alone carries a couple of thousand wall discs, and
- * twenty-four actors each walking that list every frame is the difference
- * between a horde and a slideshow.
+ * iterated: the courtyard carries 461 collision cylinders and the interior a
+ * comparable number, and twenty-four actors each walking that list three times
+ * a frame is the difference between a horde and a slideshow.
  *
  * Returns true if anything was touched, which the caller uses to decide whether
  * it is wedged and should give up on its current heading.
@@ -282,18 +315,19 @@ function makeMaterials(spec) {
     metalness: 0.0,
   });
 
-  // The eye slot, and the only emissive surface on the body.
+  // What is left alight in the sockets.
   //
-  // It is one thin bar across the face rather than two dots. At twenty metres
-  // in a bright desert a two-pixel dot is gone; a horizontal slot survives,
-  // and it is also the single strongest cue the game has for WHICH WAY an
-  // enemy is facing, which is the fact a player needs before any other.
+  // Low, and on a small area. The first pass ran this at 2.4 across a wide bar
+  // and produced a visor; the point of an emissive here is that a shape in a
+  // dark chamber still tells you which way it is facing, and 0.9 on two
+  // recessed squares does that without becoming the brightest object in a
+  // sunlit frame. It is deliberately dimmer than the braziers it stands near.
   const eye = new THREE.MeshStandardMaterial({
-    color: spec.palette.deep,
-    roughness: 0.6,
+    color: 0x1a120b,
+    roughness: 0.7,
     metalness: 0.0,
     emissive: spec.palette.eye,
-    emissiveIntensity: 2.4,
+    emissiveIntensity: 0.9,
   });
 
   const accent = new THREE.MeshStandardMaterial({
@@ -455,20 +489,40 @@ export function buildHumanoid(spec, mats, actor) {
   neck.position.y = P.headY;
   torso.add(neck);
 
-  // Two meshes, both region 'head'. The skull is the target; the wrapped jaw
-  // wedge under it is what makes the head read as a HEAD and not a cube, and
-  // paying 100 for a hit on the jaw of a mummy is the right answer anyway.
+  // Six meshes, all region 'head'. A hit on the bandaged jaw of a mummy is a
+  // headshot by any reading, and splitting hairs there would only make the 100
+  // gold feel arbitrary.
+  //
+  // THE HEAD IS BUILT AROUND ONE MISTAKE THIS REPLACES. The previous pass put a
+  // single wide emissive BAR across the face at intensity 2.4. On a GPU, in
+  // sun, it was the brightest thing in frame that was not the muzzle flash, and
+  // it read as a machine visor: the strongest possible "this is a robot" cue,
+  // on the one surface the player looks at. What a wrapped skull actually has
+  // is two dark holes under an overhanging brow, and whatever is in them is
+  // barely alight.
   add(neck, partGeo(P.headW, P.headH, P.headD), mats.deep, 'head')
     .position.y = P.headH / 2;
 
-  // The wrapped jaw, and the slot the eyes look out of. Both are tagged head:
-  // a hit on the bandaged jaw of a mummy is a headshot by any reading, and
-  // splitting hairs there would only make the 100 gold feel arbitrary.
-  add(neck, partGeo(P.headW * 0.94, P.headH * 0.40, P.headD * 0.74), mats.wrap, 'head')
-    .position.set(0, P.headH * 0.26, P.headD * 0.24);
+  // Linen over the jaw and over the crown, leaving the socket band between
+  // them exposed. Two bands rather than one wedge, because the DARK GAP is
+  // what makes it a face.
+  add(neck, partGeo(P.headW * 0.96, P.headH * 0.34, P.headD * 0.84), mats.wrap, 'head')
+    .position.set(0, P.headH * 0.20, P.headD * 0.14);
 
-  add(neck, partGeo(P.headW * 0.72, P.headH * 0.15, 0.05), mats.eye, 'head')
-    .position.set(0, P.headH * 0.62, P.headD * 0.52);
+  add(neck, partGeo(P.headW * 0.99, P.headH * 0.32, P.headD * 0.88), mats.wrap, 'head')
+    .position.set(0, P.headH * 0.83, P.headD * 0.08);
+
+  // The brow. It stands proud of the face specifically so the sockets under it
+  // are in its shadow at every sun angle the courtyard has.
+  add(neck, partGeo(P.headW * 0.94, P.headH * 0.11, P.headD * 0.34), mats.wrapDark, 'head')
+    .position.set(0, P.headH * 0.63, P.headD * 0.46);
+
+  // Two sockets, barely proud of the face and deep in the brow's shadow. Dim
+  // and small: at twenty metres this is a pair of embers, not a lamp.
+  for (const side of [-1, 1]) {
+    add(neck, partGeo(P.headW * 0.17, P.headH * 0.11, 0.03), mats.eye, 'head')
+      .position.set(side * P.headW * 0.24, P.headH * 0.47, P.headD * 0.51);
+  }
 
   if (P.headdress) {
     // A nemes flare. Two angled slabs either side of the skull, which is the
@@ -497,7 +551,7 @@ export function buildHumanoid(spec, mats, actor) {
     pivot.rotation.y = t.yaw || 0;
     (t.on === 'arm' ? arms[t.side > 0 ? 1 : 0].elbow : torso).add(pivot);
 
-    const m = new THREE.Mesh(stripGeo(t.w, t.h), mats.tatter);
+    const m = new THREE.Mesh(stripGeo(t.w, t.h, t.cut || 0), mats.tatter);
     // Wraps are decoration. Left hittable they sit in front of the skull at
     // certain angles and silently convert a headshot into a body hit, which is
     // a 40 gold bug the player would never be able to diagnose.
@@ -1048,20 +1102,31 @@ export const MUMMY = {
   voicePitch: 1.0,
 
   /**
-   * MEASURED AGAINST THE GROUND IT STANDS ON.
+   * MEASURED AGAINST THE GROUND IT STANDS ON, TWICE.
    *
-   * The first build gave the shambler 0xb8a888 linen, which is within a few
-   * percent of the courtyard's sand (0xf2e0bd) and its limestone (0xd8c39a). At
-   * twenty metres in desert noon it was invisible - not subtle, invisible - and
-   * the screenshot is the only way that was ever going to surface, because
-   * every state assertion about it passed. Undead linen is GRIMED linen, and
-   * grimed linen is two stops under bare sand, which is both correct and the
-   * only way the silhouette survives the distance it has to be read at.
+   * The first build gave the shambler 0xb8a888 linen, within a few percent of
+   * the courtyard's sand (0xf2e0bd) and its limestone (0xd8c39a). At twenty
+   * metres in desert noon it was invisible - not subtle, invisible.
+   *
+   * The correction went two stops under bare sand and OVERSHOT. On a real GPU
+   * that landed the whole body in a value-crushed near-black mass with no light
+   * half at all: a flat silhouette with no wrap lines, no depth, and no
+   * material read, which photographed as a black box with a lit visor. Both
+   * failures are the same mistake made in opposite directions - trying to buy
+   * separation with one number.
+   *
+   * Separation comes from VALUE CONTRAST IN THE MIDS plus shadow. A mummy in
+   * sunlight is dirty ivory where the sun hits it and deep brown in the crease,
+   * and it is the RANGE between those two that reads at distance, not the
+   * average. So the base linen sits a comfortable step under the sand where it
+   * still has a lit half to lose, and wrapDark is the crease it loses it into:
+   * shins, forearms, the binding across the chest, and the brow over the
+   * sockets. Every one of those is a shadow line the eye can find.
    */
   palette: {
-    wrap: 0x776a50,
-    wrapDark: 0x413728,
-    deep: 0x14100a,
+    wrap: 0x9a8a6e,
+    wrapDark: 0x5b4d38,
+    deep: 0x2a2118,
     eye: 0xffae3c,
     accent: 0xc9a24a,
   },
@@ -1072,21 +1137,29 @@ export const MUMMY = {
     torsoY: 0.14, chestW: 0.46, chestH: 0.56,
     shoulderX: 0.27, shoulderY: 0.50, armW: 0.14, upperL: 0.40, foreL: 0.42,
     headY: 0.66, headW: 0.24, headH: 0.28, headD: 0.26,
-    tatterRest: 0.10,
+    // Hanging well clear of the body, so the rags are OUTLINE rather than
+    // texture. At 0.10 they lay flat against the limbs and did nothing.
+    tatterRest: 0.30,
+
     /**
-     * NARROW, LOW, AND TURNED.
+     * THE THING THAT STOPS IT BEING A BOX-MAN.
      *
-     * The first pass hung two 26 cm rags off the shoulders. At arm's length
-     * they photographed as flat pale SHEETS standing out sideways from the
-     * head - the single ugliest thing in the build, and invisible in every
-     * state assertion. A loose bandage end is a hand's width, it comes off the
-     * waist and the forearm where a wrapping would actually fail, and no two
-     * of them face the same way.
+     * Every other member in this spec is an axis-aligned box, because that is
+     * what a primitives-only character is made of, and a stack of them reads as
+     * a robot no matter what colour it is painted. Loose trailing wrap is the
+     * whole answer: it is the only asymmetric, non-rectangular, silhouette-
+     * breaking thing on the body.
+     *
+     * So there is a torn hem across the hips that breaks the two-legs-in-a-box
+     * outline, a long wrap off ONE forearm and not the other, and a rag down
+     * the spine. Three different cuts, three different yaws, and nothing
+     * mirrored - a body that has been unravelling for three thousand years has
+     * not unravelled evenly.
      */
     tatters: [
-      { on: 'torso', x: -0.15, y: 0.18, z: -0.13, w: 0.11, h: 0.62, yaw: 0.30, swing: 1.0 },
-      { on: 'torso', x: 0.14, y: 0.10, z: -0.12, w: 0.09, h: 0.46, yaw: -0.40, swing: 0.8 },
-      { on: 'arm', side: 1, x: 0, y: -0.28, z: 0, w: 0.09, h: 0.42, yaw: 1.15, swing: 1.5 },
+      { on: 'torso', x: 0.0, y: -0.04, z: -0.02, w: 0.34, h: 0.44, yaw: 0.10, cut: 0, swing: 0.7 },
+      { on: 'torso', x: -0.13, y: 0.20, z: -0.13, w: 0.13, h: 0.74, yaw: 0.42, cut: 1, swing: 1.1 },
+      { on: 'arm', side: 1, x: 0, y: -0.26, z: 0, w: 0.12, h: 0.52, yaw: 1.10, cut: 2, swing: 1.6 },
     ],
   },
 
@@ -1104,7 +1177,15 @@ export const MUMMY = {
     // torso with no arms at all - which is the one angle the player sees an
     // enemy from most of the time.
     armSplay: 0.30,
-    elbowBend: 0.62,
+    // NEGATIVE, and that is the whole pose.
+    //
+    // The animator applies this as -elbowBend, so a positive value bends the
+    // forearm further FORWARD - which, on an upper arm already reaching 54
+    // degrees out, straightens the whole limb into a horizontal stick and the
+    // enemy reads as a scarecrow. A negative value swings the forearm back
+    // toward vertical, so it HANGS off the outstretched upper arm. That is the
+    // silhouette everyone already knows.
+    elbowBend: -0.45,
     lean: -0.24,         // negative hunches the chest forward over the hips
     sway: 0.11,
     hipTwist: 0.07,

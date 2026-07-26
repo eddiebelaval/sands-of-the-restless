@@ -38,21 +38,20 @@ node test/ao-ab.mjs      # measures whether the AO pass actually contributes
 
 ## In flight
 
-**Enemies and the wave director.** An agent wrote `src/enemies/{mummy,variants,
-director,boss}.js` and `src/systems/damage.js`. They are committed as a safety
-net but NOT WIRED into main.js. Verify them before trusting them.
+**Enemies and the wave director are WIRED and committed** in 1536c53, not
+pending as an earlier draft of this note claimed. `src/enemies/{mummy,variants,
+director,boss}.js` plus `src/systems/damage.js`, ticked from the frame loop
+after the player and camera so the horde seeks this frame's position. The
+scenery-gold temporary is deleted; `payout()` skips any hit without an enemy.
+`test/enemies.mjs` covers it. Still unplayed by a human on a real GPU.
 
 ## Known open items
 
-1. `main.js` has a LABELLED TEMPORARY: shooting scenery pays 10 gold, because
-   without it nothing can pay the 500 to 1000 gap and an unaffordable door is
-   indistinguishable from a broken one. Delete the labelled branch once enemies
-   land.
-2. Critic scores as of round 2: lighting 3.5, composition 4.5, materials 5.0,
+1. Critic scores as of round 2: lighting 3.5, composition 4.5, materials 5.0,
    viewmodel 4.0, against the reference project's 7.0 to 8.0.
-3. On the pistol the hip pose puts the lower half of both hands below frame.
+2. On the pistol the hip pose puts the lower half of both hands below frame.
    That is a `hipPose` change in viewmodel.js, deliberately not made.
-4. No remote. Nothing pushed.
+3. No remote. Nothing pushed.
 
 ## Lessons that cost real time today - do not relearn these
 
@@ -78,6 +77,10 @@ net but NOT WIRED into main.js. Verify them before trusting them.
   they failed to render.
 - **An open-ended cylinder shows a hollow tube** when you can see its end face.
   Correct for stacked column drums, wrong for a fallen one.
+- **A handoff note written while an agent is mid-run goes stale before you
+  finish writing it.** This one claimed the enemies were unwired; they had
+  already landed in the same commit that carried the note. Check `git show
+  --stat` against the claim, not memory of what you last saw.
 - **Parallel agents each optimise their own note and nobody holds the frame.**
   Architraves at a fixed height plus randomised wall heights equals beams
   floating in mid-air. Neither change was wrong alone. Integrate by hand.
