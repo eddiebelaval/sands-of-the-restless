@@ -151,6 +151,56 @@ function ring(mat, r, t, x, y, z, seg = 16) {
 }
 
 // ---------------------------------------------------------------------------
+// unit primitives, scaled per instance
+//
+// Everything organic on this viewmodel - fourteen phalanges, twelve joints, two
+// thumb pads, two heels, two wrists - is one of two shapes at forty different
+// sizes. Caching a UNIT cylinder and a UNIT sphere and scaling the mesh keeps
+// that at two geometries instead of forty, and the scale is not a compromise:
+// a finger is genuinely an ellipse in cross-section (wider across than deep)
+// and a knuckle is genuinely an ellipsoid, so non-uniform scale is the correct
+// modelling operation here rather than a shortcut around one.
+//
+// Scale runs before rotation in the local matrix. On every helper below that
+// means mesh X stays radial, mesh Y stays the long axis and mesh Z stays the
+// third axis, whatever the part is rotated to afterwards.
+// ---------------------------------------------------------------------------
+
+const unitCyl = (seg) =>
+  cached(`U${seg}`, () => new THREE.CylinderGeometry(0.5, 0.5, 1, seg));
+
+/** Tapered unit cylinder. `ratio` is the +Y end's radius as a fraction. */
+const unitCone = (ratio, seg) =>
+  cached(`V${ratio},${seg}`, () => new THREE.CylinderGeometry(0.5 * ratio, 0.5, 1, seg));
+
+const unitBall = (seg) =>
+  cached(`S${seg}`, () =>
+    new THREE.SphereGeometry(0.5, seg, Math.max(4, Math.round(seg * 0.6))));
+
+/** Ellipsoid at a point. Joints, fingertips, pads, the heel of the palm. */
+function ball(mat, dx, dy, dz, x, y, z, seg = 8) {
+  const m = new THREE.Mesh(unitBall(seg), mat);
+  m.scale.set(dx, dy, dz);
+  m.position.set(x, y, z);
+  return m;
+}
+
+/**
+ * A rounded segment running along the local Z axis, elliptical in section.
+ *
+ * `sign` is which way along Z the narrow end points, so a taper can be aimed
+ * distally on a thumb that reaches one way and a wrist that reaches the other
+ * without either caller having to reason about Euler order.
+ */
+function zTube(mat, dx, dy, len, x, y, z, sign = 1, seg = 10, taper = 1) {
+  const m = new THREE.Mesh(taper === 1 ? unitCyl(seg) : unitCone(taper, seg), mat);
+  m.scale.set(dx, len, dy);
+  m.rotation.x = sign > 0 ? Math.PI / 2 : -Math.PI / 2;
+  m.position.set(x, y, z);
+  return m;
+}
+
+// ---------------------------------------------------------------------------
 // procedural surface maps
 //
 // The world ships scanned PBR materials and the weapon shipped with none, so
@@ -267,6 +317,31 @@ function imageTexture(imgData, size) {
   return c;
 }
 
+/**
+ * Three greyscale fields -> one RGB canvas.
+ *
+ * fieldTexture() above can only make a single value lighter and darker, which
+ * is a fine way to describe phosphate or polymer and a useless way to describe
+ * skin. A hand does not vary in VALUE, or not mainly: it varies in CHROMA, and
+ * it does so at a much lower frequency than its grain. The knuckles and the
+ * pads run ruddy because the blood is close to the surface there; the backs of
+ * the metacarpals run ochre and dusty. Two fields with different seeds pushing
+ * red one way and blue the other is the whole trick, and it is the reason this
+ * exists as its own function rather than as a tint argument.
+ */
+function rgbTexture(r, g, b, size) {
+  const img = new ImageData(size, size);
+  const q = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255);
+  for (let i = 0; i < size * size; i++) {
+    const o = i * 4;
+    img.data[o] = q(r[i]);
+    img.data[o + 1] = q(g[i]);
+    img.data[o + 2] = q(b[i]);
+    img.data[o + 3] = 255;
+  }
+  return imageTexture(img, size);
+}
+
 /** Wrap a canvas as a repeating texture. */
 function repeatTex(canvas, repeat, srgb) {
   const t = new THREE.CanvasTexture(canvas);
@@ -303,7 +378,9 @@ function surfaceMaps() {
 
   const metalA = new Float32Array(n);
   const gloveA = new Float32Array(n);
-  const handA = new Float32Array(n);
+  const handAR = new Float32Array(n);
+  const handAG = new Float32Array(n);
+  const handAB = new Float32Array(n);
 
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
@@ -356,16 +433,37 @@ function surfaceMaps() {
       // tile still wraps - because a work glove is cloth-backed and the weave
       // is what says "worn on a hand" instead of "moulded".
       //
-      // It also carries a much narrower albedo range than the sleeve. Wide
-      // albedo mottle on a part this small competes with the modelled creases
-      // and the creases are the whole point.
       const weave = Math.abs(Math.sin(u * Math.PI * 22)) * 0.5
         + Math.abs(Math.sin(v * Math.PI * 22)) * 0.5;
       const pore = tileFbm(u, v, 34, 3, 57.0);
       const fleck = tileNoise(u * 72, v * 72, 72, 63.0);
       handH[i] = weave * 0.30 + pore * 0.52 + fleck * 0.18;
       handR[i] = 0.78 + pore * 0.22 - Math.max(0, pore - 0.72) * 0.7;
-      handA[i] = 0.80 + pore * 0.20;
+
+      // Albedo, in COLOUR.
+      //
+      // The previous version of this line was `0.80 + pore * 0.20`, remapped
+      // by fieldTexture into 0.944..1.0. That is a flat white card with a 5
+      // percent wobble in it: measured over the whole map its standard
+      // deviation was under two 8-bit levels, so the hand material was, to the
+      // renderer, untextured. "The hands are one flat colour" was not a
+      // subjective note, it was a description of this array.
+      //
+      // Three things changed. The value range is genuinely wide now. There is
+      // a low-frequency FLUSH field that pushes red up and blue down in
+      // patches, which is what skin under leather actually does. And there is
+      // a mid-frequency DUST field that desaturates and lifts, which is what
+      // three weeks in a desert does to a glove. Both are much coarser than
+      // the pore grain on purpose: variation at grain frequency averages out
+      // to grey at any distance you would ever see it from, and variation at
+      // part size is what the eye reads as one hand rather than as fourteen
+      // identically-painted parts.
+      const flush = tileFbm(u, v, 5, 3, 71.0);
+      const dust = tileFbm(u, v, 11, 2, 83.0);
+      const val = 0.80 + pore * 0.16 + fleck * 0.06 - dust * 0.12;
+      handAR[i] = val * (1.00 + (flush - 0.5) * 0.32 + (dust - 0.5) * 0.06);
+      handAG[i] = val * (1.00 - (flush - 0.5) * 0.10);
+      handAB[i] = val * (1.00 - (flush - 0.5) * 0.38 + (dust - 0.5) * 0.14);
     }
   }
 
@@ -386,7 +484,11 @@ function surfaceMaps() {
     // it reads as grain instead of as a pattern.
     handNormal: repeatTex(imageTexture(normalFromHeight(handH, S, 2.6), S), 8),
     handRough: repeatTex(fieldTexture(handR, S, 0.50, 1.0), 8),
-    handAlbedo: repeatTex(fieldTexture(handA, S, 0.72, 1.0), 8, true),
+    // Repeated FOUR times rather than eight. The grain lives in handNormal;
+    // this map carries the flush and the dust, and those are part-sized
+    // features. Tiled eight times a part-sized feature becomes a pattern, and
+    // a pattern is the one thing that gives a procedural texture away.
+    handAlbedo: repeatTex(rgbTexture(handAR, handAG, handAB, S), 4, true),
   };
   return texCache;
 }
@@ -514,59 +616,82 @@ function palette(M) {
 
     // --- the hand ------------------------------------------------------------
     //
-    // Five materials, and the only thing that matters about them is that they
-    // form a VALUE LADDER that the modelled geometry can stand on:
+    // A VALUE LADDER for the modelled geometry to stand on, five rungs wide:
     //
-    //     gloveDark  crease between two fingers, under-palm
-    //     glovePalm  palm and the shaded underside of every segment
-    //     glove      the body of the hand
-    //     gloveLit   knuckles, tendon ridges, the thumb pad
+    //     gloveCrease  the valley between two fingers, and the thumb web
+    //     gloveDark    the channel between two metacarpals, under-palm
+    //     glovePalm    palm side, fingertip pads, the underside of a segment
+    //     glove        the body of the hand
+    //     gloveLit     knuckles, joints, the tendon ridges
     //
-    // At this polygon count there is no per-pixel occlusion to draw a crease
-    // for us, so the crease is a material. Four steps is the minimum that lets
-    // a knuckle read as proud of a finger and a finger read as separate from
-    // the finger beside it at the same time.
+    // The SPREAD matters more than any individual rung, and it is the number
+    // that changed in this pass. The viewmodel's three lights are shared with
+    // all seven weapons and are not this pass's to move, and as authored they
+    // are close to flat: a key at 4.1, a fill at 2.6 from the opposite side and
+    // a rim at 3.1, all of them roughly frontal. Under lighting that even,
+    // shading contributes almost nothing to form and the ladder is carrying the
+    // entire read on its own. The old rungs ran 0x10 to 0x4f in red - about a
+    // factor of five in sRGB. These run 0x0a to 0x59, about eight, and the lit
+    // rung went UP rather than the dark rungs going down, because the thing
+    // that has to survive is the knuckle line.
     //
-    // Every one of them is roughly a third of the albedo the previous pass
-    // used. The measured problem was not hue and not shading: it was that the
-    // lit face of a hand came out at 190,160,120 against sand at 189,169,134.
-    // Two objects at the same value have no edge between them no matter how
-    // well either one is modelled, and the note that came back - "flat cream
-    // cards" - is what a shape with no silhouette looks like. A worn glove is
-    // a genuinely dark object; against a sunlit desert it should sit two stops
-    // under the ground behind it, and then every crease in it has somewhere to
-    // go.
+    // The absolute level came down as well, and that is a measured fix rather
+    // than a taste one. In the avenue frame the hands averaged 121,98,74
+    // against sand at 136,106,74: nine percent apart, which is no edge at all,
+    // and every crease modelled into a shape with no silhouette is wasted. A
+    // worn glove in a sunlit desert belongs a real stop under the ground behind
+    // it. Most of that stop comes from handAlbedo, which used to be a flat
+    // white card and now averages 0.86 with real chroma in it; the rest is
+    // here.
     glove: new THREE.MeshStandardMaterial({
-      color: 0x3a2a1c, roughness: 0.92, metalness: 0.0,
+      color: 0x362619, roughness: 0.92, metalness: 0.0,
       map: T.handAlbedo, normalMap: T.handNormal, roughnessMap: T.handRough,
-      normalScale: new THREE.Vector2(1.1, 1.1),
+      normalScale: new THREE.Vector2(1.15, 1.15),
       envMapIntensity: HAND_ENV,
     }),
 
-    // The shadow between two fingers, and the seat of every joint. Sunk into
-    // the surface rather than laid on it, so it is a gap and not a stripe.
+    // The channel between two metacarpal bars, and the shadow under the heel.
     gloveDark: new THREE.MeshStandardMaterial({
-      color: 0x100b07, roughness: 0.97, metalness: 0.0,
+      color: 0x150e08, roughness: 0.97, metalness: 0.0,
       normalMap: T.handNormal, normalScale: new THREE.Vector2(0.7, 0.7),
       envMapIntensity: HAND_ENV * 0.5,
     }),
 
-    // The palm side and the underside of the fingers: in shadow from the key
-    // by construction, because the key is above and the palm faces the grip.
-    // Modelling that as albedo as well as as geometry doubles the read.
+    // The valley between two fingers, and the web between thumb and index.
+    //
+    // Its OWN material rather than a second use of gloveDark, and that is the
+    // load-bearing decision in this whole block. Three separate passes of this
+    // file added hand creases and all three of them were invisible - modelled
+    // as grooves sunk INSIDE a solid slab, which cannot work because there is
+    // no boolean subtraction here and nothing below an opaque surface is ever
+    // drawn. Nobody caught it for three rounds because a lit screenshot cannot
+    // tell you a material drew zero pixels. A flat-colour mask render can, and
+    // it can only do it if the crease is separable from every other dark part
+    // of the hand. So: distinct material, mask the frame, read the count. If
+    // this rung is at zero the crease is not there, whatever the render looks
+    // like.
+    gloveCrease: new THREE.MeshStandardMaterial({
+      color: 0x0a0705, roughness: 0.98, metalness: 0.0,
+      normalMap: T.handNormal, normalScale: new THREE.Vector2(0.6, 0.6),
+      envMapIntensity: HAND_ENV * 0.35,
+    }),
+
+    // The palm side and the pads of the fingertips: in shadow from the key by
+    // construction, because the key is above and the palm faces the grip.
     glovePalm: new THREE.MeshStandardMaterial({
-      color: 0x261b10, roughness: 0.95, metalness: 0.0,
+      color: 0x241a0f, roughness: 0.95, metalness: 0.0,
       map: T.handAlbedo, normalMap: T.handNormal, roughnessMap: T.handRough,
       normalScale: new THREE.Vector2(1.0, 1.0),
       envMapIntensity: HAND_ENV,
     }),
 
-    // Knuckles, tendon ridges over the back of the hand, and the thumb pad.
-    // These are the parts that stand proud and catch the key, and they are the
-    // single strongest cue that a shape is a hand: four separate highlights in
-    // a row along a fold is a knuckle line and nothing else looks like it.
+    // Knuckles, the interphalangeal joints, and the tendon ridges over the back
+    // of the hand. These are the parts that stand proud and catch the key, and
+    // they are the single strongest cue that a shape is a hand: four separate
+    // highlights in a row along a fold is a knuckle line and nothing else in
+    // the world looks like it.
     gloveLit: new THREE.MeshStandardMaterial({
-      color: 0x4f3a24, roughness: 0.74, metalness: 0.0,
+      color: 0x4e3825, roughness: 0.74, metalness: 0.0,
       map: T.handAlbedo, normalMap: T.handNormal, roughnessMap: T.handRough,
       normalScale: new THREE.Vector2(1.2, 1.2),
       envMapIntensity: HAND_ENV,
@@ -582,7 +707,7 @@ function palette(M) {
     // honest reason for the change. It is still a stop under the sand, so it
     // marks the joint without winning the frame.
     cuff: new THREE.MeshStandardMaterial({
-      color: 0x4a3520, roughness: 0.95, metalness: 0.0,
+      color: 0x392617, roughness: 0.95, metalness: 0.0,
       map: T.gloveAlbedo, normalMap: T.gloveNormal, roughnessMap: T.gloveRough,
       normalScale: new THREE.Vector2(1.2, 1.2),
       envMapIntensity: CLOTH_ENV * 0.6,
@@ -644,6 +769,14 @@ function palette(M) {
       blending: THREE.AdditiveBlending, depthWrite: false,
     }),
   };
+
+  // Names are diagnostics, not decoration. The flat-colour mask render buckets
+  // pixels by material name, and that render is the ONLY way to answer "is this
+  // crease visible at all" - three separate passes of hand creases were written
+  // into this file and none of them ever drew a pixel, because there is no
+  // boolean subtraction here and anything sunk below an opaque surface is
+  // simply covered by it. A lit screenshot cannot tell you that; a mask can.
+  for (const k of Object.keys(paletteCache)) paletteCache[k].name = k;
 
   return paletteCache;
 }
@@ -717,6 +850,43 @@ function onArc(mat, e, a, z, t, l, w, out) {
 }
 
 /**
+ * The same slab, ROUNDED: a tube lying along the arc, elliptical in the
+ * (radial, axis) cross-section, `taper` narrowing it toward the far end.
+ *
+ * This one primitive is the difference between slats and digits, and the
+ * reason is lighting rather than shape preference. A box presents three flat
+ * faces and two hard edges to the camera, and a flat face under a frontal key
+ * is ONE value across its whole area - that is what a facet is, and the note
+ * that came back on these hands ("cardboard boxes with visible axis-aligned
+ * facets") is a description of forty of them stacked up. A tube has a
+ * continuous gradient across its width no matter where the light is standing,
+ * so it has a crown and a shoulder and a shadow side even under lighting flat
+ * enough to kill a box outright.
+ *
+ * That matters here specifically because the three viewmodel lights are shared
+ * with every weapon in the game and re-aiming them to sculpt the hands would
+ * relight all seven. The lights are not this pass's to move. The geometry is.
+ */
+function onArcTube(mat, e, a, z, t, l, w, out, seg = 10, taper = 1) {
+  const [ux, uy] = arcNormal(e, a);
+  const m = new THREE.Mesh(taper === 1 ? unitCyl(seg) : unitCone(taper, seg), mat);
+  m.scale.set(t, l, w);
+  m.position.set(Math.cos(a) * e.rx + ux * out, Math.sin(a) * e.ry + uy * out, z);
+  m.rotation.z = Math.atan2(uy, ux);
+  return m;
+}
+
+/** An ellipsoid sitting on the arc. Knuckles, joints, fingertips, the heel. */
+function onArcBall(mat, e, a, z, t, l, w, out, seg = 8) {
+  const [ux, uy] = arcNormal(e, a);
+  const m = new THREE.Mesh(unitBall(seg), mat);
+  m.scale.set(t, l, w);
+  m.position.set(Math.cos(a) * e.rx + ux * out, Math.sin(a) * e.ry + uy * out, z);
+  m.rotation.z = Math.atan2(uy, ux);
+  return m;
+}
+
+/**
  * A local frame standing on the ellipse: +X radially out, +Y tangential, +Z
  * along the cylinder axis. Used for the two parts that run ALONG the gripped
  * object rather than around it - the thumb and the wrist - because those need
@@ -742,39 +912,83 @@ function arcFrame(e, a, z, out) {
 function wrapFinger(g, P, e, z, w, t, a0, a1) {
   const step = (a1 - a0) / 3;
 
+  // The metacarpophalangeal swell, on the knuckle line itself.
+  //
+  // A SWELL, not a knuckle: wide enough to touch its neighbours, barely proud,
+  // and on the same rung as the finger behind it. The knuckle LINE is built
+  // once in wrappedHand as a single ridge across all four - see the note there.
+  //
+  // The version this replaces was a sphere 1.18x the finger's depth on the lit
+  // rung, one per finger. Four of those in a row do not read as a knuckle line;
+  // they read as four bright bulbs, and with a rounded metacarpal bar behind
+  // each one the whole back of the hand came out as a rack of turned dowels
+  // with a polished cap on the end of each. That is the failure this round
+  // exists to undo. A hand is one mass with subtle divisions, and every part
+  // that competes to be its own object costs more than it adds.
+  g.add(onArcBall(P.glove, e, a0 + step * 0.05, z,
+    t * 1.03, w * 1.02, w * 1.30, t * 0.44, 10));
+
   for (let k = 0; k < 3; k++) {
-    const tk = t * (1 - k * 0.15);
-    const wk = w * (1 - k * 0.10);
+    // Taper along the finger, and taper WITHIN each phalanx. A finger and a
+    // length of hose differ by exactly two things at gameplay distance - the
+    // taper and the joints - and a three-segment digit whose segments are each
+    // a constant-radius tube still reads as hose with rings on it.
+    const t0 = t * (1 - k * 0.11);
+    const t1 = t * (1 - (k + 1) * 0.11);
+    const w0 = w * (1 - k * 0.08);
+    const w1 = w * (1 - (k + 1) * 0.08);
+
     const sa = a0 + step * k;
     const ea = a0 + step * (k + 1);
     const chord = arcChord(e, sa, ea);
 
-    // Body of the phalanx. Sunk to a third of its thickness, so it bites into
-    // the grip instead of resting against it: a finger that only touches is a
+    // Body of the phalanx. Sunk to a third of its depth so it bites into the
+    // grip instead of resting against it: a finger that only touches is a
     // finger that floats the moment the camera moves.
-    g.add(onArc(P.glove, e, (sa + ea) / 2, z, tk, chord * 1.16, wk, tk * 0.45));
+    //
+    // The distal segment takes the palm rung, because by the time a finger has
+    // wrapped that far round a grip its last joint is pointing back at the
+    // shooter and is in shadow from a key that is above and in front.
+    // Overlapped by a fifth rather than butted, so consecutive segments
+    // interpenetrate and the silhouette runs through the junction instead of
+    // stepping at it.
+    g.add(onArcTube(k === 2 ? P.glovePalm : P.glove, e, (sa + ea) / 2, z,
+      t0, chord * 1.20, w0, t0 * 0.42, 10, t1 / t0));
 
+    // Interphalangeal joint. Proud of both segments it joins, so the finger has
+    // articulation rather than a smooth bend, and it fills the wedge that two
+    // straight tubes meeting at an angle would otherwise leave open along the
+    // inside of the curve.
+    //
+    // It is the SAME rung as the phalanx, and that is a correction. The first
+    // round of this put every joint on the lit rung on the theory that more
+    // articulation is more hand. What it actually produced was twenty-four pale
+    // beads in a grid across the middle of the pistol frame, reading as a
+    // bandolier: three highlight rows where a hand has one. A knuckle line is
+    // the strongest cue in this viewmodel precisely because it is the ONLY row
+    // of highlights, and anything else lit to the same value is not adding to
+    // it, it is competing with it. These joints keep their geometry and give up
+    // their value.
+    //
+    // Second correction, same lesson: it is 1.00x now, not 1.14x. Anything
+    // proud at a segment boundary is a RING, and a tube with a ring at each end
+    // is a machined dowel however good its material is. This one exists only to
+    // fill the wedge two straight tubes leave on the inside of a bend, so it is
+    // sized to disappear into them.
     if (k < 2) {
-      // Knuckle, and it goes at the START of the segment.
-      //
-      // The big one is the joint where the finger meets the back of the hand,
-      // which sits ON the knuckle line at a0 - not one phalanx further round
-      // the wrap, which is where the previous version put it. That is a subtle
-      // error on paper and a fatal one in first person: the camera looks
-      // straight down at the back of the firing hand for the entire game, so
-      // the knuckle row is the one part of the hand always on screen, and a row
-      // of bumps parked on the far side of the grip is a row nobody ever sees.
-      //
-      // Four of them in a line along a fold is the single strongest cue in this
-      // whole viewmodel that a shape is a hand. Nothing else looks like it.
-      const big = k === 0;
-      g.add(onArc(P.gloveLit, e, sa + step * (big ? 0.03 : 0.05), z,
-        tk * (big ? 0.80 : 0.58),
-        chord * (big ? 0.60 : 0.44),
-        wk * (big ? 1.02 : 0.92),
-        tk * (big ? 1.02 : 0.86)));
+      g.add(onArcBall(P.glove, e, ea, z,
+        t1 * 1.00, w0 * 0.92, w1 * 1.00, t1 * 0.42, 8));
     }
   }
+
+  // The pad. A tube that simply stops leaves a flat disc on the end of every
+  // finger, and four discs in a row is the difference between a hand and a
+  // rake. It takes the palm rung for the same reason the segment behind it
+  // does: at the end of the wrap it faces the shooter.
+  const tE = t * 0.67;
+  const wE = w * 0.76;
+  g.add(onArcBall(P.glovePalm, e, a1 + step * 0.05, z,
+    tE * 1.06, wE * 1.10, wE, tE * 0.44, 8));
 }
 
 /**
@@ -793,6 +1007,13 @@ function wrapFinger(g, P, e, z, w, t, a0, a1) {
  */
 function wrappedHand(P, o) {
   const g = new THREE.Group();
+  // The hand PROPER, separate from the arm the caller bolts on beside it. The
+  // two have to be measurable apart: an arm that runs off the bottom edge is
+  // correct and a hand that runs off the bottom edge is the bug, and a bound
+  // taken over both at once cannot tell you which one you are looking at. The
+  // first measurement of this defect reported the firing hand reaching NDC
+  // -6.6, which was the forearm doing exactly its job.
+  g.name = 'vm:hand';
 
   const e = { rx: o.rx, ry: o.ry };
   const dir = o.dir;
@@ -819,55 +1040,135 @@ function wrappedHand(P, o) {
 
     wrapFinger(g, P, e, z, w * (1 - i * 0.07), t * (1 - i * 0.07), o.a0, a1);
 
-    // The crease beside it. Sunk into the surface so it reads as the gap it
-    // is rather than as a painted stripe, and carried over the near two thirds
-    // of the wrap, which is all the camera ever sees of it.
+    // The valley beside it.
+    //
+    // Read the gloveCrease note in the palette before touching this. Three
+    // previous passes wrote a crease here as a dark slab sunk BELOW the
+    // surface, at `out` values like -t * 0.20, and every one of them drew zero
+    // pixels: there is no boolean subtraction in this file, so a groove
+    // modelled inside a solid is simply covered by the solid. Nothing sunk
+    // below a surface can ever be seen.
+    //
+    // Relief out of opaque primitives has to be built the other way up. The two
+    // fingers either side are now round tubes whose crowns stand at 0.92 of
+    // their depth above the grip; this is a thin dark cord laid in the trough
+    // between them, standing PROUD of the grip and spanning 0.16 to 0.56 of a
+    // finger depth. It is a surface the camera can genuinely see, and it still
+    // sits a third of a finger below the crowns either side of it, so it reads
+    // as the floor of a valley rather than as a stripe painted across the back
+    // of a hand.
+    //
+    // It is deliberately a little wider than the gap so it tucks under the
+    // shoulder of each neighbour: at exactly gap width the grip itself shows
+    // through in a bright line down the middle of the shadow.
+    //
+    // The HEIGHT of it was set by measurement, twice. At an out of 0.20 the
+    // mask render scored it at 93 visible pixels on the pistol and FOUR on the
+    // carbine - drawing, which is already more than any previous attempt
+    // managed, but eight millimetres down a four-millimetre slot and therefore
+    // only ever seen from straight above.
+    //
+    // The last move was the SLOT rather than the cord in it. Fingers now sit
+    // 1.9mm apart instead of 3.8mm, at the same pitch and a greater width, so
+    // what is between two fingers is a crease and not daylight with a cord at
+    // the bottom of it. That open gap was half of why four fingers read as four
+    // objects: things separated by background are separate, things separated by
+    // a dark fold are one form. Re-measure with the mask if you move it again;
+    // there is no other way to know.
     if (i < 3) {
       const zc = z + zd * pitch * 0.5;
-      const cEnd = o.a0 + dir * o.wrap * Math.min(shorten, 1 - (i + 1) * 0.055) * 0.88;
+      const cEnd = o.a0 + dir * o.wrap * Math.min(shorten, 1 - (i + 1) * 0.055) * 0.86;
       const cStep = (cEnd - o.a0) / 2;
       for (let k = 0; k < 2; k++) {
         const sa = o.a0 + cStep * k;
         const ea = o.a0 + cStep * (k + 1);
-        g.add(onArc(P.gloveDark, e, (sa + ea) / 2, zc, t * 0.55,
-          arcChord(e, sa, ea) * 1.10, gap * 2.6, -t * 0.20));
+        g.add(onArcTube(P.gloveCrease, e, (sa + ea) / 2, zc, t * 0.46,
+          arcChord(e, sa, ea) * 1.08, gap * 2.6, t * 0.44, 8));
       }
     }
   }
 
   // --- back of the hand ----------------------------------------------------
-  // NOT a plate with grooves cut in it. That is what the previous pass built
-  // and it measured as one flat card, for a reason that is obvious once you
-  // look for it: there is no boolean here, so a groove modelled INSIDE a solid
-  // slab is simply covered by the slab. Nothing sunk below a surface can ever
-  // be seen. The mask render found exactly zero visible crease pixels on the
-  // firing hand.
   //
-  // Relief out of opaque boxes has to be built the other way up: a dark backing
-  // spanning the whole width, four raised metacarpal bars standing on it - one
-  // running back from each knuckle - and a lighter tendon ridge along each bar.
-  // The 4mm of dark backing left showing between the bars IS the channel. Four
-  // channels and four ridges is the difference between the back of a hand and
-  // a piece of card, and it is the surface the first-person camera spends the
-  // entire game looking at.
+  // ONE MASS WITH SUBTLE DIVISIONS. That sentence is the whole of this block and
+  // it is the third attempt at it.
+  //
+  // Attempt one was a flat plate with grooves modelled inside it, and the mask
+  // render found zero visible crease pixels - there is no boolean subtraction in
+  // this file, so anything sunk below an opaque surface is simply covered by it.
+  // Attempt two built the relief the other way up, as four separate raised bars
+  // on a dark backing with a lit cord on each. That drew, and it was worse: four
+  // rounded bars each capped by a bright knuckle sphere read as a rack of turned
+  // dowels, and with a second hand behind the first there were eight of them
+  // stacked across the middle of the pistol frame. Every measurement improved
+  // and the thing got further from being a hand.
+  //
+  // The back of a hand is not four bars. It is one shallow vault with four
+  // tendons under it and three creases between them, and the divisions are worth
+  // a few percent of its depth, not a separate object each. So: one dome across
+  // the whole width and three dark cords lying in it. Nine parts became four,
+  // and the silhouette became one curve instead of four.
   const zMid = o.z0 + zd * 1.5 * pitch;
-  g.add(onArc(P.gloveDark, e, bMid, zMid, t * 0.90, backLen * 1.04,
-    pitch * 4.05, t * 0.30));
 
-  for (let i = 0; i < 4; i++) {
-    const z = o.z0 + zd * i * pitch;
-    g.add(onArc(P.glove, e, bMid, z, t * 0.95, backLen * 1.00, w * 0.94, t * 0.86));
-    // The ridge runs the FULL length of its bar and off the end at the knuckle.
-    // Stopped short at both ends it reads as a pale rectangle pasted on the
-    // back of the hand rather than as a tendon standing under the leather.
-    g.add(onArc(P.gloveLit, e, bMid - dir * o.back * 0.10, z,
-      t * 0.30, backLen * 1.06, w * 0.34, t * 1.40));
+  // The vault. Wide, shallow, and the only thing here with a silhouette.
+  g.add(onArcTube(P.glove, e, bMid, zMid, t * 0.92, backLen * 1.02,
+    pitch * 4.15, t * 0.86, 16));
+
+  // Three channels, and NOTHING ELSE on the vault.
+  //
+  // There were four lit tendon cords along here as well, and the flat-colour
+  // mask is what finally killed them: rendered as flat colour, the back of each
+  // hand came out as a red mass with four hard yellow bars across it, and four
+  // hard bars is what the eye had been reading as dowels all along. They were
+  // the third element in this file to be given the lit rung on the theory that
+  // more articulation is more hand - after the interphalangeal joints and the
+  // per-finger knuckles - and the third to be taken off it.
+  //
+  // The rule this pass finally learned: a hand gets ONE highlight, and it goes
+  // on the knuckle line. Everything else earns its keep in geometry or in
+  // shadow. Divisions are cut IN as dark, never laid ON as light.
+  for (let i = 0; i < 3; i++) {
+    const z = o.z0 + zd * (i + 0.5) * pitch;
+    g.add(onArcTube(P.gloveDark, e, bMid - dir * o.back * 0.05, z,
+      t * 0.15, backLen * 0.98, gap * 1.7, t * 1.30, 8));
   }
+
+  // --- the knuckle line ------------------------------------------------------
+  //
+  // ONE ridge across all four fingers, built here rather than four times inside
+  // wrapFinger. That is the correction this round is for. Four separate lit
+  // spheres, one per finger, is not a knuckle line - it is four bright bulbs in
+  // a row, and it was the single most artificial thing in the pistol frame.
+  //
+  // A real knuckle line is a soft fold running ACROSS the hand with four swells
+  // under it, and the fold is what the eye reads. So the ridge is one wide
+  // flattened ellipsoid on the glove rung carrying the form, with a narrow lit
+  // crest along its crown carrying the highlight. The four swells are already
+  // there, contributed by each finger's metacarpophalangeal bump.
+  //
+  // The `out` values below are the whole reason this reads at all, and the first
+  // version of them was wrong in a way no screenshot would have explained. The
+  // ridge sat at 0.62 with a depth of 1.12, so its crown reached 1.18 - while
+  // the vault behind it crowns at 1.32. The knuckle line was modelled BENEATH
+  // the back of the hand it is supposed to stand on, and every pixel of it was
+  // buried. Arithmetic caught that; the render just looked "soft".
+  //
+  // Now: ridge crown 1.48, vault crown 1.32, so it stands 0.16 of a finger
+  // depth proud, and the lit crest rides on top of that at 1.44.
+  g.add(onArcBall(P.glove, e, o.a0 + dir * 0.10, zMid,
+    t * 1.16, w * 1.55, pitch * 4.05, t * 0.90, 16));
+  g.add(onArcBall(P.gloveLit, e, o.a0 + dir * 0.03, zMid,
+    t * 0.30, w * 0.70, pitch * 3.95, t * 1.44, 16));
 
   // --- palm and heel -------------------------------------------------------
   // The palm is what the fingers close ONTO. Without it they wrap air, and the
-  // hollow between them was a large part of why the last pass read as loose
+  // hollow between them was a large part of why an earlier pass read as loose
   // slabs: there was simply nothing in the middle of the hand.
+  //
+  // It is also almost entirely hidden - the mask render scored the palm
+  // material at ONE pixel on the pistol - so it stays a cheap slab. Detail
+  // spent on a surface the camera cannot reach is detail not spent on the
+  // knuckle line, and this file has form for that.
   const pA = o.a0 + dir * o.wrap * 0.52;
   g.add(onArc(P.glovePalm, e, pA, zMid, t * 0.70,
     arcChord(e, o.a0 + dir * o.wrap * 0.26, o.a0 + dir * o.wrap * 0.80),
@@ -875,9 +1176,11 @@ function wrappedHand(P, o) {
 
   // Heel: the pad under the little finger. It is the widest part of a hand and
   // the part that actually carries the weapon, so it is the one place the
-  // silhouette is allowed to bulge.
+  // silhouette is allowed to bulge - and a bulge has to be a ROUND thing, or it
+  // is a corner.
   const hz = o.z0 + zd * pitch * 3.85;
-  g.add(onArc(P.glove, e, bMid, hz, t * 1.30, backLen * 0.88, pitch * 1.35, t * 0.56));
+  g.add(onArcBall(P.glove, e, bMid, hz, t * 1.44, backLen * 0.96, pitch * 1.42,
+    t * 0.54, 10));
   g.add(onArc(P.gloveDark, e, bMid, hz + zd * pitch * 0.86, t * 0.50,
     backLen * 0.82, pitch * 0.26, t * 0.30));
 
@@ -893,26 +1196,49 @@ function wrappedHand(P, o) {
   g.add(th);
 
   const tr = -zd;                      // the thumb reaches back past the index
-  tilt.add(box(P.glove, t * 1.20, w * 1.35, pitch * 1.45, 0, 0, tr * pitch * 0.62));
-  tilt.add(box(P.gloveLit, t * 1.30, w * 1.20, w * 1.00, t * 0.08, 0, tr * pitch * 1.34));
-  tilt.add(box(P.glove, t * 1.02, w * 1.06, pitch * 1.30, 0, 0, tr * pitch * 2.02));
-  tilt.add(box(P.gloveDark, t * 0.55, w * 0.40, pitch * 2.3,
-    -t * 0.28, -w * 0.74, tr * pitch * 1.15));                   // web crease
+
+  // Thenar: the muscle at the base of the thumb. It is the largest single soft
+  // form on a hand and it is why a real fist has a fat side and a thin side.
+  // Its absence is most of why three boxes in a row read as a wedge glued to
+  // the grip rather than as a thumb growing out of a palm.
+  tilt.add(ball(P.glove, t * 1.36, w * 1.76, pitch * 1.34,
+    -t * 0.08, -w * 0.34, tr * pitch * 0.04, 10));
+
+  // Metacarpal, joint, phalanx, pad. Same four-part vocabulary as a finger,
+  // because a thumb IS a finger with one fewer segment, and on a pistol it is
+  // the only hand mass on the left of the frame - a third of the viewmodel's
+  // silhouette, made of facets until now.
+  tilt.add(zTube(P.glove, t * 1.22, w * 1.34, pitch * 1.52,
+    0, 0, tr * pitch * 0.64, tr, 10, 0.90));
+  tilt.add(ball(P.gloveLit, t * 1.30, w * 1.24, w * 1.18,
+    t * 0.06, 0, tr * pitch * 1.36, 10));
+  tilt.add(zTube(P.glove, t * 1.06, w * 1.10, pitch * 1.28,
+    0, 0, tr * pitch * 2.00, tr, 10, 0.90));
+  tilt.add(ball(P.glovePalm, t * 0.98, w * 1.02, w * 0.94,
+    0, 0, tr * pitch * 2.58, 8));
+
+  // Web crease, thumb to index. Laid ON the underside where the two forms meet
+  // rather than sunk into either of them; see the crease note above.
+  tilt.add(box(P.gloveCrease, t * 0.50, w * 0.34, pitch * 2.3,
+    -t * 0.30, -w * 0.80, tr * pitch * 1.15));
 
   // --- wrist ---------------------------------------------------------------
   // It NARROWS, and then the arm widens again past it. That pinch is the place
-  // a viewer decides a shape is an arm rather than a tube.
+  // a viewer decides a shape is an arm rather than a tube, and a pair of equal
+  // boxes cannot make it however carefully they are placed - a taper is the
+  // only thing that says "narrows".
   //
   // It is also the part that has to stay SMALL. On the pistol the weapon sits
   // low enough that the bottom half of the hand falls off the frame entirely,
-  // so the wrist inherits the middle of the screen; at the size the previous
-  // pass gave it, it filled that space with one 47mm cube and the isolation
-  // render showed a box with a hand hidden under the bottom edge. Whatever the
-  // camera can see of a hand has to be hand.
+  // so the wrist inherits the middle of the screen; at the size an earlier pass
+  // gave it, it filled that space with one 47mm cube and the isolation render
+  // showed a box with a hand hidden under the bottom edge. Whatever the camera
+  // can see of a hand has to be hand.
   const wr = arcFrame(e, o.a0 + dir * o.wristA, o.z0 + zd * pitch * o.wristZ, t * 0.35);
   g.add(wr);
-  wr.add(box(P.glove, t * 1.42, pitch * 2.00, pitch * 0.95, 0, 0, 0));
-  wr.add(box(P.glove, t * 1.20, pitch * 1.62, pitch * 0.85, 0, 0, zd * pitch * 0.82));
+  wr.add(zTube(P.glove, t * 1.46, pitch * 2.05, pitch * 1.00, 0, 0, 0, zd, 12, 0.84));
+  wr.add(zTube(P.glove, t * 1.22, pitch * 1.70, pitch * 0.90,
+    0, 0, zd * pitch * 0.86, zd, 12, 0.88));
 
   return g;
 }
@@ -941,6 +1267,7 @@ function wrappedHand(P, o) {
  */
 function foreArm(P, x, y, z, yaw = -0.85, pitch = 0.80, len = 0.40) {
   const a = new THREE.Group();
+  a.name = 'vm:arm';
   a.position.set(x, y, z);
   a.rotation.set(pitch, yaw, 0);
 
@@ -950,7 +1277,15 @@ function foreArm(P, x, y, z, yaw = -0.85, pitch = 0.80, len = 0.40) {
   const oval = (m) => { m.scale.set(1.28, 1, 0.82); return m; };
 
   // Local +Z runs from the wrist toward the elbow; the group rotation aims it.
-  a.add(oval(rod(P.glove, 0.0165, 0.0185, 0.026, 0, 0, 0.011, 'z', 10)));
+  //
+  // Every rod in this function runs at 14 segments rather than 10. The forearms
+  // are the two largest single shapes the hand family puts on screen - the mask
+  // render scored the cuff alone as the second biggest thing in the viewmodel,
+  // ahead of every part of the weapon - and at that size a 10-sided cylinder
+  // shows its flats. Facets on a 3mm rail tooth are invisible; facets on a
+  // 45mm-wide tube filling the bottom corner of the frame are the note that
+  // came back.
+  a.add(oval(rod(P.glove, 0.0165, 0.0185, 0.026, 0, 0, 0.011, 'z', 14)));
 
   // Cuff: the hard value break, and the one element in the hand family that is
   // deliberately LIGHTER than the glove. A hand and a forearm in one value are
@@ -958,22 +1293,33 @@ function foreArm(P, x, y, z, yaw = -0.85, pitch = 0.80, len = 0.40) {
   // lapped bands, offset off-axis so the laps are uneven, because an even ring
   // is a fitting and an uneven wrap is cloth.
   for (let i = 0; i < 3; i++) {
-    const c = oval(rod(P.cuff, 0.0215 - i * 0.0007, 0.0208 - i * 0.0007, 0.016,
-      0, 0, 0.028 + i * 0.012, 'z', 10));
+    const c = oval(rod(P.cuff, 0.0192 - i * 0.0007, 0.0186 - i * 0.0007, 0.016,
+      0, 0, 0.028 + i * 0.012, 'z', 14));
     c.position.x = (i - 1) * 0.0020;
     c.position.y = (i % 2 ? 1 : -1) * 0.0016;
     a.add(c);
+
+    // The shadow UNDER the lap. Without it three bands of one value at one
+    // radius are a single smooth drum with two faint seams in it, and on the
+    // pistol - where the hip pose now puts both cuffs in shot - that drum is
+    // the largest and lightest shape in the lower frame. A wrap is only a wrap
+    // if you can see where each turn ends.
+    const lap = oval(rod(P.gloveDark, 0.0196 - i * 0.0007, 0.0193 - i * 0.0007,
+      0.0028, 0, 0, 0.0362 + i * 0.012, 'z', 14));
+    lap.position.x = c.position.x;
+    lap.position.y = c.position.y;
+    a.add(lap);
   }
 
   // Forearm proper, in two segments with a slight break at the middle, widening
   // toward the elbow the way a real one does. A straight constant cone has no
   // readable length and no readable direction.
-  a.add(oval(rod(P.sleeve, 0.0245, 0.0195, len * 0.46, 0, 0, 0.052 + len * 0.23, 'z', 10)));
+  a.add(oval(rod(P.sleeve, 0.0245, 0.0195, len * 0.46, 0, 0, 0.052 + len * 0.23, 'z', 14)));
 
   const far = new THREE.Group();
   far.position.set(0, 0, 0.052 + len * 0.46);
   far.rotation.x = -0.17;
-  far.add(oval(rod(P.sleeve, 0.032, 0.0245, len * 0.60, 0, 0, len * 0.30, 'z', 10)));
+  far.add(oval(rod(P.sleeve, 0.032, 0.0245, len * 0.60, 0, 0, len * 0.30, 'z', 14)));
   a.add(far);
 
   // Bindings, spaced so the taper has something to be measured against: a
@@ -1009,6 +1355,11 @@ function foreArm(P, x, y, z, yaw = -0.85, pitch = 0.80, len = 0.40) {
  */
 function gripHand(P, x, y, z, rake = 0, support = false) {
   const g = new THREE.Group();
+  // Named so a harness can project this subtree's bounds into NDC and MEASURE
+  // whether the hand is in frame, rather than deciding it by eye off a
+  // screenshot. The pistol shipped for two rounds with the lower half of both
+  // hands below the bottom edge and every review of it was an opinion.
+  g.name = support ? 'vm:supportHand' : 'vm:firingHand';
   g.position.set(x, y, z);
   g.rotation.x = rake;
 
@@ -1017,8 +1368,16 @@ function gripHand(P, x, y, z, rake = 0, support = false) {
     a0: -0.78, dir: 1, wrap: 3.90,
     triggerWrap: 0.44,
     z0: 0.022, zDir: -1,
-    t: 0.0120, w: 0.0163, gap: 0.0038,
-    back: 1.45,
+    t: 0.0120, w: 0.0182, gap: 0.0019,
+    // 1.18 radians of metacarpal, down from 1.45. `back` is the arc the backs
+    // of the hand cover before the fingers start, and at 83 degrees it was
+    // covering so much of the wrap that on the pistol - where the camera looks
+    // straight down onto TWO hand backs stacked on each other - eight
+    // metacarpal domes filled the frame and not one finger was visible. All the
+    // articulation this pass added was modelled on the far side of the grip. 68
+    // degrees is closer to a real hand anyway: metacarpals lie flat along the
+    // back, they do not wrap.
+    back: 1.18,
     thumbA: 3.50, thumbTilt: 0.88,
     wristA: -0.62, wristZ: -1.15,
   });
@@ -1053,6 +1412,7 @@ function gripHand(P, x, y, z, rake = 0, support = false) {
  */
 function guardHand(P, x, y, z, roll = 0) {
   const g = new THREE.Group();
+  g.name = 'vm:supportHand';
   g.position.set(x, y, z);
   g.rotation.z = roll;
 
@@ -1060,7 +1420,7 @@ function guardHand(P, x, y, z, roll = 0) {
     rx: 0.026, ry: 0.024,
     a0: 2.42, dir: 1, wrap: 3.80,
     z0: -0.030, zDir: 1,
-    t: 0.0120, w: 0.0163, gap: 0.0038,
+    t: 0.0120, w: 0.0182, gap: 0.0019,
     back: 0.98,
     thumbA: -1.05, thumbTilt: -0.34,
     wristA: 1.05, wristZ: 4.5,
@@ -1082,6 +1442,7 @@ function guardHand(P, x, y, z, roll = 0) {
  */
 function pistolSupportHand(P, x, y, z, rake = 0) {
   const g = new THREE.Group();
+  g.name = 'vm:supportHand';
   g.position.set(x, y, z);
   g.rotation.x = rake;
 
@@ -1089,8 +1450,8 @@ function pistolSupportHand(P, x, y, z, rake = 0) {
     rx: 0.028, ry: 0.032,          // wrapping a hand, not a grip: fatter
     a0: 3.62, dir: -1, wrap: 2.30,
     z0: 0.014, zDir: -1,
-    t: 0.0118, w: 0.0160, gap: 0.0038,
-    back: 1.20,
+    t: 0.0118, w: 0.0179, gap: 0.0019,
+    back: 0.98,
     thumbA: 2.55, thumbTilt: 0.96,
     wristA: -0.50, wristZ: -1.15,
   });
@@ -1139,6 +1500,107 @@ function triggerGroup(P, x, y, z, w = 0.028) {
   g.add(box(P.metal, w, 0.024, 0.007, 0, -0.028, -0.029));   // front post
   g.add(box(P.metal, w, 0.016, 0.008, 0, -0.010, 0.021));    // rear tang
   g.add(box(P.dark, 0.008, 0.024, 0.007, 0, -0.020, -0.006)); // trigger blade
+  return g;
+}
+
+/**
+ * Trigger guard for the MK9, and for nothing else.
+ *
+ * triggerGroup() above is a three-bar rectangle. That is the right amount of
+ * guard on a rifle, where the thing is 30mm of a 600mm weapon and half of it is
+ * hidden behind a magazine well. On a pistol the guard is a fifth of the
+ * silhouette, it sits in the middle of the frame with sky behind it, and a
+ * rectangle there is the most obvious blockout tell on the gun.
+ *
+ * So this is the same loop built as a real bow. The curve is GENERATED from an
+ * arc rather than typed as four hand-placed boxes, because four hand-placed
+ * boxes is what a curve typed by hand always turns out to be: each segment sits
+ * on the circle and is rotated to its own tangent, and a polished lip rides the
+ * outside of every one of them, so the key runs round the bow in one unbroken
+ * line. That line is the read. A guard is the one part of a pistol that is
+ * always seen against something bright.
+ *
+ * The hole through it is not faked and never was - there is no boolean in this
+ * file and there does not need to be one, because a loop is the space that four
+ * separate parts leave between them. What changed is that the space is now
+ * bounded by a curve on the front and by an undercut at the back, which is
+ * where a trigger finger actually goes.
+ *
+ * Deliberately not a change to the shared helper: see the diff discipline note
+ * on upgradeFinish. Six weapons render through triggerGroup() and this pass has
+ * no business moving any of them.
+ */
+function pistolGuard(P, x, y, z, detail) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  const D = (m) => { g.add(m); detail.push(m); return m; };
+
+  const w = 0.024;                 // guard width, across the frame
+  const th = 0.0074;               // how thick the loop is
+
+  // Bottom strap, running back from the bow into the front of the grip.
+  g.add(box(P.metal, w, th, 0.042, 0, -0.0405, 0.005));
+  D(box(P.edge, w * 1.02, 0.0015, 0.042, 0, -0.0440, 0.005));
+
+  // The bow. Centre of the arc, radius, and a sweep that starts just under the
+  // strap and finishes pointing forward and up.
+  const cy = -0.0225, cz = -0.0155, r = 0.0180;
+  const a0 = -0.28, a1 = 2.06, N = 6;
+  const segLen = r * ((a1 - a0) / N) * 1.30;
+
+  for (let i = 0; i < N; i++) {
+    const a = a0 + (a1 - a0) * (i + 0.5) / N;
+    // Outward normal of the arc is (-cos a, -sin a) in (y, z); a box rotated by
+    // `a` about X has its own +Z along the tangent and its +Y along that
+    // normal's opposite, which is why the lip offsets negatively along it.
+    const sy = cy - Math.cos(a) * r;
+    const sz = cz - Math.sin(a) * r;
+
+    const seg = box(P.metal, w, th, segLen, 0, sy, sz);
+    seg.rotation.x = a;
+    g.add(seg);
+
+    const off = th * 0.5 + 0.0008;
+    const lip = box(P.edge, w * 1.02, 0.0016, segLen, 0,
+      sy - Math.cos(a) * off, sz - Math.sin(a) * off);
+    lip.rotation.x = a;
+    g.add(lip); detail.push(lip);
+  }
+
+  // Rear tang, closing the loop into the receiver block.
+  g.add(box(P.metal, w, 0.016, 0.010, 0, -0.010, 0.020));
+
+  // Undercut behind the bow, at the top of the loop. A guard with no relief
+  // here reads as one solid ring of metal rather than as something a finger
+  // goes through.
+  D(box(P.seam, w * 0.88, 0.0140, 0.0032, 0, -0.0170, -0.0272));
+
+  // Serrations on the face of the bow. A real feature, and the cheapest way to
+  // say "somebody machined this" on the part of a pistol that is always lit
+  // from in front.
+  for (let i = 0; i < 4; i++) {
+    const a = 0.62 + i * 0.30;
+    const rr = r + th * 0.5;
+    const sr = box(P.dark, w * 0.90, 0.0026, 0.0030, 0,
+      cy - Math.cos(a) * rr, cz - Math.sin(a) * rr);
+    sr.rotation.x = a;
+    g.add(sr); detail.push(sr);
+  }
+
+  // Blade, in two segments with a break at the middle. A trigger is curved; a
+  // straight one is a light switch.
+  const blade = box(P.dark, 0.0082, 0.0160, 0.0074, 0, -0.0165, -0.0068);
+  blade.rotation.x = -0.14;
+  g.add(blade);
+  const toe = box(P.dark, 0.0082, 0.0110, 0.0070, 0, -0.0286, -0.0092);
+  toe.rotation.x = 0.24;
+  g.add(toe);
+  // The face of a trigger is the most-touched 8mm on any firearm and it is
+  // always the brightest thing inside the guard.
+  const face = box(P.edge, 0.0086, 0.0210, 0.0016, 0, -0.0210, -0.0106);
+  face.rotation.x = 0.04;
+  g.add(face); detail.push(face);
+
   return g;
 }
 
@@ -1382,19 +1844,41 @@ function buildPistol(P) {
   // Cocking serrations, on the SIDES of the slide and raked forward. Run as
   // bands across the top instead and they read as a radiator; on the flanks
   // they read as the thing a hand grabs to charge the weapon.
-  for (let i = 0; i < 7; i++) {
-    for (const side of [-1, 1]) {
-      const r = box(P.dark, 0.004, 0.025, 0.0045, side * 0.0145, 0.013, -0.014 - i * 0.0098);
-      r.rotation.x = 0.22;
-      slide.add(r); detail.push(r);
+  //
+  // Each one is now a PAIR: the dark cut, and a 1.6mm polished sliver standing
+  // on its forward face. That is what stopped this row reading as a black comb.
+  // Eleven dark bars on a dark slide are one value with grooves drawn into it,
+  // and under a key this frontal there is no gradient anywhere to separate a
+  // bar from the gap beside it. Give every cut a lit leading edge and the row
+  // becomes twenty-two alternating light and dark lines - and alternation at
+  // that pitch is the most machine-looking thing a surface can do.
+  const serrate = (count, z0, h) => {
+    for (let i = 0; i < count; i++) {
+      const zz = z0 - i * 0.0098;
+      for (const side of [-1, 1]) {
+        const cut = box(P.dark, 0.004, h, 0.0045, side * 0.0145, 0.013, zz);
+        cut.rotation.x = 0.22;
+        slide.add(cut); detail.push(cut);
+
+        const lip = box(P.edge, 0.0018, h * 0.94, 0.0016, side * 0.0156, 0.013, zz - 0.0026);
+        lip.rotation.x = 0.22;
+        slide.add(lip); detail.push(lip);
+      }
     }
-  }
-  for (let i = 0; i < 4; i++) {                                    // front serrations
-    for (const side of [-1, 1]) {
-      const r = box(P.dark, 0.004, 0.021, 0.004, side * 0.0145, 0.013, -0.146 - i * 0.0098);
-      r.rotation.x = 0.22;
-      slide.add(r); detail.push(r);
-    }
+  };
+  serrate(7, -0.014, 0.025);
+  serrate(4, -0.146, 0.021);
+
+  // A milled flat down each flank between the two serration runs, bordered top
+  // and bottom in the polished material. The slide is the largest single face
+  // on this weapon and it was carrying ONE value across 186mm of it, which is
+  // most of why the whole gun read as a slab in the avenue frame. Three tones
+  // across the middle of the flank give the key somewhere to catch other than
+  // the top edge.
+  for (const side of [-1, 1]) {
+    S(box(P.seam, 0.0026, 0.0125, 0.062, side * 0.0141, 0.0160, -0.109));
+    S(box(P.edge, 0.0022, 0.0016, 0.062, side * 0.0148, 0.0224, -0.109));
+    S(box(P.edge, 0.0022, 0.0016, 0.062, side * 0.0148, 0.0096, -0.109));
   }
 
   // Muzzle end: slide face, barrel standing proud of it, crown, and the
@@ -1411,16 +1895,64 @@ function buildPistol(P) {
   S(box(P.edge, 0.006, 0.006, 0.003, 0, 0.014, 0.005));            // striker cover
 
   // --- sights: square notch rear, blade front, both topping out at SIGHT_Y --
+  //
+  // Every blade top below still lands on SIGHT_Y and the front blade is still
+  // at z = -0.164 on the same line, because `sight` is what solveAdsPose()
+  // reads and moving either element silently breaks this weapon's aim with
+  // nothing to catch it but a screenshot. What changed is everything around
+  // them.
+  //
   // Three dots, because the front dot alone gives the eye nothing to centre
-  // itself between.
-  slide.add(box(P.dark, 0.026, 0.006, 0.014, 0, 0.031, -0.012));
+  // itself between, and they are 3.4mm now rather than 2.6mm - at hip, through
+  // a 55 degree lens, 2.6mm was under two pixels and the "three dot" sight was
+  // a claim in a comment.
+  //
+  // The rear is built as a HOOKED LEDGE, the squared shelf you rack one-handed
+  // off a belt. That is a real feature and it earns its place for a real
+  // reason: at hip the rear sight is the part of the weapon NEAREST the camera,
+  // and the top line of a pistol is otherwise one unbroken horizontal from
+  // breech to muzzle - which is precisely the silhouette that reads as a slab.
+  // Four millimetres of vertical step at the closest point in frame buys more
+  // than any amount of detail down at the muzzle.
+  //
+  // Nothing new here crosses the sight LINE, and that is a constraint worth
+  // stating because two of the parts below were drafted one millimetre too
+  // tall and would have laid a polished bar straight across the crosshair at
+  // ADS. Solving the pose puts SIGHT_Y exactly on the view axis at 400mm; a
+  // 1.4mm sliver 16mm nearer the eye than the notch is three pixels of mirror
+  // sitting on the aim point, and it would have been the most obvious defect
+  // in the game. Anything added behind the rear blades tops out BELOW 0.0350,
+  // which is where the sight base already sits, and the only bright parts left
+  // at SIGHT_Y are the two blade crowns - which are what the front post is
+  // supposed to be levelled against.
+  slide.add(box(P.dark, 0.026, 0.007, 0.016, 0, 0.0305, -0.012));       // sight base
+
+  // The notch floor, in the darkest material in the palette and recessed 1.5mm
+  // behind the blade faces, so the gap between the blades reads as a HOLE
+  // rather than as a shadow. A notch you cannot see through is a bump.
+  slide.add(box(P.seam, 0.0092, 0.010, 0.012, 0, SIGHT_Y - 0.009, -0.0125));
+
   for (const side of [-1, 1]) {
-    slide.add(box(P.dark, 0.0085, 0.011, 0.012, side * 0.0088, SIGHT_Y - 0.005, -0.012));
-    S(box(P.edge, 0.0026, 0.0026, 0.0024, side * 0.0088, SIGHT_Y - 0.005, -0.0055));
+    slide.add(box(P.dark, 0.0084, 0.012, 0.014, side * 0.0088, SIGHT_Y - 0.0055, -0.012));
+    // Crown of each blade. It stops at the notch edge rather than running the
+    // full width, so it frames the aperture instead of flooring it.
+    S(box(P.edge, 0.0088, 0.0016, 0.014, side * 0.0088, SIGHT_Y - 0.0003, -0.012));
+    S(box(P.edge, 0.0034, 0.0034, 0.0022, side * 0.0088, SIGHT_Y - 0.006, -0.0046));
   }
-  slide.add(box(P.dark, 0.007, 0.005, 0.013, 0, 0.031, -0.164));
-  slide.add(box(P.dark, 0.005, 0.011, 0.007, 0, SIGHT_Y - 0.005, -0.164));
-  S(box(P.edge, 0.0028, 0.0028, 0.0024, 0, SIGHT_Y - 0.005, -0.1608));
+
+  // The hook, overhanging the breech face. Capped in plain gunmetal rather than
+  // the polished material for the reason above: at ADS this is the nearest part
+  // of the weapon to the eye and a mirror here would sit under the notch and
+  // flare.
+  slide.add(box(P.dark, 0.024, 0.009, 0.008, 0, 0.0298, 0.0035));
+  S(box(P.metal, 0.0244, 0.0013, 0.008, 0, 0.0340, 0.0035));
+
+  // Front: a narrow blade on a low ramp, dot matched to the rear pair so the
+  // three read as one set rather than as three unrelated specks.
+  slide.add(box(P.dark, 0.008, 0.005, 0.015, 0, 0.0305, -0.164));
+  slide.add(box(P.dark, 0.0052, 0.012, 0.008, 0, SIGHT_Y - 0.0055, -0.164));
+  S(box(P.edge, 0.0056, 0.0015, 0.008, 0, SIGHT_Y - 0.0003, -0.164));
+  S(box(P.edge, 0.0034, 0.0034, 0.0022, 0, SIGHT_Y - 0.006, -0.1602));
 
   g.add(slide);
 
@@ -1435,6 +1967,18 @@ function buildPistol(P) {
   for (let i = 0; i < 3; i++) {
     D(box(P.poly, 0.020, 0.006, 0.007, 0, -0.026, -0.104 - i * 0.014));
   }
+
+  // Edge wear on the frame.
+  //
+  // A pistol lives in a holster and comes out of it a thousand times, and every
+  // hard corner on it goes bright. These are 1.5mm slivers of the polished
+  // material laid along corners that already exist - no new form, just the
+  // finish that a decade of carry leaves on the form that is already there.
+  // It is the cheapest trick in this file and it is the difference between a
+  // moulded shape and an object with a history.
+  D(box(P.edge, 0.0264, 0.0016, 0.096, 0, -0.0242, -0.128));      // dust cover, bottom corner
+  D(box(P.edge, 0.0234, 0.0212, 0.0018, 0, -0.013, -0.1772));     // dust cover, muzzle face
+  D(box(P.edge, 0.0284, 0.0016, 0.084, -0.0002, -0.0263, -0.036)); // receiver bottom corner
 
   // The controls. Small, but they are the difference between a moulded shape
   // and a machine somebody operates.
@@ -1472,10 +2016,37 @@ function buildPistol(P) {
       grip.add(rib); detail.push(rib);
     }
   }
-  for (let i = 0; i < 4; i++) {                                    // backstrap stipple
-    const r = box(P.dark, 0.028, 0.006, 0.005, 0, -0.032 - i * 0.020, 0.0235);
+  // Backstrap insert.
+  //
+  // This is here for a RENDERING reason as much as a modelling one. The strip of
+  // multicoloured per-pixel noise running down the centre of the grip was traced
+  // with a flat-colour mask render: the affected region came back 26.8 percent
+  // `poly` and 0 percent `gloveCrease`, which ruled out the hand work and put it
+  // squarely on the polymer. The cause is that polyNormal is built from a
+  // THRESHOLDED height field - `dots > 0.55 ? 1.0 : ...` - the highest frequency
+  // normal a surface can carry, every texel either a cliff or flat. On a 30mm
+  // face at a grazing angle it aliases into salt and pepper. Ablation confirmed
+  // it: dropping poly.normalMap cut the speckle score in that region from 6.33
+  // to 5.09, while hiding the crease geometry changed NOTHING and raising
+  // anisotropy to the hardware maximum changed NOTHING - so it is not the hand
+  // work and not a filtering setting.
+  //
+  // P.poly is shared with six other weapons and is not this pass's to change, so
+  // the fix is to stop SHOWING it: a real pistol has a textured backstrap insert
+  // anyway, and this one covers the whole face the camera can reach. The stipple
+  // bars move out to stand proud of the insert rather than of the polymer.
+  grip.add(box(P.dark, 0.0288, 0.094, 0.0044, 0, -0.050, 0.0242));
+  for (let i = 0; i < 5; i++) {                                    // backstrap stipple
+    const r = box(P.dark, 0.0272, 0.0055, 0.0040, 0, -0.020 - i * 0.019, 0.0272);
     grip.add(r); detail.push(r);
   }
+  // The two corners a hand actually wears: the mouth of the magwell, which
+  // takes a strike every reload, and the top of the backstrap, which sits under
+  // the web of the firing hand every second the weapon is held.
+  const magMouth = box(P.edge, 0.0366, 0.0018, 0.0552, 0, -0.1046, 0.002);
+  grip.add(magMouth); detail.push(magMouth);
+  const strap = box(P.edge, 0.0292, 0.0020, 0.0030, 0, -0.0055, 0.0238);
+  grip.add(strap); detail.push(strap);
   g.add(grip);
 
   // Magazine is a child of nothing: the animation layer moves it on its own.
@@ -1487,7 +2058,7 @@ function buildPistol(P) {
   mag.add(box(P.poly, 0.035, 0.007, 0.052, 0, -0.118, 0.002));     // pinky rest
   g.add(mag);
 
-  g.add(triggerGroup(P, 0, -0.004, -0.052, 0.024));
+  g.add(pistolGuard(P, 0, -0.004, -0.052, detail));
 
   // --- hands: a two-handed hold, support fingers laid over the firing hand --
   g.add(gripHand(P, 0.000, -0.062, 0.008, -0.33));
@@ -2201,7 +2772,36 @@ const WEAPONS = {
   mk9: {
     name: 'MK9',
     build: buildPistol,
-    hipPose: { pos: [0.092, -0.116, -0.400], rot: [-0.010, 0.100, 0.030] },
+    // RAISED 46mm and pushed 32mm further out, and both halves of that are
+    // measurements rather than taste.
+    //
+    // The defect on the books was "the hip pose puts the lower half of both
+    // hands below frame". Projecting the firing hand's bounds into NDC put its
+    // TOP edge at -0.497 - three quarters of the way down the screen - with the
+    // heel of the palm off the bottom at -1.16. The hand is 101mm tall in
+    // weapon space and the frame is 208mm tall where the hand is standing, so
+    // it was never going to fit low-slung: you saw box tops and the forms that
+    // would have explained them were cropped.
+    //
+    // Raising alone would have put the sights near the crosshair at HIP, which
+    // is a different bug. So half the fix is the lift and half is depth: at
+    // -0.425 the frame is 6 percent taller where the hands are and the weapon is
+    // correspondingly smaller in it. The pistol is the only one of the seven
+    // that needs this, because it is the only one holding both hands at the same
+    // distance from the eye - every long gun puts its support hand 300mm further
+    // out, where the frame is nearly twice as tall, and gets the room for free.
+    //
+    // The lift is 26mm and NOT the 46mm that puts the whole hand comfortably in
+    // frame, and the difference is the forearms. They run backward and downward
+    // from the wrist, so their near end is barely 180mm from the eye; the frame
+    // is only 95mm tall there, and every millimetre of lift drags a section of
+    // arm up into shot at close to twice the on-screen size of the hand in front
+    // of it. At 46mm the measured result was two cuffs the width of the weapon
+    // filling the bottom third and a pistol reduced to a detail above them,
+    // which is a worse frame than the one this started as. 26mm puts the whole
+    // knuckle line and both thumbs in shot and leaves the heel of the palm just
+    // touching the bottom edge, which is where a hand holding something belongs.
+    hipPose: { pos: [0.094, -0.090, -0.425], rot: [-0.010, 0.100, 0.030] },
     relief: 0.40,          // both arms out; the slide has to be far from the eye
     track: MAG_RELOAD, reloadTime: 1.85,
     kick: { back: 1.05, rise: 0.55, pitch: 0.34, yaw: 0.10, roll: 0.9 },
