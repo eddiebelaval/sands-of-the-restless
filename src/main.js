@@ -27,11 +27,25 @@ import { createEconomy } from './systems/economy.js';
 import { createDoors } from './systems/doors.js';
 import { createCombat } from './systems/damage.js';
 import { createDirector } from './enemies/director.js';
+import { createPower } from './systems/power.js';
+import { createWallBuys } from './systems/wallbuy.js';
+import { createShrines } from './systems/shrines.js';
+import { createAltar } from './systems/altar.js';
+import { createPromptBus } from './ui/prompt.js';
+import { createInteracts } from './ui/interact.js';
+import { createBoonStrip } from './ui/hud.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
 // without this clamp the player is instantly on the other side of the map.
 const MAX_DELTA = 1 / 20;
+
+/**
+ * How much extra ground the Shrine of Shu covers while sprinting, as a fraction
+ * of the frame. See the note at the call site: it is a second controller step,
+ * not a speed multiplier, so collision stays honest.
+ */
+const SHU_SPRINT_BONUS = 0.25;
 
 function boot() {
   const canvas = document.getElementById('stage');
@@ -86,8 +100,15 @@ function boot() {
   const impacts = createImpacts(scene);
   const viewmodel = createViewmodel(rig, buildMaterials());
 
+  // The Altar owns the tracer pool an upgraded weapon fires, and it cannot be
+  // constructed before the weapons it upgrades. The callback closes over the
+  // binding rather than the value, so the weapon is wired to a system that does
+  // not exist yet and finds it by the time a round is fired through it.
+  let altar = null;
+
   const weapons = createWeapons({
     camera, viewmodel, rig, audio, world, impacts,
+    tracer: (end, id) => altar && altar.tracer(end, id),
   });
 
   viewmodel.equip('mk9');
@@ -96,24 +117,64 @@ function boot() {
   // so it receives the same bloom, grade, and anti-aliasing as the world.
   post.setViewmodel(viewmodel);
 
-  // Everything is owned from the start while there is no economy to buy with.
-  // M4 removes this and makes the wall buys and the mystery box the only way in.
-  for (const id of SLOTS) weapons.state.owned.add(id);
+  // The player starts with the MK9 and nothing else. Every other weapon is
+  // bought off a wall, which is what makes gold a currency rather than a key.
+  // (The bolt rifle and the Sunspear have no wall of their own on purpose:
+  // they are the mystery box's stock, and until it is written they are the two
+  // weapons a run cannot reach.)
 
-  // --- economy and doors ----------------------------------------------------
+  // --- economy, doors, and the fixtures -------------------------------------
 
   const goldEl = document.querySelector('[data-gold]');
 
   const economy = createEconomy({ popups: document.getElementById('gold-pops') });
   economy.subscribe((gold) => { goldEl.textContent = gold; });
 
+  // One line of prompt text, two systems that want it. doors.js is handed a
+  // channel that answers to textContent and classList.toggle exactly as the
+  // element does, so it keeps writing the way it always has and does not have
+  // to know anything changed. See ui/prompt.js.
+  const promptBus = createPromptBus(document.getElementById('prompt'));
+
   const doors = createDoors({
     scene, camera, player, economy, audio, spaces,
     interior: spaces.interior,
     courtyard,
-    prompt: document.getElementById('prompt'),
+    prompt: promptBus.channel('doors', 1),
     notice: (text, ms) => showNotice(text, ms),
   });
+
+  const power = createPower({
+    interior: spaces.interior,
+    audio,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
+  altar = createAltar({
+    scene, camera, weapons, economy, audio,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
+  const wallbuys = createWallBuys({
+    weapons, economy, audio,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
+  const shrines = createShrines({
+    weapons, player, economy, audio, power,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
+  const interacts = createInteracts({
+    camera,
+    interior: spaces.interior,
+    spaces,
+    prompt: promptBus.channel('fixtures', 2),
+    handlers: { wallbuy: wallbuys, shrine: shrines, altar },
+  });
+
+  shrines.attach(interacts.records);
+  createBoonStrip(document.getElementById('r-boons'), shrines);
 
   // The router needs these three, and none of them can exist before it does:
   // the player is constructed FROM world, and the audio context is illegal
@@ -130,6 +191,42 @@ function boot() {
     player, rig, post, audio, impacts,
     notice: (text, ms) => showNotice(text, ms),
   });
+
+  /**
+   * The Shrine of Anubis, spliced in front of incoming damage.
+   *
+   * A free death has to be decided at the exact moment a blow would have been
+   * fatal, and the only thing that knows that is systems/damage.js - which does
+   * not know shrines exist and should not. Every enemy in the game reaches the
+   * player through `ctx.combat.damagePlayer`, a property lookup on this object,
+   * so replacing that one property is the whole intercept: nothing calls the
+   * original by any other name and nothing else has to change.
+   *
+   * The blow is CLAMPED rather than cancelled. The player still takes the hit,
+   * still gets the camera lurch and the red wash, and is left standing on one
+   * point of vitality, at which point the boon is spent and the shrine goes
+   * dark. Cancelling it outright would make a fatal swing indistinguishable
+   * from a miss, and the whole value of a free death is knowing you used it.
+   */
+  const takeDamage = combat.damagePlayer;
+  combat.damagePlayer = function damagePlayerWithBoons(amount, x, z) {
+    const fatal = !combat.state.invulnerable
+      && amount > 0
+      && player.state.health > 0
+      && player.state.health - amount <= 0;
+
+    if (fatal && shrines.has('anubis')) {
+      const survivable = Math.max(0, player.state.health - 1);
+      const dealt = takeDamage(survivable, x, z);
+      shrines.consumeAnubis();
+      // Back to full on the far side. Anubis returns the heart; it does not
+      // return it in pieces.
+      player.heal(player.state.maxHealth);
+      return dealt;
+    }
+
+    return takeDamage(amount, x, z);
+  };
 
   const director = createDirector({
     scene, world, spaces, audio, player, rig, camera, impacts, combat,
@@ -162,13 +259,41 @@ function boot() {
       // already carries the sun disc that lit the plate.
       // Environment is FILL, not key. At 0.62 it was filling the shadows as
       // brightly as the sun was lighting the lit faces, so cast shadows
-      // vanished and the scene went flat. Desert noon is brutal contrast:
-      // the sun must dominate and the sky must only lift the shadows.
-      scene.environmentIntensity = 0.34;
-      sky.hemi.intensity = 0.0;      // the environment IS the sky bounce now
-      sky.ambient.intensity = 0.0;   // and it is directional, unlike ambient
-      sky.bounce.intensity = 0.30;
-      sky.sun.intensity = 2.85;
+      // vanished and the scene went flat.
+      //
+      // 0.34 WAS STILL THE KEY, and it took a knockout test to see it. With the
+      // camera on the sand and every ground pixel in the frame sampled:
+      //
+      //     baseline                groundLuma 175.2
+      //     sun off                 groundLuma 174.7
+      //     ALL scene lights off    groundLuma 174.5
+      //     scene.environment off   groundLuma  14.5
+      //
+      // Turning off every light in the scene moved the sand by four tenths of
+      // one per cent. Turning off the environment took it to nothing. The sand
+      // was not being lit by the sun at all; it was being lit by a constant,
+      // and a constant has no falloff, no direction, and no shadow, which is
+      // the whole of why it read as a near-white flat plane at the same value
+      // near and far. It is also why a cast shadow landing on it changed
+      // almost nothing: measured, shadowed sand 174 against lit sand 191.
+      //
+      // The two lines below are the fix and they have to move together. Swept:
+      //
+      //     env    lit sand   shadowed sand   separation
+      //     0.34     205.8        177.7          28
+      //     0.22     179.4        142.9          37
+      //     0.14     156.2        109.4          48
+      //
+      // 0.17, and the sun goes up to carry what the environment stops carrying.
+      scene.environmentIntensity = 0.17;
+      // Not zero any more. With the environment down this far, a shadowed
+      // horizontal surface has NO light on it at all: the bounce and both wrap
+      // lights are aimed horizontally and contribute cos(90) = 0 to a floor by
+      // construction. Small, and cool, so it reads as sky rather than as fill.
+      sky.hemi.intensity = 0.15;
+      sky.ambient.intensity = 0.02;
+      sky.bounce.intensity = 0.34;
+      sky.sun.intensity = 3.5;
 
       // Contrast has to be pushed back in after the exposure drop, or the
       // scene reads correctly lit but lifeless.
@@ -237,6 +362,7 @@ function boot() {
     viewmodel.setFidelity(high);
     impacts.setFidelity(high);
     director.setFidelity(high);
+    altar.setFidelity(high);
     audio.setFidelity(high);
     renderer.shadowMap.enabled = high;
     renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio, 2) : 1);
@@ -290,7 +416,19 @@ function boot() {
 
     if (e.code === 'KeyR') { weapons.reload(); return; }
     if (e.code === 'KeyV') { viewmodel.inspect(); return; }
-    if (e.code === 'KeyF') { doors.interact(); return; }
+
+    // F goes to whatever is under the crosshair, and the two systems that can
+    // claim it are arbitrated the SAME WAY the prompt is: a fixture wins over a
+    // door. Routing on `candidate` rather than on the return value of
+    // interacts.interact() matters - a shrine that refuses returns false, and
+    // falling through on false would buy whatever door happened to be behind
+    // it. The player would have been refused at one thing and charged for
+    // another, in the same keypress.
+    if (e.code === 'KeyF') {
+      if (interacts.candidate) interacts.interact();
+      else doors.interact();
+      return;
+    }
 
     // Digit1..Digit7 select a weapon directly.
     const n = /^Digit([1-7])$/.exec(e.code);
@@ -360,9 +498,22 @@ function boot() {
   function payout(hits) {
     for (const h of hits) {
       if (!h.enemy) continue;
-      economy.award(h.killed ? (h.region === 'head' ? 'headshot' : 'kill') : 'hit');
+
+      const headshotKill = h.killed && h.region === 'head';
+      economy.award(h.killed ? (headshotKill ? 'headshot' : 'kill') : 'hit');
+
+      // The Shrine of Thoth. Paid as a SECOND award rather than by scaling the
+      // frozen bounty table, for two reasons: BOUNTY is the tuned Treyarch
+      // spread and nothing should be reaching in to multiply it, and paying it
+      // twice puts two popups over the crosshair, which is how the player finds
+      // out the boon is working without ever reading a menu.
+      if (headshotKill && shrines.has('thoth')) economy.award('headshot');
     }
   }
+
+  // The last value of combat.state.downs the loop has acted on. See the note
+  // in the frame loop: a monotonic counter is the event source for going down.
+  let downsSeen = combat.state.downs;
 
   let hitmarkerTimer = 0;
   function showHitmarker(crit) {
@@ -394,6 +545,24 @@ function boot() {
       // Sensitivity scales with zoom so aiming does not feel twitchy at 55 FOV.
       rig.look(look.dx, look.dy, 0.35 + 0.65 * rig.fovNormalized);
       player.update(dt, input.state, rig.yaw);
+
+      // THE SHRINE OF SHU, and it is worth saying why it is a second call to
+      // the controller rather than a bigger number inside it.
+      //
+      // There is no stamina in this game - sprint is already unlimited - so
+      // "endless sprint" as written has nothing to switch off. What the perk it
+      // is named after actually buys the player is GROUND COVERED while running
+      // from something, so that is what it buys here: a quarter of an extra
+      // step, taken through the controller's own update.
+      //
+      // Running it again with a shorter delta rather than scaling the speed
+      // constant is the whole point. Acceleration, friction, the floor sampler,
+      // the wall boxes and the collider push-out are all inside that function,
+      // and every one of them stays correct. A speed multiplier applied outside
+      // it would move the player through a wall a quarter of the time.
+      if (player.state.sprinting && shrines.has('shu')) {
+        player.update(dt * SHU_SPRINT_BONUS, input.state, rig.yaw);
+      }
     }
 
     // Aiming is refused while sprinting, so the two never fight over the pose.
@@ -418,13 +587,54 @@ function boot() {
       // prompt being wrong rather than late.
       doors.update(dt);
 
+      // Then the fixtures, then the arbiter. Both write to their own channel
+      // and neither can see the other's, so the order of these two is a matter
+      // of taste; paint() is what has to come last.
+      interacts.update();
+      promptBus.paint();
+
       // After the player and the camera, because the horde seeks THIS frame's
       // position and a frame of lag on twenty-four actors reads as swimming.
       director.update(dt, elapsed);
       combat.update(dt);
+
+      // GOING DOWN COSTS THE BOONS, and it has to, or none of this is a wager.
+      //
+      // systems/damage.js resets the run to wave one and stands the player back
+      // up at full health, and it does not know shrines exist. If the boons
+      // survived that, a death would cost a wave counter and nothing else - and
+      // the Shrine of Anubis, whose entire product is one death forgiven, would
+      // be 1500 gold for the right to skip a free inconvenience.
+      //
+      // Watched off the counter rather than hooked, because `fell()` is private
+      // to a file this system has no business reaching into, and a counter that
+      // only ever goes up is a perfectly honest event source.
+      if (combat.state.downs !== downsSeen) {
+        downsSeen = combat.state.downs;
+        if (shrines.count) {
+          shrines.dropAll();
+          showNotice('THE GODS WITHDRAW THEIR FAVOUR', 3000);
+        }
+      }
     }
 
-    viewmodel.update(dt, {
+    // THE SHRINE OF PTAH, and this is the whole of it.
+    //
+    // The viewmodel owns the authored reload length per weapon and weapons.js
+    // deliberately does not duplicate that number - it watches the animation
+    // phase and finishes the logical reload when the hands return to ready. So
+    // the only honest way to halve a reload is to run the animation at twice
+    // the rate, and the only place with the authority to do that is the loop
+    // that hands the viewmodel its delta.
+    //
+    // Scoped to the reloading phase, so sway, kick decay and the shell physics
+    // run at true rate every other frame of the game.
+    const reloadScale = weapons.state.reloadScale;
+    const vmDt = (reloadScale !== 1 && viewmodel.state.phase === 'reloading')
+      ? dt / reloadScale
+      : dt;
+
+    viewmodel.update(vmDt, {
       speed: player.state.speed,
       sprinting: player.state.sprinting,
       ads,
@@ -433,6 +643,7 @@ function boot() {
     });
 
     impacts.update(dt, camera);
+    altar.update(dt);
 
     sky.track(camera);
     sky.follow(player.position);
@@ -481,7 +692,13 @@ function boot() {
 
     magEl.textContent = weapons.magazine;
     reserveEl.textContent = weapons.reserve;
-    weaponEl.textContent = weapons.STATS[weapons.state.current] ? weapons.state.current.toUpperCase() : '';
+    // The weapon's NAME, and the upgraded one once it has been through the
+    // Altar. The whole point of an upgrade being an event is that the thing
+    // comes back with a title, and a HUD still reading "CARBINE" would be the
+    // one place in the game insisting nothing happened.
+    weaponEl.textContent = weapons.STATS[weapons.state.current]
+      ? weapons.displayName(weapons.state.current).toUpperCase()
+      : '';
     ammoEl.classList.toggle('empty', weapons.magazine === 0);
     ammoEl.classList.toggle('reloading', weapons.isReloading);
   }
@@ -494,6 +711,7 @@ function boot() {
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
     director, combat,
+    power, wallbuys, shrines, altar, interacts, promptBus,
     setFidelity, start,
     get elapsed() { return elapsed; },
   };

@@ -14,13 +14,19 @@
 import * as THREE from 'three';
 
 /**
- * Per-weapon combat stats.
+ * Per-weapon combat stats, AS AUTHORED.
  *
  * `spreadHip` and `spreadAds` are the half-angle of the cone in radians.
  * The gap between them is what makes aiming worth doing, and it is the number
  * to change first if the weapon feels wrong.
+ *
+ * This table is frozen and never changes. The table the game READS is `STATS`
+ * below, which is derived from this one every time a boon is taken or a weapon
+ * comes off the Altar. Keeping the authored numbers separate from the live ones
+ * is what lets a perk be dropped or a run be reset without anyone having to
+ * remember what a weapon was before it was modified - the answer is always here.
  */
-export const STATS = {
+export const BASE_STATS = {
   mk9: {
     damage: 42, headshot: 2.6,
     rpm: 410, auto: false,
@@ -88,7 +94,126 @@ export const STATS = {
 /** Load order for the number keys and the scroll wheel. */
 export const SLOTS = ['mk9', 'smg', 'shotgun', 'carbine', 'lmg', 'bolt', 'sunspear'];
 
-export function createWeapons({ camera, viewmodel, rig, audio, world, impacts }) {
+Object.freeze(BASE_STATS);
+for (const id of SLOTS) Object.freeze(BASE_STATS[id]);
+
+/**
+ * What a weapon is CALLED, before and after the Altar of Ptah.
+ *
+ * The base names match the viewmodel's own table, because the player reads one
+ * name on the HUD and sees one object in their hands and the two disagreeing is
+ * the kind of small wrongness nobody can name but everybody notices. The upgrade
+ * names are the whole point of an upgrade being an event: the weapon does not
+ * get better silently, it comes back with a title.
+ */
+export const NAMES = {
+  mk9:      { base: 'MK9',          upgraded: "Nekhbet's Talon" },
+  smg:      { base: 'Wadjet SMG',   upgraded: 'Wadjet Ascendant' },
+  shotgun:  { base: 'Sekhem 12',    upgraded: 'Sekhem Devourer' },
+  carbine:  { base: 'M4 Ankh',      upgraded: 'Ankh Eternal' },
+  lmg:      { base: 'Apis LMG',     upgraded: 'Apis Thunderer' },
+  bolt:     { base: 'Sekhmet Bolt', upgraded: "Sekhmet's Verdict" },
+  sunspear: { base: 'Sunspear',     upgraded: 'Sunspear Zenith' },
+};
+
+/**
+ * What the Altar of Ptah does to a weapon, as one record.
+ *
+ * 2.5x damage rather than a flat bonus, because a flat bonus is worth everything
+ * to a pistol and nothing to a bolt rifle, and the whole point is that upgrading
+ * whatever you are carrying is worth 5000 gold. The magazine doubles because
+ * the wave count keeps climbing and reload time is what actually kills you at
+ * wave twenty. The spread comes DOWN rather than the recoil animation changing,
+ * because recoil the player sees is the viewmodel's business and this file has
+ * no business reaching into it.
+ */
+export const UPGRADE = Object.freeze({
+  damage: 2.5,
+  magazine: 2,
+  reserve: 2,
+  spread: 0.70,
+});
+
+/**
+ * The LIVE stats table. This is what damage.js, the HUD, and everything else
+ * reads, and it is the only one that ever changes.
+ *
+ * Rebuilt from BASE_STATS by applyModifiers() below rather than edited in place
+ * by whoever last had an opinion. A perk that multiplies damage and an upgrade
+ * that multiplies damage would otherwise compound differently depending on the
+ * order they were bought in, which is a bug that only shows up in one player's
+ * run and can never be reproduced.
+ */
+export const STATS = {};
+
+/** Global multipliers, from the shrines. One set, applied to every weapon. */
+const globalMods = { damage: 1, rpm: 1, spread: 1 };
+
+/** Per-weapon multipliers, from the Altar. */
+const weaponMods = {};
+
+function applyModifiers() {
+  for (const id of SLOTS) {
+    const b = BASE_STATS[id];
+    const w = weaponMods[id];
+
+    const dmg = globalMods.damage * (w ? w.damage : 1);
+    const spread = globalMods.spread * (w ? w.spread : 1);
+
+    const live = STATS[id] || (STATS[id] = { ...b });
+
+    live.damage = b.damage * dmg;
+    live.headshot = b.headshot;
+    live.rpm = b.rpm * globalMods.rpm;
+    live.auto = b.auto;
+    live.magazine = Math.round(b.magazine * (w ? w.magazine : 1));
+    live.reserve = Math.round(b.reserve * (w ? w.reserve : 1));
+    live.spreadHip = b.spreadHip * spread;
+    live.spreadAds = b.spreadAds * spread;
+    live.pellets = b.pellets;
+    live.range = b.range;
+    live.audio = b.audio;
+    live.upgraded = !!w;
+  }
+}
+
+applyModifiers();
+
+/**
+ * Set a global multiplier and rebuild the table. Used by the Shrine of Set.
+ * Passing no value for a field leaves it where it is.
+ */
+export function setGlobalModifiers(next = {}) {
+  if (next.damage !== undefined) globalMods.damage = next.damage;
+  if (next.rpm !== undefined) globalMods.rpm = next.rpm;
+  if (next.spread !== undefined) globalMods.spread = next.spread;
+  applyModifiers();
+  return { ...globalMods };
+}
+
+/** Put a weapon through the Altar. Idempotent: a second call changes nothing. */
+export function markUpgraded(id) {
+  if (!BASE_STATS[id] || weaponMods[id]) return false;
+  weaponMods[id] = { ...UPGRADE };
+  applyModifiers();
+  return true;
+}
+
+// There is deliberately no resetModifiers(). Every modifier already has an
+// owner that can take it back: the Shrine of Set restores its own multipliers
+// in remove(), which runs when the boon is dropped, and an Altar upgrade is
+// meant to be permanent for the run. A blanket reset would be a function whose
+// only plausible caller is somebody who wants to clear a perk and would
+// silently clear five thousand gold of Pack-a-Punch with it.
+
+/** What to print on the HUD, on a wall buy, and on the Altar's prompt. */
+export function displayName(id) {
+  const n = NAMES[id];
+  if (!n) return String(id || '').toUpperCase();
+  return weaponMods[id] ? n.upgraded : n.base;
+}
+
+export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, tracer }) {
   // Ammunition is per weapon and persists across switches, the way it should.
   const ammo = {};
   for (const id of SLOTS) {
@@ -103,7 +228,22 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts })
     reloadEnds: 0,
     lastShot: -Infinity,
     upgraded: new Set(),       // weapons put through the Altar of Ptah
+
+    /**
+     * Multiplier on how long a reload takes. The Shrine of Ptah sets 0.5.
+     *
+     * The AUTHORITY on when a reload finishes is the viewmodel animation
+     * returning to 'ready', so this number is not the whole story on its own:
+     * the frame loop scales the delta it hands the viewmodel by the same factor
+     * while a reload is running, and this scales the headless fallback timer to
+     * match. Two places, one number, and they are wired to the same field so
+     * they cannot drift.
+     */
+    reloadScale: 1,
   };
+
+  /** Scratch for the tracer endpoint, so a miss does not allocate. */
+  const tracerEnd = new THREE.Vector3();
 
   // Scratch, allocated once. A raycaster and two vectors per shot would be
   // hundreds of allocations a second on an automatic weapon.
@@ -189,6 +329,17 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts })
 
       const its = ray.intersectObjects(world.hitTargets || [], true);
       const hit = its.find((h) => h.object.visible && !h.object.userData?.noHit);
+
+      // The tracer is drawn for EVERY pellet, including the ones that hit
+      // nothing. A round that only leaves a streak when it connects is a
+      // hitmarker with extra steps; the whole read of a tracer is watching
+      // where the ones that missed went.
+      if (tracer && STATS[id].upgraded) {
+        if (hit) tracerEnd.copy(hit.point);
+        else tracerEnd.copy(ray.ray.origin).addScaledVector(dir, s.range);
+        tracer(tracerEnd, id);
+      }
+
       if (!hit) continue;
 
       // An enemy tags its own meshes; anything untagged is scenery.
@@ -222,7 +373,7 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts })
     // duplicating that number here and letting the two drift, watch its phase
     // and finish the logical reload when the animation returns to ready.
     // The timer is only a fallback for a headless run with no viewmodel.
-    state.reloadEnds = clock + 4.0;
+    state.reloadEnds = clock + 4.0 * state.reloadScale;
     return true;
   }
 
@@ -275,6 +426,30 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts })
     return true;
   }
 
+  /**
+   * The Altar of Ptah, applied.
+   *
+   * Three things happen and they are deliberately in this order: the stat table
+   * is rebuilt first, so the new magazine size exists before anything tries to
+   * fill it; the ammunition is then handed over full, because a weapon whose
+   * magazine just doubled and is still holding the old number reads as the
+   * upgrade having failed; and the viewmodel is gilded last, because that is
+   * cosmetic and must never be the thing that decides whether the purchase went
+   * through.
+   */
+  function upgrade(id = state.current) {
+    if (!STATS[id] || !state.owned.has(id)) return false;
+    if (state.upgraded.has(id)) return false;
+    if (!markUpgraded(id)) return false;
+
+    state.upgraded.add(id);
+    ammo[id].mag = STATS[id].magazine;
+    ammo[id].reserve = STATS[id].reserve;
+
+    viewmodel?.upgradeFinish?.(id);
+    return true;
+  }
+
   function update(dt, input, ads) {
     clock += dt;
 
@@ -313,6 +488,11 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts })
     cycle,
     grant,
     refillAmmo,
+    upgrade,
+
+    owns(id) { return state.owned.has(id); },
+    isUpgraded(id = state.current) { return state.upgraded.has(id); },
+    displayName,
 
     get magazine() { return ammo[state.current].mag; },
     get reserve() { return ammo[state.current].reserve; },

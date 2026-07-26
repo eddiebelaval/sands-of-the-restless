@@ -21,8 +21,15 @@ import { CLOUD_GLSL, createCloudUniforms, advanceClouds } from './clouds.js';
  * from one end, so a frustum that only reached 46 units silently stopped
  * casting shadows a third of the way down the corridor: the far end rendered
  * with no cast shadow at all and nothing in the console said so.
+ *
+ * Raised again with the sun. A 13-unit wall threw 14.8 units of shadow at 41
+ * degrees and throws 25.5 at 27, so a caster near the edge of a 56-unit frustum
+ * now wants its shadow drawn 25 units past that edge, where there is no map to
+ * draw it into. The symptom is a shadow that simply ENDS in mid-air partway
+ * along its own length, which reads as a rendering fault rather than as a
+ * missing feature and is therefore worse than no shadow at all.
  */
-const SHADOW_EXTENT = 56;
+const SHADOW_EXTENT = 68;
 
 /** How far along the sun direction the light sits. Only affects near/far. */
 const SUN_DISTANCE = 120;
@@ -44,37 +51,86 @@ const SkyShader = {
     // able from ambient dimming. That is the whole of "the ground is immune to
     // the sun": there was no boundary left to read.
     //
-    // 34 degrees puts the wall's shadow edge back inside the avenue, so the
-    // floor carries a hard diagonal boundary the eye can actually find, and
-    // the columns and architraves lay bars across it.
+    // 34 degrees, later 41, puts the wall's shadow edge back inside the avenue,
+    // so the floor carries a hard diagonal boundary the eye can actually find.
     //
-    // The bearing is 65 degrees off the avenue axis, on the FAR side, for two
-    // reasons. Shadows now fall toward the camera instead of hiding behind the
-    // things that cast them, which is the difference between a shadow you can
-    // see and a shadow that is merely present. And it puts the sun's aureole
-    // just outside the frame edge, so the horizon band is lit from one side
-    // without the player having to stare into a 6x overbright disc while they
-    // walk down the corridor the level wants them to walk down.
-    uSunDir:     { value: new THREE.Vector3(0.62, 0.66, 0.42).normalize() },
+    // TIME OF DAY, 2026-07-26. 41 degrees is high noon and it was costing the
+    // whole frame. Three things measured off it, at the spawn:
+    //
+    //   sky 202 luma, ground pixels 189 luma. SIX PER CENT apart. There is no
+    //   depth ladder in an image whose sky and whose floor are the same value,
+    //   and no amount of geometry rescues that.
+    //   Ground direct term sin(41.4) = 0.661, so the sand ate two thirds of the
+    //   sun while every vertical surface got the leftovers. The sand is 40-60
+    //   per cent of most frames.
+    //   Frame p1 at luma 28. Nothing in the image was within a tenth of black.
+    //
+    // So: 27 degrees. Late afternoon. The direct term on the sand drops to
+    // sin(27) = 0.454 while the term on a camera-facing wall goes UP from 0.42
+    // to 0.76, which is the entire trade: value comes off the floor and lands
+    // on the architecture, where the chamfers are.
+    //
+    // 27 and not lower, and this was SWEPT rather than argued. Shadow coverage
+    // of the avenue floor, measured by raycasting a grid at the sun, and
+    // separately by classifying every ground pixel in a mid-avenue frame:
+    //
+    //     elevation     grid      in frame
+    //        23         72.9%       84.6%
+    //        27         64.3%       62.4%
+    //        31         57.6%       36.6%
+    //        35         53.4%       25.6%
+    //
+    // 23 is over the line into the old failure: five sixths of the floor the
+    // player can see is inside one shadow, which is ambient dimming with extra
+    // steps. 31 falls off a cliff the other way, a third. 27 is the only row
+    // where both numbers land near sixty, which is a floor that is genuinely
+    // half in and half out with an edge between the two.
+    //
+    // THE BEARING IS THE PART THAT IS EASY TO GET WRONG. Not the elevation.
+    // A low sun broadside to the avenue blankets the floor: at 27 degrees a
+    // 13-unit wall throws 25.5 units of shadow, and the avenue is 30 wide, so
+    // anything near broadside puts the floor almost ENTIRELY in shadow. That is
+    // the failure the sun was raised to escape and it is just as flat as noon.
+    // Measured, 17.5 degrees broadside left 1.2 per cent of the floor lit.
+    //
+    // The escape is to swing the bearing toward the avenue AXIS. At 32 degrees
+    // off axis the cross-avenue reach is 25.5 * sin(32) = 13.5 units on a
+    // 30-unit avenue, so the shadow edge lands near the centre line and the
+    // floor reads half lit, half shadowed, with a diagonal between them. The
+    // long axis of every shadow then runs DOWN the avenue rather than across
+    // it, which is what turns the colonnade into bars laid over the sand.
+    //
+    // Kept on +X and behind the player, as before, so the disc stays out of
+    // frame while they walk the corridor the level wants them to walk.
+    //
+    //   x = sin(32) * cos(27), y = sin(27), z = cos(32) * cos(27)
+    uSunDir:     { value: new THREE.Vector3(0.4721, 0.4540, 0.7556).normalize() },
 
-    uZenith:     { value: new THREE.Color(0x5f88bd) },
-    uHorizon:    { value: new THREE.Color(0xdcc49a) },
+    // --- palette --------------------------------------------------------------
+    // Late afternoon, not noon. The zenith deepens because the sun is no longer
+    // driving the whole dome, and the haze band comes DOWN hard: at 0xf2dfba it
+    // measured luma 202 and was the brightest thing in the frame by a distance,
+    // which is what put the sky and the sand in the same band.
+    uZenith:     { value: new THREE.Color(0x3f6aa4) },
+    uHorizon:    { value: new THREE.Color(0xcaa377) },
     // The bright deck glow, hugging the horizon itself. Deliberately NOT near
     // white: the band already sits on top of a cream horizon, so anything
     // brighter than this mixes the two straight to paper and trades a flat
     // cream band for a flat white one.
-    uHazeBand:   { value: new THREE.Color(0xf2dfba) },
+    uHazeBand:   { value: new THREE.Color(0xd8ae7e) },
     // The forward-scatter warmth on the sun's bearing. A separate, dirtier
-    // colour from uSunColor, which is a light source and nearly white.
-    uAureole:    { value: new THREE.Color(0xf6cf93) },
+    // colour from uSunColor, which is a light source and nearly white. At this
+    // elevation the forward-scatter path is long enough to go properly gold.
+    uAureole:    { value: new THREE.Color(0xffb267) },
     // Blown sand in the inversion layer: warmer and dirtier than the air above.
-    uDust:       { value: new THREE.Color(0xd2b183) },
+    uDust:       { value: new THREE.Color(0xc2905f) },
     // The anti-sun horizon. Colder and duller, because it is not forward-
-    // scattering anything.
-    uAway:       { value: new THREE.Color(0xb9bfc4) },
-    uGround:     { value: new THREE.Color(0xb59d76) },
-    uSunColor:   { value: new THREE.Color(0xffeec4) },
-    uHaze:       { value: 0.55 },
+    // scattering anything. Late in the day this is where the earth's own shadow
+    // starts to show, so it goes violet rather than merely grey.
+    uAway:       { value: new THREE.Color(0x9a9cb4) },
+    uGround:     { value: new THREE.Color(0x8f7852) },
+    uSunColor:   { value: new THREE.Color(0xffd9a0) },
+    uHaze:       { value: 0.62 },
     ...createCloudUniforms(),
   },
 
@@ -218,7 +274,15 @@ export function createSky(scene, { radius = 900 } = {}) {
   // --- the sun as an actual light -------------------------------------------
   const sunDir = mat.uniforms.uSunDir.value.clone();
   const sunDirInit = sunDir.clone();
-  const sun = new THREE.DirectionalLight(0xffe0ad, 2.9);
+  // Warmer than it was, because the air mass at 27 degrees is over twice what
+  // it is at 41 and the sun genuinely reddens.
+  //
+  // This intensity is the NO-ENVIRONMENT fallback and only that. When the HDRI
+  // loads, main.js reassigns it (and hemi, ambient and bounce) to the values
+  // that balance against an IBL. If the HDRI fails to load, these are what the
+  // scene is lit by, so they have to stand on their own: brighter sun and a
+  // real hemisphere, because there is then nothing else filling anything.
+  const sun = new THREE.DirectionalLight(0xffcd92, 3.05);
   sun.position.copy(sunDir).multiplyScalar(SUN_DISTANCE);
   sun.castShadow = true;
 
@@ -239,10 +303,12 @@ export function createSky(scene, { radius = 900 } = {}) {
   sun.shadow.camera.far = SUN_DISTANCE + 140;
   sun.shadow.camera.updateProjectionMatrix();
 
-  // Widening the frustum from 46 to 56 costs texel density, so the map grows
-  // to pay it back: 112 units over 3072 texels is 0.036 per texel, which is
-  // finer than the 0.045 the narrower frustum was getting at 2048.
-  let shadowTexels = 3072;
+  // Widening the frustum from 46 to 56 to 68 costs texel density: 136 units
+  // over 4096 texels is 0.033 per texel, which is still finer than the 0.036
+  // the 56-unit frustum got at 3072 and much finer than the 0.045 the original
+  // 46-unit one got at 2048. 4096 is the last power of two that is safe to
+  // assume; anything above it is not universally supported.
+  let shadowTexels = 4096;
   sun.shadow.mapSize.set(shadowTexels, shadowTexels);
 
   // Constant bias is what detaches a shadow from the object casting it.
@@ -250,28 +316,38 @@ export function createSky(scene, { radius = 900 } = {}) {
   // normal instead, which scales correctly with the shadow texel and does not
   // slide contact shadows out from under things. So: most of the budget in
   // normalBias, and only enough constant bias to kill acne on the dunes.
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.055;
+  //
+  // Both go up with the low sun. Depth slope across a shadow texel scales as
+  // 1/tan(elevation), so dropping from 41 degrees to 23 roughly doubles the
+  // depth error a single texel can hide, and a bias tuned at noon acnes the
+  // dunes into stripes at four in the afternoon.
+  sun.shadow.bias = -0.0006;
+  sun.shadow.normalBias = 0.075;
 
   scene.add(sun);
   scene.add(sun.target);
 
   // Sky bounce, deliberately dimmer than the sun. Uniform fill light is the
   // enemy of form: when ambient is high, every surface reads the same
-  // brightness regardless of orientation and the geometry goes flat. Real
-  // desert noon has brutal contrast between lit and shadowed faces.
-  const hemi = new THREE.HemisphereLight(0xa8c6ea, 0xd9b98a, 0.42);
+  // brightness regardless of orientation and the geometry goes flat.
+  //
+  // This is also the ONLY light that reaches a shadowed patch of sand, because
+  // every other fill in this file is aimed horizontally and contributes
+  // cos(90) = 0 to a floor. So its intensity IS the floor's black point, and at
+  // 0.42 the shadowed sand was arriving at luma 150 and the frame had no dark
+  // end at all. 0.28, and cooler, because sky-lit shade is blue.
+  const hemi = new THREE.HemisphereLight(0x86ade8, 0xc49b6c, 0.28);
   scene.add(hemi);
 
   // Almost nothing. The GTAO pass supplies occlusion detail that flat ambient
   // would otherwise wash straight back out.
-  const ambient = new THREE.AmbientLight(0xffffff, 0.05);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.035);
   scene.add(ambient);
 
   // A warm bounce from the sand, coming from below and opposite the sun. This
   // is the cheap stand-in for global illumination and it is what keeps shadowed
   // faces from going dead black now that ambient has been pulled down.
-  const bounce = new THREE.DirectionalLight(0xffd9a0, 0.55);
+  const bounce = new THREE.DirectionalLight(0xffc98a, 0.48);
   bounce.position.set(-sunDirInit.x, -0.35, -sunDirInit.z).multiplyScalar(60);
   scene.add(bounce);
 
@@ -294,6 +370,18 @@ export function createSky(scene, { radius = 900 } = {}) {
   // Two of them at +/-72 degrees rather than one, because a single fill leaves
   // every face perpendicular to it as black as before, just in a different
   // direction.
+  //
+  // THEY ARE NOT THE SAME COLOUR ANY MORE, and that is the point. Both were
+  // warm, which meant a shadowed wall was lit by warm fill under a warm sun and
+  // every surface in the frame sat on the same side of neutral: measured, the
+  // darkest quarter of the spawn frame came out at blue-minus-red of -19, i.e.
+  // WARMER than the highlights at -15. That is the opposite of a late-afternoon
+  // photograph, where the only thing lighting a shadow is the sky.
+  //
+  // So one of them is the sky and one is the sand. wrapA is cool and carries
+  // the shadow side; wrapB stays warm and carries the reflected floor. The
+  // warm/cool split is then a fact about the LIGHTING, which survives being
+  // graded, rather than a tint laid on at the end, which does not.
   const antiSun = new THREE.Vector2(-sunDirInit.x, -sunDirInit.z).normalize();
 
   const wrapLight = (deg, intensity, hex) => {
@@ -309,8 +397,16 @@ export function createSky(scene, { radius = 900 } = {}) {
     return l;
   };
 
-  const wrapA = wrapLight(72, 0.38, 0xffcf9a);
-  const wrapB = wrapLight(-72, 0.38, 0xf6d9b6);
+  // wrapA carries the entire cool half of the warm/cool split on vertical
+  // surfaces, so it is deliberately the STRONGER of the two. Pulling the fog's
+  // near ramp back out to 38 m removed a cool cast that had been sitting on
+  // everything within arm's reach, and the shadows went neutral with it:
+  // measured at the spawn, blue-minus-red in the darkest quarter of the frame
+  // moved from +10.9 to -1.7. Putting that back HERE rather than in the fog is
+  // the right place for it, because a shadow is cool for a reason -- the sky is
+  // the only thing lighting it -- and a reason survives being graded.
+  const wrapA = wrapLight(72, 0.46, 0x88ade6);   // sky, cool
+  const wrapB = wrapLight(-72, 0.22, 0xffc287);  // sand, warm
 
   // Scratch vectors for the shadow snap, allocated once. follow() runs every
   // frame and this is not a place to be making garbage.
@@ -380,7 +476,7 @@ export function createSky(scene, { radius = 900 } = {}) {
       sun.castShadow = high;
       // follow() derives the texel snap from this, so it has to be the same
       // number the shadow map is actually allocated at.
-      shadowTexels = high ? 3072 : 1024;
+      shadowTexels = high ? 4096 : 1024;
       sun.shadow.mapSize.set(shadowTexels, shadowTexels);
     },
   };

@@ -117,6 +117,38 @@
     text-shadow: 0 1px 3px #000;
   }
   #r-health { left: 28px; bottom: 26px; }
+
+  /* The boon strip. Directly above vitality, because the two are read
+     together: how much life you have and what is keeping you alive. Empty
+     slots are drawn as well as full ones, so the strip answers "should I stop
+     at the next shrine" and not only "what did I buy". */
+  #r-boons {
+    position: absolute; left: 28px; bottom: 84px;
+    display: flex; gap: 7px; align-items: center;
+  }
+  .boon[hidden] { display: none; }
+  .boon {
+    display: flex; align-items: center; gap: 5px;
+    border: 1px solid rgba(217,178,106,.22);
+    background: rgba(10,7,4,.45);
+    padding: 3px 7px 3px 5px;
+    min-width: 22px;
+    min-height: 20px;
+  }
+  .boon i {
+    display: block; width: 8px; height: 8px;
+    background: var(--boon, #4a3d29);
+    box-shadow: 0 0 6px var(--boon, transparent);
+    transform: rotate(45deg);
+  }
+  .boon b {
+    font-weight: normal; font-size: 9px; letter-spacing: .16em;
+    color: var(--boon, #6b5a42);
+    text-shadow: 0 1px 3px #000;
+  }
+  /* An unheld slot is a socket, not a button: no glow, no border highlight. */
+  .boon:not(.held) i { box-shadow: none; opacity: .55; }
+  .boon.held { border-color: rgba(217,178,106,.45); }
   #r-wave   { right: 28px; bottom: 26px; text-align: right; }
   #r-gold   { right: 28px; top: 24px; text-align: right; }
   .readout .val { display: block; font-size: 26px; letter-spacing: .1em; color: var(--bone); }
@@ -276,6 +308,7 @@
   </svg>
 
   <div id="fps">--- fps</div>
+  <div id="r-boons"></div>
   <div class="readout" id="r-health">Vitality<span class="val" data-health>100</span></div>
   <div class="readout" id="r-gold">Gold<span class="val" data-gold>500</span></div>
   <div class="readout" id="r-wave">Wave<span class="val" data-wave>1</span></div>

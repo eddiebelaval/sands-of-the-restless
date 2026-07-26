@@ -143,8 +143,8 @@ const GradeShader = {
     // reference's 0.29 shadow chroma is not reachable from here without
     // desaturating the frame globally. It should not be: the reference is
     // concrete, this is sandstone, and the sandstone is the point.
-    uShadowTint:   { value: new THREE.Color(0.800, 0.978, 1.205) },
-    uHighlightTint:{ value: new THREE.Color(1.020, 1.000, 0.980) },
+    uShadowTint:   { value: new THREE.Color(0.785, 0.975, 1.235) },
+    uHighlightTint:{ value: new THREE.Color(1.028, 1.000, 0.972) },
 
     // A multiplicative tint has nothing to work with as it approaches zero, and
     // the deepest shadows would fall back to neutral exactly where the coolness
@@ -156,9 +156,19 @@ const GradeShader = {
     // Luminance window over which shadow tint crossfades to highlight tint.
     // Deliberately narrow and low: with the midpoint near the frame median the
     // whole image would sit in the crossfade and average back to one hue, which
-    // is the failure this is fixing. Below 0.05 is fully cool, above 0.50 fully
-    // warm, and the mids resolve to one side or the other rather than mush.
-    uToneRange: { value: new THREE.Vector2(0.05, 0.50) },
+    // is the failure this is fixing. Below the floor is fully cool, above the
+    // ceiling fully warm, and the mids resolve to one side or the other rather
+    // than mush.
+    //
+    // The ceiling moved from 0.50 to 0.58 when the sun came down to 27 degrees,
+    // because the frame it is describing moved with it. The window has to
+    // straddle the frame's own histogram, not a remembered one: after the time
+    // of day changed, the lower quartile of the spawn frame sat around 0.27,
+    // which under a 0.05-to-0.50 window resolved to almost exactly half of each
+    // tint and therefore to no tint at all. Measured, blue-minus-red in that
+    // quartile was -1.3 against -16.3 in the top quartile: the right sign, but
+    // a quarter of the separation the same lights gave in the avenue.
+    uToneRange: { value: new THREE.Vector2(0.04, 0.58) },
 
     uGamma:     { value: 0.90 },
     uSaturation:{ value: 1.14 },

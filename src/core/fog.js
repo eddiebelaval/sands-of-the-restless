@@ -76,20 +76,62 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
  * because they are already tuned for an outdoor scene at human scale.
  */
 export const FOG_DEFAULTS = {
-  sigmaE: 1.45e-3,      // extinction per metre
-  heightFalloff: 18,    // metres of e-folding. Small = a shallow ground layer.
+  // AERIAL PERSPECTIVE, 2026-07-26. 1.45e-3 was not enough to be a depth cue.
+  // Measured at the spawn: a horizontal ray at 100 m accumulated an optical
+  // depth of 0.118, so distant stone kept 89 per cent of its own contrast and
+  // 86 per cent of its own colour. Distant geometry that holds its contrast and
+  // saturation is the loudest "this is an engine demo" signal there is, and it
+  // was measurable rather than arguable: distant stone came back at saturation
+  // 0.36 against near stone at 0.357. Identical.
+  //
+  // 2.6e-3 takes 100 m to an optical depth of 0.21, so the far field loses
+  // about a fifth of itself to the sky and, because the tint below is per
+  // channel, loses the blue slowest and therefore COOLS as it goes.
+  sigmaE: 2.6e-3,       // extinction per metre
+  // Raised with it. At 18 m of e-folding the pyramid's upper courses sat above
+  // the fog entirely and stayed as crisp as the near wall, which is the same
+  // failure one storey up.
+  heightFalloff: 26,    // metres of e-folding. Small = a shallow ground layer.
   baseY: -2.0,          // world Y at which density is 1.0
   maxDistance: 900,     // clamp. Also the distance assigned to sky pixels.
-  nearStart: 0.0,       // no fog at all closer than this
-  nearEnd: 12.0,        // full strength by here
+  // THE NEAR RAMP IS DOING MORE WORK THAN IT LOOKS LIKE. It reached full
+  // strength at 12 m, which meant a foreground rock four metres away already
+  // carried most of the scattering budget of a horizon. That is backwards for
+  // a depth ladder: the near field is the one part of the frame that is
+  // supposed to keep its own contrast and its own colour, and hazing it is part
+  // of how the near ground and the horizon ended up in the same value band.
+  //
+  // It also had a second effect nobody was looking for. The pyramid interior is
+  // a sealed room with no sun, and this pass runs on it too. Measured inside the
+  // Great Gallery: fog off, mean luma 22 with a first percentile of 0; fog on at
+  // nearEnd 12, mean luma 41 with a first percentile of 13. The height fog was
+  // supplying nearly half the light in a room meant to be lit by two braziers,
+  // and supplying it as outdoor sky blue.
+  //
+  // 38 m fixes both at once and costs nothing at the far end, which is the only
+  // end aerial perspective is about: the pyramid sits past 60 m and still takes
+  // the ramp at full strength. No interior room is 38 m wall to wall.
+  nearStart: 6.0,       // no fog at all closer than this
+  nearEnd: 38.0,        // full strength by here
 
   // Per-channel extinction. The reason the distance goes blue. See the header.
-  extinctionTint: [0.94, 1.02, 1.24],
+  // Widened along with sigmaE: the spread between the red and blue coefficients
+  // IS the hue rotation, and at (0.94, 1.24) over a small optical depth the
+  // rotation was too slight to survive the grade.
+  extinctionTint: [0.86, 1.00, 1.32],
 
-  inscatter: 0xa8c3e6,  // the colour distance converges on. Match the zenith.
+  // The colour distance converges on. This is NOT free to choose: the pass runs
+  // on sky pixels too, which take the full 900 m clamp, so at this sigmaE the
+  // horizon band ends up better than 80 per cent this colour. It is therefore
+  // the horizon's colour as much as the fog's, and it has to sit between the
+  // dome's zenith and its haze band or a hue seam opens along the skyline.
+  inscatter: 0x93a7c8,
   inscatterStrength: 1.0,
-  sunGlow: 0.85,        // extra inscatter looking into the sun
-  sunColor: 0xffe6bd,
+  // Raised, because the counterweight to a cool far field is that the air on
+  // the sun's own bearing has to glow warm. Without this the whole distance
+  // goes uniformly blue and the frame reads as overcast rather than as late.
+  sunGlow: 1.05,        // extra inscatter looking into the sun
+  sunColor: 0xffc98c,
 };
 
 /**
@@ -196,9 +238,15 @@ void main() {
   // lobe toward the sun, which is what makes haze glare when you look into it
   // and stay flat when you look away. This runs before tone mapping, so the
   // lobe can legitimately exceed 1.0 and bloom will pick it up.
+  // The exponent is the width of the warm lobe. At 6.0 it was a tight halo
+  // around a noon sun that was almost overhead, so it never touched anything at
+  // eye level. With the sun at 23 degrees the warm air is the whole quarter of
+  // the compass the sun is in, at exactly the altitude the player is looking
+  // through, so the lobe widens to match. 3.5 reaches roughly 55 degrees off
+  // the sun's bearing before it falls to a tenth.
   float toSun = max(dot(rd, normalize(uSunDir)), 0.0);
   vec3 inscatter = uInscatter * uInscatterStrength
-                 + uSunColor * (uSunGlow * pow(toSun, 6.0));
+                 + uSunColor * (uSunGlow * pow(toSun, 3.5));
 
   vec3 col = base.rgb * transmittance + inscatter * (vec3(1.0) - transmittance);
 
@@ -263,7 +311,11 @@ export class HeightFogPass extends Pass {
         uExtinctionTint:    { value: new THREE.Vector3(...o.extinctionTint) },
         uInscatter:         { value: new THREE.Color(o.inscatter) },
         uInscatterStrength: { value: o.inscatterStrength },
-        uSunDir:            { value: new THREE.Vector3(0.86, 0.30, 0.28).normalize() },
+        // Seeded to match sky.js. main.js copies sky.sunDir into this every
+        // frame, so it is only the value the FIRST frame renders with, but a
+        // first frame whose fog disagrees with its sky is a visible flash on
+        // entry and it is free to not have one.
+        uSunDir:            { value: new THREE.Vector3(0.4721, 0.4540, 0.7556).normalize() },
         uSunColor:          { value: new THREE.Color(o.sunColor) },
         uSunGlow:           { value: o.sunGlow },
       },

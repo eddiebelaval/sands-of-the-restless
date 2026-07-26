@@ -258,6 +258,15 @@ const earning = await page.evaluate(async () => {
   // metres, and the run then failed a payout that was working perfectly. A
   // burst removes the coin flip without weakening what is being tested: every
   // round still goes through weapons.update -> applyHits -> payout.
+  //
+  // GRANTED first, because the player now starts with the MK9 and nothing
+  // else: every other weapon is bought off a wall, which is what makes gold a
+  // currency rather than a key. Without this, equip() refuses, the pistol stays
+  // up, a held trigger fires exactly one semi-automatic round, and a payout
+  // that is working perfectly measures zero. What this section tests is the
+  // weapons.update -> applyHits -> payout chain, not whether the player has
+  // been shopping; wall-buy ownership is tested in test/economy.mjs.
+  g.weapons.grant('carbine');
   g.weapons.equip('carbine');
 
   // The live input flag, so the award runs through the frame loop's own

@@ -80,6 +80,108 @@ const LIGHTING = {
   sanctum: { color: 0xffd58a, intensity: 9.0, distance: 32, y: 0.62, max: 2 },
 };
 
+/**
+ * The chalk mark on a wall buy, per weapon, as bars in the plaque's plane.
+ *
+ * Each entry is [width, height, x, y] in plaque-local metres, y measured from
+ * the plaque's centre. A weapon at this scale is a SILHOUETTE and nothing else:
+ * the player reads it from ten or fifteen metres across a dark room, at which
+ * point proportion and outline are the whole signal and detail is noise. What
+ * separates these four is length, where the magazine sits, and whether there is
+ * a stock - which is exactly what separates them in the hand.
+ *
+ * EVERY ONE OF THEM POINTS RIGHT: muzzle at +x, stock at -x, and going from the
+ * muzzle backwards the order is barrel, handguard, magazine, grip, stock. The
+ * first pass of this table put the grip in FRONT of the magazine and let the
+ * stock bar overlap the receiver bar, and the result photographed as a capital
+ * T. A silhouette with its parts in the wrong order is not a stylised weapon,
+ * it is a shape, and the player reads it as decoration and walks past it.
+ */
+const CHALK = {
+  smg: [
+    [1.05, 0.13, 0.10, 0.16],    // receiver
+    [0.45, 0.07, 0.82, 0.16],    // barrel, thinner than the receiver
+    [0.15, 0.44, 0.14, -0.14],   // magazine, WELL FORWARD: the SMG tell
+    [0.14, 0.32, -0.20, -0.12],  // pistol grip, behind the magazine
+    [0.36, 0.10, -0.64, 0.10],   // stubby folding stock
+  ],
+  shotgun: [
+    [1.40, 0.11, 0.30, 0.22],    // barrel
+    [1.10, 0.09, 0.35, 0.06],    // magazine TUBE under it: the shotgun tell
+    [0.34, 0.15, 0.30, 0.06],    // pump forend, riding the tube
+    [0.40, 0.20, -0.42, 0.14],   // receiver
+    [0.13, 0.26, -0.58, -0.08],  // wrist
+    [0.40, 0.16, -0.85, 0.04],   // stock, dropping to the comb
+  ],
+  carbine: [
+    [0.50, 0.07, 0.86, 0.18],    // barrel past the gas block
+    [0.62, 0.15, 0.36, 0.18],    // handguard
+    [0.60, 0.19, -0.18, 0.18],   // upper receiver
+    [0.30, 0.08, -0.16, 0.38],   // carry handle
+    [0.18, 0.48, 0.02, -0.14],   // magazine
+    [0.14, 0.32, -0.30, -0.13],  // grip
+    [0.52, 0.15, -0.78, 0.15],   // buffer tube and stock
+  ],
+  lmg: [
+    [1.00, 0.13, 0.62, 0.20],    // heavy barrel
+    [0.72, 0.24, -0.22, 0.18],   // deep receiver
+    [0.44, 0.46, -0.10, -0.22],  // BOX magazine: the only square one in the set
+    [0.15, 0.30, -0.52, -0.12],  // grip
+    [0.40, 0.18, -0.86, 0.16],   // stock
+    [0.08, 0.34, 0.88, -0.06],   // bipod, splayed
+    [0.08, 0.30, 0.72, -0.08],
+  ],
+};
+
+/**
+ * The emblem on a shrine's back stela, per god.
+ *
+ * Same argument as the chalk, one step further: six shrines that differ only in
+ * price are six identical objects to a player running past them, so each one
+ * carries a mark that can be told from the others in silhouette. Bars and discs
+ * only - a hieroglyph rendered at this budget is a smudge, and a smudge that
+ * differs from another smudge is not a difference anybody can use.
+ *
+ * `bars` are [w, h, x, y] slabs; `discs` are [radius, x, y] rings.
+ */
+const EMBLEM = {
+  // Sekhmet: the lioness under the solar disc. Disc plus two ears.
+  sekhmet: { discs: [[0.30, 0, 0.42]], bars: [[0.13, 0.30, -0.20, 0.06], [0.13, 0.30, 0.20, 0.06], [0.62, 0.13, 0, -0.16]] },
+  // Ptah: the djed pillar. A column with four crossbars, and nothing else in
+  // Egyptian iconography looks remotely like it.
+  ptah: { discs: [], bars: [[0.16, 1.00, 0, 0.06], [0.62, 0.09, 0, 0.34], [0.62, 0.09, 0, 0.16], [0.62, 0.09, 0, -0.02], [0.62, 0.09, 0, -0.20]] },
+  // Set: the was sceptre, forked at the foot, squared at the head.
+  set: { discs: [], bars: [[0.14, 1.02, 0, 0.10], [0.34, 0.14, -0.09, 0.56], [0.13, 0.34, -0.20, -0.44], [0.13, 0.34, 0.20, -0.44]] },
+  // Shu: a feather, standing.
+  shu: { discs: [[0.26, 0, 0.26]], bars: [[0.09, 1.02, 0, 0.02], [0.42, 0.10, 0, 0.14], [0.34, 0.09, 0, -0.06], [0.24, 0.08, 0, -0.24]] },
+  // Anubis: the jackal head. Two tall pricked ears and a long muzzle, which is
+  // the most recognisable outline in the whole pantheon.
+  anubis: { discs: [], bars: [[0.12, 0.46, -0.17, 0.36], [0.12, 0.46, 0.17, 0.36], [0.52, 0.34, 0, 0.00], [0.46, 0.12, 0.22, -0.20]] },
+  // Thoth: the ibis. A crescent moon and a long down-curved beak.
+  thoth: { discs: [[0.34, 0, 0.30]], bars: [[0.24, 0.30, 0.10, 0.30], [0.13, 0.42, -0.02, -0.14], [0.34, 0.10, -0.20, -0.36]] },
+};
+
+/**
+ * What colour each shrine burns.
+ *
+ * This is the identity that survives distance, motion, and a dark room, and it
+ * is the reason the six shrines are told apart at all. The emblem above is the
+ * confirmation once you are close enough to read it; this is the thing that
+ * makes you walk over in the first place.
+ *
+ * The rules that go with these names - what they cost and what they do - live
+ * in systems/shrines.js. Geometry does not get an opinion about price, the same
+ * split doors.js and this file already keep.
+ */
+export const BOON_LOOK = {
+  sekhmet: { colour: 0xff8a52, emissive: 0xff3c14 },   // lioness, war, blood heat
+  ptah:    { colour: 0x8affc4, emissive: 0x1fd97a },   // craftsman, green as a workshop
+  set:     { colour: 0xd0a0ff, emissive: 0x8a2ff0 },   // chaos, violet, wrong
+  shu:     { colour: 0xc4f4ff, emissive: 0x36c8ff },   // air, thin and cold
+  anubis:  { colour: 0xe8eeff, emissive: 0x9fb4ff },   // the dead, white-blue
+  thoth:   { colour: 0xffdc92, emissive: 0xffa018 },   // moon and counting, amber
+};
+
 /** Deterministic PRNG so the interior is identical every run. */
 function rng(seed) {
   let s = seed >>> 0;
@@ -130,6 +232,35 @@ export function buildInterior(scene, rooms = ROOMS) {
   let powered = false;
 
   /**
+   * How lit the map is, 0 before the Kindling and 1 after, ramped rather than
+   * switched.
+   *
+   * This is read by every room light in buildLights and by the fill below, and
+   * it is the single reason throwing the switch is an EVENT rather than a flag
+   * flipping. A cut from dark to lit reads as a bug in the renderer; a second
+   * and a half of the whole pyramid coming up reads as the pyramid waking, and
+   * it costs one number.
+   */
+  const power = { level: 0, target: 0 };
+  const POWER_RAMP = 1.4;      // seconds, dark to lit
+  const POWER_LIFT = 0.55;     // how much brighter a powered room is
+
+  /** Things that want to know the moment the Kindling is thrown. */
+  const poweredListeners = new Set();
+
+  /**
+   * Chalk: the gold a wall buy's silhouette is drawn in.
+   *
+   * Its own instance rather than M.gold, and lightly emissive, because a wall
+   * buy has to be findable from across an unlit room. The registry's gold is on
+   * half the props in the map and lifting its emissive here would set fire to
+   * every sarcophagus mask in the pyramid.
+   */
+  const chalk = M.gold.clone();
+  chalk.emissive.setHex(0x7a5314);
+  chalk.emissiveIntensity = 0.8;
+
+  /**
    * Fill.
    *
    * Point lights with quadratic falloff are the right model for a torch and the
@@ -151,10 +282,28 @@ export function buildInterior(scene, rooms = ROOMS) {
   const ambient = new THREE.AmbientLight(0xffdcae, 0.09);
   group.add(ambient);
 
+  const fillBase = fill.intensity;
+  const ambientBase = ambient.intensity;
+
+  animated.push({
+    update(dt) {
+      if (power.level === power.target) return;
+      const step = dt / POWER_RAMP;
+      power.level = power.target > power.level
+        ? Math.min(power.target, power.level + step)
+        : Math.max(power.target, power.level - step);
+
+      const k = 1 + POWER_LIFT * power.level;
+      fill.intensity = fillBase * k;
+      ambient.intensity = ambientBase * k;
+    },
+  });
+
   for (const room of rooms) {
     const ctx = {
       room, M, rand, group, colliders, walls, ramps,
       interacts, jars, lights, animated, addCollider,
+      chalk, power, POWER_LIFT,
       // Filled by the brazier prop, read by the lighting pass. Collected here
       // rather than written back onto the room record: rooms.js is data the
       // node harness reads, and a builder that scribbles on it stops being
@@ -246,14 +395,37 @@ export function buildInterior(scene, rooms = ROOMS) {
       });
     },
 
-    /** The Kindling. Lights the map's cold fixtures and opens the power gate. */
+    /**
+     * The Kindling. Lights the map's cold fixtures and opens the power gate.
+     *
+     * THE choke point. systems/doors.js throws the switch the player is looking
+     * at and systems/power.js owns what that MEANS, and neither of them calls
+     * the other: both go through here, so a Kindling thrown by the harness, by
+     * a future puzzle reward, or by the player produce exactly the same event.
+     * A second call changes nothing, which matters because the listeners below
+     * light six shrines and none of them should fire twice.
+     */
     setPowered(on) {
-      powered = on;
-      for (const a of animated) if (a.setPowered) a.setPowered(on);
+      const next = !!on;
+      if (next === powered) return powered;
+
+      powered = next;
+      power.target = powered ? 1 : 0;
+
+      for (const a of animated) if (a.setPowered) a.setPowered(powered);
+      for (const fn of poweredListeners) fn(powered);
       return powered;
     },
 
+    /** Register for the throw. Returns an unsubscribe, like every other hook. */
+    onPowered(fn) {
+      poweredListeners.add(fn);
+      return () => poweredListeners.delete(fn);
+    },
+
     get powered() { return powered; },
+    /** 0..1, ramping. For anything that wants to cross-fade with the light. */
+    get powerLevel() { return power.level; },
   };
 }
 
@@ -766,6 +938,8 @@ function buildInteracts(ctx) {
   const { room, group, interacts } = ctx;
 
   for (const slot of room.interactSlots || []) {
+    ctx.lastVisuals = null;
+
     const g = INTERACTS[slot.type] && INTERACTS[slot.type](ctx, slot);
     if (!g) continue;
 
@@ -773,7 +947,7 @@ function buildInteracts(ctx) {
     g.position.z = slot.z;
     g.rotation.y = slot.rot || 0;
 
-    const record = { ...slot, room: room.id, group: g };
+    const record = { ...slot, room: room.id, group: g, visuals: ctx.lastVisuals };
     // Tagged on every mesh, not just the group, so a raycast hit resolves to
     // the slot without walking back up the parent chain.
     g.traverse((o) => { if (o.isMesh) o.userData.interact = record; });
@@ -784,28 +958,79 @@ function buildInteracts(ctx) {
 }
 
 const INTERACTS = {
-  /** Wall buy: a carved plaque with the weapon chalked on it, gold-outlined. */
+  /**
+   * Wall buy: a carved plaque with the weapon chalked on it in gold.
+   *
+   * No collider. The plaque stands 0.4 proud of the wall it is mounted on and a
+   * cylinder around it would be a knee-high invisible obstacle in front of the
+   * one fixture the player is trying to walk up to.
+   *
+   * The chalk is drawn from the CHALK table by weapon id, so the four wall buys
+   * are four different outlines rather than four copies of the same two bars.
+   * The plaque's own centre is at y = 2.3, which puts the mark at eye height
+   * for a 1.68 eye and keeps the whole fixture off the floor where the rubble
+   * and the urns live.
+   */
   wallbuy(ctx, slot) {
     const g = new THREE.Group();
-    const { M } = ctx;
+    const { M, chalk } = ctx;
+    const cfg = slot.config || {};
+
+    const CY = 2.3;
 
     const plaque = slab(2.6, 1.9, 0.22, M.carved, DENSITY.carved);
-    plaque.position.set(0, 2.3, 0.11);
+    plaque.position.set(0, CY, 0.11);
     g.add(plaque);
 
+    // A recessed dark ground, so the gold has something to be gold AGAINST.
+    // Chalk on limestone at the same value is a texture, not a picture.
+    const ground = slab(2.28, 1.56, 0.06, M.granite, DENSITY.granite);
+    ground.position.set(0, CY, -0.02);
+    g.add(ground);
+
     const frame = slab(2.9, 0.18, 0.3, M.gold, DENSITY.gold);
-    frame.position.set(0, 3.32, 0.08);
+    frame.position.set(0, CY + 1.02, 0.08);
     g.add(frame);
 
-    // The silhouette. Two bars is enough to read as a weapon outline at the
-    // distance a wall buy is ever seen from, and it costs two draw calls.
-    const barrel = slab(1.8, 0.16, 0.1, M.gold, DENSITY.gold);
-    barrel.position.set(0.1, 2.55, -0.05);
-    g.add(barrel);
+    const sill = slab(2.9, 0.16, 0.34, M.limestone, DENSITY.limestone);
+    sill.position.set(0, CY - 1.0, 0.06);
+    g.add(sill);
 
-    const grip = slab(0.16, 0.7, 0.1, M.gold, DENSITY.gold);
-    grip.position.set(-0.35, 2.15, -0.05);
-    g.add(grip);
+    const marks = CHALK[cfg.weapon] || CHALK.smg;
+    for (const [w, h, x, y] of marks) {
+      const bar = new THREE.Mesh(box(w, h, 0.05, DENSITY.gold), chalk);
+      bar.position.set(x, CY + y, -0.06);
+      g.add(bar);
+    }
+
+    /**
+     * The fixture lights itself, and it has to.
+     *
+     * Measured, not assumed: the M4 wall in the Great Gallery photographed at
+     * 10.6 mean luminance with 21.8 percent of the frame above black. The
+     * PLAQUE was perfectly legible - the chalk is emissive - but everything
+     * around it was flat black, so the only way a player finds that wall is by
+     * already knowing it is there. The gallery is 52 by 38 with three lights in
+     * it, all hung on braziers eleven metres off the north wall, and no
+     * placement on that wall does better: the east and west walls of that room
+     * ARE the upper level, so the north wall is the only wall it has.
+     *
+     * Unlike a shrine, a wall buy has no dark state to protect - it is always
+     * for sale, so it may always glow.
+     *
+     * It sits LOW and RAKES, and that took two goes. Square-on and a metre out,
+     * it put a blown white hotspot in the dead centre of the panel and erased
+     * the silhouette it was there to reveal - a plaque is a flat plane, so a
+     * light on its normal is the inverse square law aimed at the one part of
+     * the fixture that matters. Dropped to the height of the sill it strikes
+     * the panel at a glancing angle instead: the surround and the frame light
+     * up, the raised bars catch an edge and cast into each other, and the mark
+     * itself is emissive so it never needed the lamp in the first place.
+     */
+    const glow = new THREE.PointLight(0xffb96a, 5.0, 11, 2);
+    glow.position.set(0, CY - 1.45, -1.55);
+    glow.castShadow = false;
+    g.add(glow);
 
     return g;
   },
@@ -833,10 +1058,27 @@ const INTERACTS = {
     return g;
   },
 
-  /** Perk shrine: a basin with a live flame, which is the whole read at range. */
+  /**
+   * Perk shrine: a basin with a flame, a back stela, and a god's mark on it.
+   *
+   * Three states, and all three have to be legible at a glance from across a
+   * room, because the player's question is never "what does this cost" - the
+   * prompt answers that - it is "is this one worth walking to":
+   *
+   *   dark   no flame, no light, dead stone. The Kindling is cold.
+   *   live   the flame burns in the god's colour and lights its own alcove.
+   *   held   the flame steadies and the mark on the stela is lit from within.
+   *
+   * The colour is the whole identity at range. Six shrines that differ only in
+   * the shape of a small emblem are six identical objects to somebody running
+   * past at eight metres a second; six that differ in the colour of the fire
+   * spilling onto the wall behind them are six landmarks.
+   */
   shrine(ctx, slot) {
     const { M, addCollider, animated } = ctx;
     const g = new THREE.Group();
+    const cfg = slot.config || {};
+    const look = BOON_LOOK[cfg.boon] || BOON_LOOK.anubis;
 
     const base = slab(1.9, 0.5, 1.4, M.granite, DENSITY.granite);
     base.position.y = 0.25;
@@ -859,26 +1101,147 @@ const INTERACTS = {
     g.add(basin);
 
     const flame = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 10), M.ember.clone());
-    flame.material.color.setHex(0x8ad4ff);
-    flame.material.emissive.setHex(0x2f9bff);
+    flame.material.color.setHex(look.colour);
+    flame.material.emissive.setHex(look.emissive);
+    flame.material.emissiveIntensity = 0;
     flame.position.y = 2.42;
     flame.scale.y = 0.6;
     g.add(flame);
 
-    // A back slab so the shrine reads against the wall it is mounted on.
-    const stela = slab(2.2, 3.4, 0.3, M.carved, DENSITY.carved);
-    stela.position.set(0, 1.7, 0.72);
+    // A back slab so the shrine reads against the wall it is mounted on, and
+    // it is TALL for a reason that only showed up in a screenshot: the god's
+    // mark goes on this face, and at the original 3.4 the mark sat behind the
+    // basin. The bowl is 1.9 across at the lip and the emblem was inside its
+    // silhouette from every angle a player actually stands at, which made six
+    // carefully distinguished marks into one shape nobody could see. Raising
+    // the slab puts the mark in clear air above the bowl.
+    const STELA_H = 4.6;
+    const MARK_Y = 3.55;
+
+    const stela = slab(2.2, STELA_H, 0.3, M.carved, DENSITY.carved);
+    stela.position.set(0, STELA_H / 2, 0.72);
     g.add(stela);
 
+    // The god's mark, cut into the face of the stela. Its own material instance
+    // because it is lit from within when the boon is held, and sharing would
+    // make every shrine in the map announce one purchase.
+    const markMat = M.gold.clone();
+    markMat.emissive.setHex(look.emissive);
+    markMat.emissiveIntensity = 0;
+
+    const emblem = EMBLEM[cfg.boon] || EMBLEM.anubis;
+    for (const [w, h, x, y] of emblem.bars) {
+      const bar = new THREE.Mesh(box(w, h, 0.09, DENSITY.gold), markMat);
+      bar.position.set(x, MARK_Y + y, 0.53);
+      g.add(bar);
+    }
+    for (const [r, x, y] of emblem.discs) {
+      const disc = new THREE.Mesh(
+        cylinderUV(new THREE.CylinderGeometry(r, r, 0.09, 16), r, 0.09, DENSITY.gold),
+        markMat
+      );
+      disc.rotation.x = Math.PI / 2;
+      disc.position.set(x, MARK_Y + y, 0.53);
+      g.add(disc);
+    }
+
+    /**
+     * The fixture's own light, and the reason a DEAD shrine still has one.
+     *
+     * The first version of this emitted nothing at all until the Kindling, on
+     * the argument that a shrine which glows in an unpowered map is the map
+     * telling the player something is available when it is not. That argument
+     * is right about the FLAME and wrong about the fixture, and the frame
+     * measured it: the Anubis shrine sits in the east third of the Chamber of
+     * Ascent, six metres from the nearest brazier, and photographed at 5.5 mean
+     * luminance with 13 percent of the frame above black. It worked, said the
+     * right thing, and could not be found.
+     *
+     * This file already solved exactly this problem once, for the sealed gates
+     * at the dead ends of two long rooms: a gate that cannot be bought has to be
+     * FOUND, so it lights itself. Same answer here, with the state carried in
+     * the light rather than in whether there is one.
+     *
+     *   dark   cold slate, dim, colourless. Stone, and no invitation.
+     *   live   the god's own colour at four times the intensity, flickering.
+     *
+     * Nobody will mistake the first for the second. They are different hues at
+     * different brightnesses next to a flame that is either burning or is not.
+     */
+    const COLD = new THREE.Color(0x5a6a92);
+    const WARM = new THREE.Color(look.emissive);
+    const DARK_GLOW = 7.0;
+
+    // The light MOVES between the two states, and that is not decoration.
+    //
+    // A live shrine is lit BY ITS FLAME, so the light belongs in the basin. A
+    // dead one has no flame, and a point light parked half a unit under a gold
+    // basin with nothing burning in it is a photograph of the inverse square
+    // law: the lip blows to white and the fixture reads as switched ON, which
+    // is the exact wrong answer. Standing it low and forward instead washes the
+    // stem, the plinth and the wall behind - the fixture is findable, and
+    // nothing in the frame looks lit.
+    //
+    // This is the same correction the sealed gates in this file already needed
+    // and for the same reason. It is worth only one comment because it is worth
+    // learning once.
+    const DARK_AT = { y: 1.45, z: -1.95 };
+    const LIVE_AT = { y: 2.70, z: -0.50 };
+
+    const light = new THREE.PointLight(COLD.getHex(), DARK_GLOW, 16, 2);
+    light.position.set(0, DARK_AT.y, DARK_AT.z);
+    light.castShadow = false;
+    g.add(light);
+
     const phase = (slot.x * 5.1 + slot.z * 3.3) % 6.283;
+
+    // 0 dark, 1 lit, RAMPED rather than switched. Six shrines coming up over a
+    // second and a half is most of what makes the Kindling an event; six
+    // shrines changing colour between two frames is a rendering glitch.
+    let live = 0;
+    let target = 0;
+    let held = false;
+
+    const POWER_RAMP = 1.4;
+
     animated.push({
+      setPowered(on) { target = on ? 1 : 0; },
+
+      /** Called by systems/shrines.js the moment the boon is bought. */
+      setHeld(on) { held = !!on; },
+
       update(dt, t) {
+        if (live !== target) {
+          const step = dt / POWER_RAMP;
+          live = target > live
+            ? Math.min(target, live + step)
+            : Math.max(target, live - step);
+
+          light.color.lerpColors(COLD, WARM, live);
+          light.position.y = DARK_AT.y + (LIVE_AT.y - DARK_AT.y) * live;
+          light.position.z = DARK_AT.z + (LIVE_AT.z - DARK_AT.z) * live;
+        }
+
         // Slower and steadier than a brazier. A perk fixture that flickers like
-        // fire reads as damaged rather than magical.
-        flame.material.emissiveIntensity = 2.6 + Math.sin(t * 2.4 + phase) * 0.5;
+        // fire reads as damaged rather than magical, and a HELD one steadies
+        // further still, which is the cheapest possible "this one is yours".
+        const wobble = held ? 0.18 : 0.5;
+        const lit = live * (1 + (held ? 0.45 : 0));
+
+        flame.material.emissiveIntensity = lit * (2.6 + Math.sin(t * 2.4 + phase) * wobble);
         flame.scale.x = flame.scale.z = 1 + Math.sin(t * 1.9 + phase) * 0.05;
+        markMat.emissiveIntensity = held ? 1.35 : lit * 0.25;
+
+        light.intensity = DARK_GLOW * (1 - live)
+          + lit * (7.5 + Math.sin(t * 2.1 + phase) * 0.9);
       },
     });
+
+    // Handed back through the context rather than written onto the slot.
+    // rooms.js is DATA that the node harness reads without a GPU, and a builder
+    // that scribbles a THREE object onto it stops being safe to run twice.
+    // buildInteracts moves this onto the interact record a line later.
+    ctx.lastVisuals = animated[animated.length - 1];
 
     addCollider(slot.x, slot.z, 1.0, 2.6);
     return g;
@@ -1311,7 +1674,7 @@ function gateBarrier(g, M, axis, width, h, kind) {
 // ---------------------------------------------------------------------------
 
 function buildLights(ctx) {
-  const { room, group, lights, animated, anchors } = ctx;
+  const { room, group, lights, animated, anchors, power, POWER_LIFT } = ctx;
   const P = LIGHTING[room.lightingProfile] || LIGHTING.chamber;
 
   const { x, z, w, d } = room.bounds;
@@ -1356,7 +1719,10 @@ function buildLights(ctx) {
     animated.push({
       update(dt, t) {
         const f = Math.sin(t * 9.1 + phase) * 0.5 + Math.sin(t * 5.3 + phase * 2) * 0.5;
-        light.intensity = base * (1 + f * amount);
+        // The flicker and the power lift are multiplied rather than added, so
+        // a powered room flickers HARDER as well as brighter. Adding a constant
+        // would light the map and flatten it in the same move.
+        light.intensity = base * (1 + f * amount) * (1 + POWER_LIFT * power.level);
       },
     });
   }

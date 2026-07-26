@@ -2545,6 +2545,7 @@ export function createViewmodel(host, materials) {
 
     current = w;
     model = m;
+    if (gilded.has(id)) gild(m);
     group.add(m.root);
 
     // Park the flash on this weapon's muzzle and size it to the calibre.
@@ -2559,6 +2560,116 @@ export function createViewmodel(host, materials) {
 
   function applyDetailVisibility(m) {
     for (const d of m.detail) d.visible = highFidelity;
+  }
+
+  // -------------------------------------------------------------------------
+  // the Altar of Ptah: a finish, and nothing else
+  //
+  // A weapon that has been through the Altar comes back gold and lapis. That is
+  // the entire visual change, and the restraint is deliberate: these models are
+  // the one part of the project the owner has said outright that he likes, so an
+  // upgrade is not licence to re-pose them, re-proportion them, or bolt anything
+  // on. Nothing below touches geometry, a hip pose, an ADS solve, a keyframe
+  // track, or any material that was authored above. It swaps which material a
+  // mesh POINTS AT, for the meshes that make up the weapon body, and leaves the
+  // hands, the optic glass, the reticle, the shells, and the muzzle flash
+  // exactly as they were.
+  //
+  // The swap table is built once and cached, so seven upgraded weapons share
+  // eight materials rather than compiling a program per weapon.
+  // -------------------------------------------------------------------------
+
+  /** Weapon ids that have been through the Altar. */
+  const gilded = new Set();
+
+  let gildMap = null;
+
+  /**
+   * Clone a base material and re-tint it, keeping every map, normal scale and
+   * flag the original had. Cloning rather than editing is the load-bearing part:
+   * P.metal is shared by all seven weapons and by every un-upgraded copy of this
+   * one, and tinting it in place would gild the whole armoury at once.
+   */
+  function recolour(base, { color, metalness, roughness, env, emissive, glow }) {
+    const m = base.clone();
+    m.color.setHex(color);
+    if (metalness !== undefined) m.metalness = metalness;
+    if (roughness !== undefined) m.roughness = roughness;
+    if (env !== undefined) m.envMapIntensity = env;
+    if (emissive !== undefined) {
+      // A faint self-lit term, because the rooms this weapon is carried through
+      // are lit by two point lights and a gold weapon that only exists when a
+      // brazier is in frame is not much of a reward for five thousand gold.
+      m.emissive.setHex(emissive);
+      m.emissiveIntensity = glow === undefined ? 0.3 : glow;
+    }
+    return m;
+  }
+
+  function buildGildMap() {
+    return new Map([
+      // Receiver, frame, every large body panel: lapis.
+      [P.metal, recolour(P.metal, {
+        color: 0x1d3068, metalness: 0.86, roughness: 0.40, env: 0.34,
+        emissive: 0x07102c, glow: 0.35,
+      })],
+      // Barrels, bolt carriers, phosphate parts: the deeper lapis, so the
+      // weapon still has a value ladder and does not read as one blue slab.
+      [P.dark, recolour(P.dark, {
+        color: 0x121f45, metalness: 0.88, roughness: 0.52, env: 0.30,
+        emissive: 0x050a1c, glow: 0.30,
+      })],
+      // The wear strips along every chamfer become the gold inlay. These are
+      // the 1mm slivers that already catch the key light, so putting the gold
+      // here is what makes the whole silhouette read as chased metal rather
+      // than as a repaint.
+      [P.edge, recolour(P.edge, {
+        color: 0xe0b45c, metalness: 0.98, roughness: 0.18, env: 0.45,
+        emissive: 0x40290a, glow: 0.45,
+      })],
+      // Seams and port cuts go almost black, so the inlay has an edge to sit
+      // against.
+      [P.seam, recolour(P.seam, { color: 0x070b1c, metalness: 0.72, roughness: 0.50, env: 0.14 })],
+      // Grips and furniture: lapis, but matte, because a polymer grip that
+      // shines like the receiver stops reading as something you can hold.
+      [P.poly, recolour(P.poly, { color: 0x18203a, metalness: 0.10, roughness: 0.88, env: 0.12 })],
+      [P.housing, recolour(P.housing, {
+        color: 0x1b2b57, metalness: 0.88, roughness: 0.52, env: 0.26,
+      })],
+      [P.wood, recolour(P.wood, { color: 0x7d5c22, metalness: 0.20, roughness: 0.60, env: 0.20 })],
+    ]);
+  }
+
+  /**
+   * Repoint every gildable mesh on a built model.
+   *
+   * Idempotent by construction: the gilded materials are values in the map and
+   * never keys, so a second pass finds nothing to change.
+   */
+  function gild(m) {
+    if (!gildMap) gildMap = buildGildMap();
+    m.root.traverse((o) => {
+      if (!o.isMesh) return;
+      const next = gildMap.get(o.material);
+      if (next) o.material = next;
+    });
+  }
+
+  /**
+   * Put a weapon's FINISH through the Altar. Stats are weapons.js's business.
+   *
+   * A weapon that has not been built yet is remembered rather than skipped, and
+   * gilded by attach() when it is. Nothing in the game can reach that path today
+   * - you upgrade what is in your hands, and what is in your hands is built -
+   * but a silent no-op on a weapon the mystery box hands over later would be a
+   * bug with no symptom until somebody paid 5000 gold for nothing.
+   */
+  function upgradeFinish(id) {
+    if (!WEAPONS[id]) return false;
+    gilded.add(id);
+    const m = built.get(id);
+    if (m) gild(m);
+    return true;
   }
 
   /**
@@ -3047,6 +3158,10 @@ export function createViewmodel(host, materials) {
     inspect,
     setFidelity,
     render,
+
+    /** The Altar of Ptah's cosmetic half. Finish only: see the note above. */
+    upgradeFinish,
+    isGilded(id) { return gilded.has(id); },
 
     /** Optional: build the environment before the first frame instead of on it. */
     prepare(renderer) { if (!envBuilt) buildEnvironment(renderer); },

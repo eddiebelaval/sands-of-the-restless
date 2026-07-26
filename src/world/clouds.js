@@ -70,9 +70,13 @@ export const CLOUD_DEFAULTS = {
   cirrusStretch: 4.2,      // anisotropy. 1 = isotropic blobs.
 
   // --- shading --------------------------------------------------------------
-  litColor: 0xfff4e2,      // sun-facing tops
-  shadowColor: 0x7c8ba8,   // undersides, tinted with the sky rather than grey
-  silver: 0.85,            // forward-scatter rim when looking toward the sun
+  // Late afternoon. A cloud top lit by a 23-degree sun is not white, it is the
+  // colour of the sun lighting it, and its underside is lit by nothing but sky.
+  // Leaving the tops at 0xfff4e2 under a gold sun is the most reliable way to
+  // make a sky read as "rendered at noon and then tinted afterwards".
+  litColor: 0xffe3bd,      // sun-facing tops
+  shadowColor: 0x6e7fa4,   // undersides, tinted with the sky rather than grey
+  silver: 1.05,            // forward-scatter rim when looking toward the sun
 
   // --- horizon --------------------------------------------------------------
   // The deck has to dissolve before it reaches the horizon line, or the shells

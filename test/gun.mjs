@@ -120,6 +120,19 @@ for (const id of ['mk9', 'smg', 'shotgun', 'carbine', 'lmg', 'bolt', 'sunspear']
   // and looks exactly like a weapon that failed to render.
   const info = await page.evaluate(async (wid) => {
     const g = window.__SANDS__;
+
+    // The player now starts with the MK9 and nothing else - every other weapon
+    // is bought off a wall, which is what makes gold a currency rather than a
+    // key. equip() refuses a weapon the player does not own, so this loop used
+    // to leave the pistol up for all seven passes and photograph it seven
+    // times while reporting nothing wrong.
+    //
+    // The grant is the RIGHT fix rather than reinstating the free armoury,
+    // because what this loop is testing is that every viewmodel builds, poses
+    // and renders. That is a question about geometry, and it should not be
+    // answerable only by a player who has earned nine thousand gold. Ownership
+    // is tested where ownership lives, in test/economy.mjs.
+    g.weapons.grant(wid);
     g.weapons.equip(wid);
 
     let frames = 0;

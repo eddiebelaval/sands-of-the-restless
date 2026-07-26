@@ -88,10 +88,30 @@ export const ROOMS = [
     ],
 
     interactSlots: [
+      // THE FIRST WALL BUY, and its placement is the tutorial.
+      //
+      // It is on the far wall of the first room inside the pyramid, dead ahead
+      // of the spawn the sealed doorway drops the player on, so the first thing
+      // they see after paying a thousand gold is the next thing to spend gold
+      // on. A wall buy the player has to go looking for teaches nothing; this
+      // one teaches the whole economy in one glance, and the SMG is the right
+      // weapon to teach it with because the starting pistol runs dry against a
+      // wave of six and this does not.
       {
         type: 'wallbuy',
-        x: -7, z: -141.4, rot: 0,
-        config: { weapon: 'smg', label: 'SAND ADDER', cost: 1200, ammo: 600 },
+        x: -4, z: -156.6, rot: Math.PI,
+        config: { weapon: 'smg', cost: 1000 },
+      },
+
+      // Anubis is the cheapest shrine in the map and it is in the first room
+      // for the same reason: the player meets a dead fixture, is told it is
+      // dark rather than that they are poor, and now knows there is a switch
+      // somewhere. That is the power gate explaining itself an hour before the
+      // player can reach it.
+      {
+        type: 'shrine',
+        x: 10.1, z: -143, rot: Math.PI / 2,
+        config: { boon: 'anubis' },
       },
     ],
   },
@@ -143,7 +163,12 @@ export const ROOMS = [
       {
         type: 'wallbuy',
         x: -40, z: -156.6, rot: Math.PI,
-        config: { weapon: 'shotgun', label: 'JACKAL', cost: 1500, ammo: 750 },
+        config: { weapon: 'shotgun', cost: 1200 },
+      },
+      {
+        type: 'shrine',
+        x: -24, z: -141.9, rot: 0,
+        config: { boon: 'shu' },
       },
     ],
   },
@@ -182,7 +207,7 @@ export const ROOMS = [
       {
         type: 'shrine',
         x: 36.4, z: -149, rot: Math.PI / 2,
-        config: { perk: 'ka-vigor', label: 'Shrine of Ka', cost: 2000 },
+        config: { boon: 'set' },
       },
     ],
   },
@@ -261,6 +286,24 @@ export const ROOMS = [
 
     interactSlots: [
       { type: 'box', x: 0, z: -177, rot: 0, config: { spawn: 'B', cost: 950 } },
+
+      // Both fixtures are on the gallery's NORTH wall and neither is on a side
+      // wall, and that is forced rather than chosen: the east and west walls
+      // are the upper level. From z = -160 back to -195 they are ramp and
+      // ledge, so anything mounted at floor height there would be buried inside
+      // a walkable surface. The north wall is the only continuous stretch of
+      // this room that is actually wall, and it happens to be the wall the
+      // player walks in through, which makes both of these visible on arrival.
+      {
+        type: 'wallbuy',
+        x: -9, z: -159.4, rot: 0,
+        config: { weapon: 'carbine', cost: 1500 },
+      },
+      {
+        type: 'shrine',
+        x: 9, z: -159.9, rot: 0,
+        config: { boon: 'sekhmet' },
+      },
     ],
   },
 
@@ -364,7 +407,7 @@ export const ROOMS = [
       {
         type: 'shrine',
         x: -12, z: -224, rot: -Math.PI / 2,
-        config: { perk: 'ba-swiftness', label: 'Shrine of Ba', cost: 2500 },
+        config: { boon: 'ptah' },
       },
     ],
   },
@@ -406,6 +449,21 @@ export const ROOMS = [
 
     interactSlots: [
       { type: 'box', x: 27, z: -214, rot: 0, config: { spawn: 'C', cost: 950 } },
+
+      // The deepest wall buy in the map, and the dearest, behind the 1250 gate.
+      // The LMG is the wave-twenty weapon: seventy-five rounds is the only
+      // magazine in the armoury that outlasts a full spawn wave, so it is
+      // correctly the last gun a player earns rather than the first.
+      {
+        type: 'wallbuy',
+        x: 15.4, z: -214, rot: -Math.PI / 2,
+        config: { weapon: 'lmg', cost: 1600 },
+      },
+      {
+        type: 'shrine',
+        x: 38.1, z: -226, rot: Math.PI / 2,
+        config: { boon: 'thoth' },
+      },
     ],
   },
 
@@ -447,10 +505,13 @@ export const ROOMS = [
     ],
 
     interactSlots: [
+      // THE ALTAR OF PTAH. First upgrade on a weapon costs 5000; every one
+      // after that costs 2000, because the second gun the player brings here is
+      // a choice about loadout and the first one is a wall they have to climb.
       {
         type: 'altar',
         x: 0, z: -258, rot: Math.PI,
-        config: { label: 'Altar of Renewal', cost: 5000, upgrade: true },
+        config: { label: 'Altar of Ptah', cost: 5000, repeat: 2000 },
       },
     ],
   },
