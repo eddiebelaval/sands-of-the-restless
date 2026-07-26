@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Sands of the Restless</title>
+<!-- Empty inline icon. Without it every load logs a 404 and the test harness
+     cannot distinguish a real console error from browser noise. -->
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --gold: #d9b26a;
+    --gold-dim: #8a6f3e;
+    --lapis: #2c4a7c;
+    --ink: #0d0a07;
+    --bone: #e8dcc4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0d0a07; }
+  body {
+    font-family: "Trebuchet MS", "Gill Sans", Optima, sans-serif;
+    color: var(--bone);
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  #stage { position: fixed; inset: 0; display: block; }
+
+  /* ---- overlays ---- */
+  .veil {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column;
+    background: radial-gradient(ellipse at center, rgba(20,14,8,.82), rgba(6,4,2,.97));
+    z-index: 40;
+    text-align: center;
+    padding: 24px;
+  }
+  .veil[hidden] { display: none; }
+
+  .title {
+    font-size: clamp(28px, 6vw, 62px);
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--gold);
+    text-shadow: 0 0 24px rgba(217,178,106,.35), 0 2px 0 #2a1d0d;
+    margin-bottom: .35em;
+  }
+  .sub {
+    font-size: clamp(11px, 1.6vw, 14px);
+    letter-spacing: .34em;
+    text-transform: uppercase;
+    color: var(--gold-dim);
+    margin-bottom: 2.4em;
+  }
+  .cta {
+    border: 1px solid var(--gold-dim);
+    background: linear-gradient(180deg, rgba(217,178,106,.12), rgba(217,178,106,.03));
+    color: var(--gold);
+    padding: 14px 40px;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background .18s ease, border-color .18s ease;
+  }
+  .cta:hover { background: rgba(217,178,106,.2); border-color: var(--gold); }
+
+  .keys {
+    margin-top: 2.6em;
+    font-size: 11px;
+    letter-spacing: .16em;
+    color: #6b5a42;
+    line-height: 2;
+    text-transform: uppercase;
+  }
+  .keys b { color: var(--gold-dim); font-weight: normal; }
+
+  /* ---- asset loading ---- */
+  #load-wrap {
+    position: fixed; left: 50%; bottom: 34px;
+    transform: translateX(-50%);
+    width: min(340px, 60vw);
+    z-index: 45;
+    transition: opacity .6s ease;
+  }
+  #load-track {
+    height: 1px; background: #35291a; overflow: hidden;
+  }
+  #load-bar {
+    height: 100%; width: 0%; background: var(--gold);
+    transition: width .25s ease;
+  }
+  #load-status {
+    margin-top: 9px; font-size: 9px; letter-spacing: .22em;
+    text-transform: uppercase; color: #5d4e39; text-align: center;
+    min-height: 12px;
+  }
+
+  /* ---- hud ---- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+  #hud[hidden] { display: none; }
+
+  #crosshair {
+    position: absolute; left: 50%; top: 50%;
+    width: 22px; height: 22px;
+    transform: translate(-50%, -50%);
+  }
+
+  .readout {
+    position: absolute;
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--gold);
+    text-shadow: 0 1px 3px #000;
+  }
+  #r-health { left: 28px; bottom: 26px; }
+  #r-wave   { right: 28px; bottom: 26px; text-align: right; }
+  #r-gold   { right: 28px; top: 24px; text-align: right; }
+  .readout .val { display: block; font-size: 26px; letter-spacing: .1em; color: var(--bone); }
+
+  #fps {
+    position: absolute; left: 28px; top: 24px;
+    font-size: 11px; letter-spacing: .1em; color: #5d4e39;
+  }
+
+  /* Ammunition sits just inboard of the wave counter, low right, where the
+     eye can catch it without leaving the crosshair. */
+  #r-ammo {
+    right: 28px; bottom: 84px; text-align: right;
+    font-size: 11px; color: var(--gold-dim);
+  }
+  #r-ammo .val { display: block; }
+  #r-ammo b { font-weight: normal; font-size: 30px; color: var(--bone); }
+  #r-ammo i {
+    font-style: normal; font-size: 15px; color: var(--gold-dim);
+    margin-left: 7px;
+  }
+  #r-ammo i::before { content: "/ "; }
+  #r-ammo.empty b { color: #c2452f; }
+  #r-ammo.reloading b { color: var(--gold); }
+
+  /* The hitmarker is the single most important piece of shooting feedback.
+     It confirms the shot connected without the player leaving the crosshair. */
+  #hitmarker {
+    position: absolute; left: 50%; top: 50%;
+    width: 26px; height: 26px;
+    transform: translate(-50%, -50%) rotate(45deg);
+    opacity: 0;
+  }
+  #hitmarker::before, #hitmarker::after {
+    content: ""; position: absolute; background: #fff;
+  }
+  #hitmarker::before { left: 50%; top: 0; width: 2px; height: 100%; margin-left: -1px; }
+  #hitmarker::after  { top: 50%; left: 0; height: 2px; width: 100%; margin-top: -1px; }
+  #hitmarker.on { opacity: 1; transition: none; }
+  #hitmarker.fade { opacity: 0; transition: opacity .18s ease-out; }
+  #hitmarker.crit::before, #hitmarker.crit::after { background: #ff5a3c; }
+
+  /* The buy prompt. Sits above the notice line rather than sharing it: a
+     prompt is persistent while you look at a door, a notice is a message that
+     expires, and one element cannot be both without them fighting. */
+  #prompt {
+    position: absolute; left: 50%; top: 57%;
+    transform: translateX(-50%);
+    font-size: 13px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--gold); text-shadow: 0 1px 4px #000;
+    border: 1px solid rgba(217,178,106,.35);
+    background: rgba(10,7,4,.55);
+    padding: 7px 16px;
+    white-space: nowrap;
+    opacity: 0; transition: opacity .12s ease;
+  }
+  #prompt.on { opacity: 1; }
+  /* Cannot afford it, or it is not for sale at any price. */
+  #prompt.deny { color: #e0563c; border-color: rgba(224,86,60,.45); }
+
+  /* Floating gold. The container is a zero-size anchor at the crosshair and
+     every popup positions off it, so the animation never triggers layout. */
+  #gold-pops { position: absolute; left: 50%; top: 44%; width: 0; height: 0; }
+  .gold-pop {
+    position: absolute; left: 0; top: 0;
+    font-size: 17px; letter-spacing: .08em;
+    color: var(--gold); text-shadow: 0 1px 4px #000;
+    white-space: nowrap;
+    animation: gold-float 1s ease-out forwards;
+  }
+  .gold-pop.crit { color: #ffe0a0; font-size: 21px; }
+  .gold-pop.debit { color: #e0563c; }
+  @keyframes gold-float {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(.82); }
+    14%  { opacity: 1;
+           transform: translate(calc(-50% + var(--dx) * .2), calc(-50% + var(--dy) * .2)) scale(1); }
+    100% { opacity: 0;
+           transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1); }
+  }
+
+  #notice {
+    position: absolute; left: 50%; top: 62%;
+    transform: translateX(-50%);
+    font-size: 12px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--gold); text-shadow: 0 1px 4px #000;
+    opacity: 0; transition: opacity .2s ease;
+  }
+  #notice.on { opacity: 1; }
+
+  /* ---- settings ---- */
+  #settings {
+    position: fixed; right: 20px; bottom: 20px; z-index: 30;
+    display: flex; gap: 8px; align-items: center;
+    font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: #6b5a42;
+  }
+  #settings button {
+    font-family: inherit; font-size: 10px; letter-spacing: .18em;
+    text-transform: uppercase;
+    background: rgba(10,7,4,.7); color: var(--gold-dim);
+    border: 1px solid #35291a; padding: 6px 12px; cursor: pointer;
+  }
+  #settings button[aria-pressed="true"] { color: var(--gold); border-color: var(--gold-dim); }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.185.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+
+<div id="hud" hidden>
+  <svg id="crosshair" viewBox="0 0 22 22" aria-hidden="true">
+    <g stroke="#d9b26a" stroke-width="1.4" stroke-linecap="round" opacity=".9">
+      <line x1="11" y1="2"  x2="11" y2="7"/>
+      <line x1="11" y1="15" x2="11" y2="20"/>
+      <line x1="2"  y1="11" x2="7"  y2="11"/>
+      <line x1="15" y1="11" x2="20" y2="11"/>
+    </g>
+    <circle cx="11" cy="11" r="1" fill="#d9b26a" opacity=".9"/>
+  </svg>
+
+  <div id="fps">--- fps</div>
+  <div class="readout" id="r-health">Vitality<span class="val" data-health>100</span></div>
+  <div class="readout" id="r-gold">Gold<span class="val" data-gold>500</span></div>
+  <div class="readout" id="r-wave">Wave<span class="val" data-wave>1</span></div>
+  <div class="readout" id="r-ammo">
+    <span data-weapon>MK9</span>
+    <span class="val"><b data-mag>12</b><i data-reserve>96</i></span>
+  </div>
+  <div id="gold-pops"></div>
+  <div id="prompt"></div>
+  <div id="notice"></div>
+  <div id="hitmarker"></div>
+</div>
+
+<div class="veil" id="veil">
+  <h1 class="title">Sands of the Restless</h1>
+  <p class="sub">The dead are getting up</p>
+  <button class="cta" id="begin">Enter the Necropolis</button>
+  <div class="keys">
+    <b>WASD</b> move &nbsp;&middot;&nbsp; <b>Shift</b> sprint &nbsp;&middot;&nbsp; <b>Space</b> jump<br>
+    <b>Mouse</b> look &nbsp;&middot;&nbsp; <b>LMB</b> fire &nbsp;&middot;&nbsp; <b>RMB</b> aim<br>
+    <b>R</b> reload &nbsp;&middot;&nbsp; <b>1-7</b> weapons &nbsp;&middot;&nbsp; <b>F</b> buy &nbsp;&middot;&nbsp; <b>Esc</b> release cursor
+  </div>
+
+  <!-- Assets stream in after the game is already playable, so this reports
+       progress rather than gating entry on it. -->
+  <div id="load-wrap">
+    <div id="load-track"><div id="load-bar"></div></div>
+    <div id="load-status">loading materials</div>
+  </div>
+</div>
+
+<div id="settings">
+  <span>Fidelity</span>
+  <button id="fid-high" aria-pressed="true">High</button>
+  <button id="fid-low"  aria-pressed="false">Low</button>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
