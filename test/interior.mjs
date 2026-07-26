@@ -135,6 +135,12 @@ async function shoot(name, label) {
   return stats;
 }
 
+// The horde is live from the first breather, and this suite is about doors and
+// rooms rather than about surviving. Left alone, a wave that catches the player
+// mid-route drops them to zero, the run resets to wave one, and a door test
+// fails for a reason that has nothing to do with doors.
+await page.evaluate(() => { window.__SANDS__.combat.state.invulnerable = true; });
+
 // ---------------------------------------------------------------------------
 // 1. the purse starts where it should, and the HUD says so
 // ---------------------------------------------------------------------------
@@ -189,6 +195,60 @@ const earning = await page.evaluate(async () => {
   const before = g.economy.gold;
   window.__H__.watchPops();
 
+  // Shooting scenery does not pay any more. The stand-in payout that carried
+  // the economy while there was nothing alive in the map went out with the
+  // horde's arrival, so earning is tested the way the game earns: put something
+  // in front of the player and shoot it.
+  //
+  // Turned away from the doorway first, because the crosshair is currently on a
+  // barrier and a barrier is not a target. The look is restored before the next
+  // section, which needs the door back under the crosshair.
+  const yaw0 = g.rig.yaw, pitch0 = g.rig.pitch;
+  const yaw = yaw0 + Math.PI;
+  g.rig.reset(yaw, 0);
+  g.rig.update(1 / 60, g.player, false);
+
+  // The avenue is DRESSED. Picking a point seven metres behind the player and
+  // trusting it puts the target behind a crate about half the time, and the
+  // symptom - a shot that pays nothing - is indistinguishable from a broken
+  // payout. So the placement is searched and confirmed with a probe ray before
+  // a round is spent on it.
+  const THREE = g.THREE;
+  const probe = new THREE.Raycaster();
+  const centre = new THREE.Vector2(0, 0);
+  let target = null;
+
+  for (const dist of [7, 9, 5, 11, 13]) {
+    for (const side of [0, -3, 3, -6, 6]) {
+      g.director.reset();
+      const x = g.player.position.x - Math.sin(yaw) * dist + Math.cos(yaw) * side;
+      const z = g.player.position.z - Math.cos(yaw) * dist - Math.sin(yaw) * side;
+
+      const a = g.director.placeAt('shambler', x, z);
+      if (!a) continue;
+      a.st.speedScale = 0;
+
+      // Aim at the chest rather than trusting a level ray: the courtyard floor
+      // is a dune field and seven metres of it is not flat.
+      const m = a.rig.meshes[0];
+      m.updateWorldMatrix(true, false);
+      const e = m.matrixWorld.elements;
+      const c = g.player.position;
+      g.rig.reset(Math.atan2(-(e[12] - c.x), -(e[14] - c.z)),
+        Math.atan2(e[13] - c.y, Math.hypot(e[12] - c.x, e[14] - c.z)));
+      g.rig.update(1 / 60, g.player, false);
+      g.camera.updateMatrixWorld(true);
+
+      probe.setFromCamera(centre, g.camera);
+      probe.far = 120;
+      const first = probe.intersectObjects(g.world.hitTargets, true)
+        .find((h) => h.object.visible && !h.object.userData?.noHit);
+
+      if (first && first.object.userData?.enemy === a) { target = a; break; }
+    }
+    if (target) break;
+  }
+
   // The live input flag, so the award runs through the frame loop's own
   // weapons.update -> payout -> economy.award chain rather than a shortcut.
   g.input.state.fire = true;
@@ -196,7 +256,13 @@ const earning = await page.evaluate(async () => {
   g.input.state.fire = false;
   await window.__H__.frames(2);
 
+  g.director.reset();
+  g.rig.reset(yaw0, pitch0);
+  g.rig.update(1 / 60, g.player, false);
+  await window.__H__.frames(2);
+
   return {
+    placed: !!target,
     goldBefore: before,
     goldAfter: g.economy.gold,
     gained: g.economy.gold - before,
@@ -598,6 +664,7 @@ const checks = {
   'prompt is red when short':        atDoor.hud.promptDeny === true,
   'F refuses when short':            refused.goldAfter === refused.goldBefore && refused.opened === false,
   'refusal was counted':             refused.denied > 0,
+  'a target was placed to shoot':    earning.placed === true,
   'shooting pays gold':              earning.gained > 0 && earning.gained % 10 === 0,
   'HUD tracks the purse':            earning.hudGold === String(earning.goldAfter),
   'gold popups appeared':            earning.popsSeen > 0,

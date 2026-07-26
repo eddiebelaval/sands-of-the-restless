@@ -197,6 +197,35 @@
            transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1); }
   }
 
+  /* The boss bar. Top centre, because that is where the player's eye already
+     is when something four metres tall is walking at them, and because the
+     bottom corners are already spoken for by vitality and ammunition. It is
+     hidden until a god is live and it disappears with it, so its presence is
+     itself the readout. */
+  #boss {
+    position: absolute; left: 50%; top: 26px;
+    transform: translateX(-50%);
+    width: min(520px, 56vw);
+    text-align: center;
+  }
+  #boss[hidden] { display: none; }
+  #boss-name {
+    font-size: 12px; letter-spacing: .38em; text-transform: uppercase;
+    color: var(--gold); text-shadow: 0 1px 4px #000;
+    margin-bottom: 7px;
+  }
+  #boss-track {
+    height: 6px;
+    background: rgba(10,7,4,.72);
+    border: 1px solid rgba(217,178,106,.34);
+  }
+  #boss-bar {
+    height: 100%; width: 100%;
+    background: linear-gradient(90deg, #8c2417, #d4452a 60%, #e8894a);
+    /* Width is written every frame from the director; a transition here would
+       lag the number it is drawn from and read as the boss healing. */
+  }
+
   #notice {
     position: absolute; left: 50%; top: 62%;
     transform: translateX(-50%);
@@ -253,6 +282,10 @@
   <div class="readout" id="r-ammo">
     <span data-weapon>MK9</span>
     <span class="val"><b data-mag>12</b><i data-reserve>96</i></span>
+  </div>
+  <div id="boss" hidden>
+    <div id="boss-name">ANUBIS</div>
+    <div id="boss-track"><div id="boss-bar"></div></div>
   </div>
   <div id="gold-pops"></div>
   <div id="prompt"></div>

@@ -1087,8 +1087,12 @@ export function buildCourtyard(scene) {
       g.add(socket);
     }
 
-    const dx = 4.1 + d * 0.55 + rand() * 0.3;
-    const dz = 28.6 - d * (DRUM_H + 0.5);
+    // Pushed out and back. At 4.1 units these read as a dark wall across the
+    // right fifth of frame rather than as foreground: a near-field occluder
+    // has to sit at the EDGE of the composition, because anything large enough
+    // to give depth is also large enough to block the shot if it is centred.
+    const dx = 8.6 + d * 0.5 + rand() * 0.3;
+    const dz = 31.4 - d * (DRUM_H + 0.5);
     g.position.set(dx, COL_R_BOT * 0.85, dz);
     g.rotation.z = Math.PI / 2;
     g.rotation.y = 0.35 + (rand() - 0.5) * 0.5;

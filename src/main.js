@@ -25,6 +25,8 @@ import { createAudio } from './core/audio.js';
 import { createSpaces } from './systems/spaces.js';
 import { createEconomy } from './systems/economy.js';
 import { createDoors } from './systems/doors.js';
+import { createCombat } from './systems/damage.js';
+import { createDirector } from './enemies/director.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
@@ -117,6 +119,24 @@ function boot() {
   // the player is constructed FROM world, and the audio context is illegal
   // outside a user gesture.
   spaces.attach({ player, rig, audio });
+
+  // --- the dead -------------------------------------------------------------
+  // Combat first, because the director damages the player through it; the
+  // director second, because combat's failure path resets the run. The two are
+  // mutually dependent and the cycle is closed by attach(), the same late
+  // binding the router uses for exactly the same reason.
+
+  const combat = createCombat({
+    player, rig, post, audio, impacts,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
+  const director = createDirector({
+    scene, world, spaces, audio, player, rig, camera, impacts, combat,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
+  combat.attach({ director });
 
   // -------------------------------------------------------------------------
   // assets
@@ -216,6 +236,7 @@ function boot() {
     applyFidelity(buildMaterials(), high);
     viewmodel.setFidelity(high);
     impacts.setFidelity(high);
+    director.setFidelity(high);
     audio.setFidelity(high);
     renderer.shadowMap.enabled = high;
     renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio, 2) : 1);
@@ -317,27 +338,29 @@ function boot() {
   const reserveEl = document.querySelector('[data-reserve]');
   const weaponEl = document.querySelector('[data-weapon]');
   const hitmarkerEl = document.getElementById('hitmarker');
+  const waveEl = document.querySelector('[data-wave]');
+  const bossEl = document.getElementById('boss');
+  const bossNameEl = document.getElementById('boss-name');
+  const bossBarEl = document.getElementById('boss-bar');
+  let bossShown = null;
 
   /**
    * Pay the player for a burst of hits.
    *
-   * The kill values are wired and waiting: an enemy will tag its own meshes,
-   * and the moment one reports that a hit finished it, this awards 'kill' or
-   * 'headshot' instead.
+   * Only hits on something living pay now. The scenery payout that stood in
+   * for the horde through M4 is GONE with the horde's arrival: it existed
+   * because the player started on 500 against a 1000 doorway with nothing in
+   * the world that could earn the difference, and a buy-door nobody can afford
+   * is indistinguishable from a buy-door that is broken. There is something to
+   * shoot now, so shooting a wall pays what shooting a wall is worth.
    *
-   * TEMPORARY, DELETE WITH M5: until enemies exist, a hit on scenery pays the
-   * non-lethal rate. Without it the economy is unreachable - the player starts
-   * on 500 against a 1000 doorway with nothing in the world that can pay the
-   * difference - and a buy-door nobody can afford is indistinguishable from a
-   * buy-door that is broken. The line to delete is the `else` branch.
+   * `killed` is written onto the record by systems/damage.js, which is the only
+   * thing that knows how much a given weapon takes off a given region.
    */
   function payout(hits) {
     for (const h of hits) {
-      if (h.enemy) {
-        economy.award(h.killed ? (h.region === 'head' ? 'headshot' : 'kill') : 'hit');
-      } else {
-        economy.award('hit');
-      }
+      if (!h.enemy) continue;
+      economy.award(h.killed ? (h.region === 'head' ? 'headshot' : 'kill') : 'hit');
     }
   }
 
@@ -383,7 +406,10 @@ function boot() {
       // the camera and must use this frame's orientation, not last frame's.
       const hits = weapons.update(dt, input.state, ads);
       if (hits && hits.length) {
-        showHitmarker(hits.some((h) => h.region === 'head'));
+        // Damage first: the payout needs to know whether the round finished
+        // what it hit, and only the damage system can answer that.
+        combat.applyHits(hits);
+        showHitmarker(hits.some((h) => h.enemy && h.region === 'head'));
         payout(hits);
       }
 
@@ -391,6 +417,11 @@ function boot() {
       // crosshair is on THIS frame, and a frame of lag on a prompt reads as the
       // prompt being wrong rather than late.
       doors.update(dt);
+
+      // After the player and the camera, because the horde seeks THIS frame's
+      // position and a frame of lag on twenty-four actors reads as swimming.
+      director.update(dt, elapsed);
+      combat.update(dt);
     }
 
     viewmodel.update(dt, {
@@ -425,6 +456,28 @@ function boot() {
       fpsAccum = 0;
     }
     healthEl.textContent = Math.round(player.state.health);
+    waveEl.textContent = director.state.wave;
+
+    // The boss bar is the only HUD element that appears and disappears. It is
+    // driven off the director's live boss rather than off a flag, so it cannot
+    // survive the thing it is measuring.
+    //
+    // The name is rewritten on a CHANGE OF BOSS, not on the bar becoming
+    // visible. Keying it to visibility left the previous god's name over the
+    // next one's health whenever two arrived without the bar clearing in
+    // between, which is exactly what a summoned second boss would do.
+    const boss = director.boss;
+    if (boss) {
+      if (bossShown !== boss) {
+        bossEl.hidden = false;
+        bossNameEl.textContent = boss.name;
+        bossShown = boss;
+      }
+      bossBarEl.style.width = `${Math.max(0, (boss.health / boss.maxHealth) * 100)}%`;
+    } else if (bossShown) {
+      bossEl.hidden = true;
+      bossShown = null;
+    }
 
     magEl.textContent = weapons.magazine;
     reserveEl.textContent = weapons.reserve;
@@ -440,6 +493,7 @@ function boot() {
     THREE, renderer, scene, camera, post, world, player, rig, input, sky,
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
+    director, combat,
     setFidelity, start,
     get elapsed() { return elapsed; },
   };

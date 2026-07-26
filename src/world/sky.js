@@ -55,7 +55,7 @@ const SkyShader = {
     // just outside the frame edge, so the horizon band is lit from one side
     // without the player having to stare into a 6x overbright disc while they
     // walk down the corridor the level wants them to walk down.
-    uSunDir:     { value: new THREE.Vector3(0.7513, 0.5592, -0.3503).normalize() },
+    uSunDir:     { value: new THREE.Vector3(0.62, 0.66, 0.42).normalize() },
 
     uZenith:     { value: new THREE.Color(0x5f88bd) },
     uHorizon:    { value: new THREE.Color(0xdcc49a) },
