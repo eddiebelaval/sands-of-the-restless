@@ -25,7 +25,8 @@
  */
 
 import * as THREE from 'three';
-import { chamferedBox } from '../world/geometry.js';
+import { parts } from './anatomy.js';
+import { linenMaps, compensate, WRAP_TILES } from './wraps.js';
 import {
   MUMMY, buildHumanoid, animateHumanoid, groundAt, resolveAgainstWorld,
   pickDetourSide, WEDGE_TRIP, DETOUR_S, DETOUR_BIAS,
@@ -33,12 +34,19 @@ import {
 
 const _v = new THREE.Vector3();
 
-/** Shared crown geometry. Five gods, a dozen shapes, built once. */
+/**
+ * Shared crown geometry. Five gods, a dozen shapes, built once.
+ *
+ * Built through the enemy module's own bevel rather than the world's. A god's
+ * ear is a twenty-centimetre member and the world's chamfer rule is written for
+ * a forty-metre pyramid step, so it floors at nine centimetres - which on an
+ * ear is the whole ear.
+ */
 const CGEO = new Map();
 function cgeo(w, h, d) {
   const key = `${w}|${h}|${d}`;
   let g = CGEO.get(key);
-  if (!g) { g = chamferedBox(w, h, d, Math.min(w, h, d) * 0.18, 1.0); CGEO.set(key, g); }
+  if (!g) { g = parts(WRAP_TILES).box(w, h, d).build(); CGEO.set(key, g); }
   return g;
 }
 
@@ -427,9 +435,28 @@ function createGod(god, effects) {
 
   // Materials, per god rather than per instance: only one is ever live, and the
   // hit flash is therefore never shared with anything.
+  //
+  // The linen carries the same generated maps the horde wears. It has to: a god
+  // is built by the same `buildHumanoid`, so an unmapped god standing among
+  // mapped shamblers would be the one flat-shaded body in the frame, and it
+  // would be the one the player is looking at. The maps are the shared set from
+  // wraps.js, so five gods add nothing to texture memory, and the colour is
+  // divided by the map's linear mean so the god renders at the value its
+  // palette states.
+  const linen = linenMaps();
   const mats = {
-    wrap: new THREE.MeshStandardMaterial({ color: god.palette.wrap, roughness: 0.94 }),
-    wrapDark: new THREE.MeshStandardMaterial({ color: god.palette.wrapDark, roughness: 0.98 }),
+    wrap: new THREE.MeshStandardMaterial({
+      color: compensate(god.palette.wrap, linen.gain),
+      map: linen.map, normalMap: linen.normalMap,
+      normalScale: new THREE.Vector2(1.1, 1.1),
+      roughnessMap: linen.roughnessMap, roughness: 0.94,
+    }),
+    wrapDark: new THREE.MeshStandardMaterial({
+      color: compensate(god.palette.wrapDark, linen.gain),
+      map: linen.map, normalMap: linen.normalMap,
+      normalScale: new THREE.Vector2(1.1, 1.1),
+      roughnessMap: linen.roughnessMap, roughness: 0.98,
+    }),
     // Flat dark. The glow lives on `eye` alone, or the whole head becomes a
     // lantern and the crown that distinguishes one god from another is lost
     // inside it - which is exactly what the first Anubis screenshot showed.
@@ -448,7 +475,10 @@ function createGod(god, effects) {
       emissive: god.palette.eye, emissiveIntensity: 0,
     }),
     tatter: new THREE.MeshStandardMaterial({
-      color: god.palette.wrapDark, roughness: 1.0, side: THREE.DoubleSide,
+      color: compensate(god.palette.wrapDark, linen.gain),
+      map: linen.map, normalMap: linen.normalMap,
+      normalScale: new THREE.Vector2(0.7, 0.7),
+      roughness: 1.0, side: THREE.DoubleSide,
     }),
   };
 

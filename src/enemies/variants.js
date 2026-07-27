@@ -25,26 +25,26 @@
  */
 
 import * as THREE from 'three';
-import { chamferedBox } from '../world/geometry.js';
+import { parts } from './anatomy.js';
+import { WRAP_TILES } from './wraps.js';
+import { contactShadow } from './contact.js';
 import { MUMMY, buildHumanoid, animateHumanoid } from './mummy.js';
 
 // ---------------------------------------------------------------------------
 // the scarab: its own rig
 // ---------------------------------------------------------------------------
 
-/** Shared with the humanoid cache would need a second key space; a swarm has
- * six shapes total, so it keeps its own tiny one. */
+/**
+ * The swarm's geometry, merged by (group, material) exactly as the humanoid's
+ * is, and cached against the proportions record.
+ *
+ * The shell used to be twenty meshes - two carapace slabs, an abdomen, a head,
+ * two sockets, two mandibles and twelve leg segments - on an enemy that spawns
+ * in clutches. Merging within each rig group takes it to eighteen with the
+ * contact patch included, and the swarm reads identically because none of the
+ * merged pieces ever moved relative to one another.
+ */
 const SGEO = new Map();
-
-function sgeo(w, h, d) {
-  const key = `${w}|${h}|${d}`;
-  let g = SGEO.get(key);
-  if (!g) {
-    g = chamferedBox(w, h, d, Math.min(w, h, d) * 0.2, 2.2);
-    SGEO.set(key, g);
-  }
-  return g;
-}
 
 /**
  * A carapace on six legs.
@@ -54,8 +54,74 @@ function sgeo(w, h, d) {
  * how an insect actually walks, it is two lines of code more than alternating
  * sides, and it is the difference between "bug" and "small dog".
  */
+function scarabGeometry(P) {
+  let out = SGEO.get(P);
+  if (out) return out;
+
+  const T = WRAP_TILES;
+  out = {};
+
+  {
+    // The shell. Wide and long and very low, so the outline against a floor is
+    // a horizontal bar rather than a vertical one, and domed rather than
+    // slabbed: the carapace tapers in on all four sides as it rises.
+    const p = parts(T);
+    p.box(P.shellW, P.shellH, P.shellD, { top: 0.86, bottom: 1.0 });
+    p.box(P.shellW * 0.68, P.shellH * 0.9, P.shellD * 0.6,
+      { y: P.shellH * 0.62, top: 0.66, bottom: 1.0, depthTop: 0.8, depthBottom: 1.0 });
+    out.shell = p.build();
+  }
+  {
+    // Abdomen, tapering behind. Local -Z is behind: the actor faces +Z.
+    const p = parts(T);
+    p.box(P.shellW * 0.56, P.shellH * 0.72, P.shellD * 0.5,
+      { y: -0.01, z: -P.shellD * 0.62, top: 0.85, bottom: 1.0 });
+    out.abdomen = p.build();
+  }
+  {
+    const p = parts(T);
+    p.box(P.headW, P.headH, P.headD, { top: 0.8, bottom: 1.0, depthTop: 0.9, depthBottom: 1.0 });
+    out.head = p.build();
+  }
+  {
+    // Two sockets, matching the humanoids. A single wide slot here was the same
+    // visor mistake at a smaller size, and on a shell at knee height it read as
+    // a sensor bar on a drone.
+    const p = parts(T);
+    for (const s of [-1, 1]) {
+      p.box(0.04, 0.035, 0.03,
+        { x: s * P.headW * 0.26, y: P.headH * 0.16, z: P.headD * 0.52, chamfer: 0 });
+    }
+    out.eyes = p.build();
+  }
+  {
+    const p = parts(T);
+    for (const s of [-1, 1]) {
+      p.box(0.045, 0.045, P.headD * 1.5, {
+        x: s * P.headW * 0.42, y: -P.headH * 0.18, z: P.headD * 0.7,
+        ry: s * 0.28, top: 0.6, bottom: 1.0,
+      });
+    }
+    out.jaws = p.build();
+  }
+  {
+    const p = parts(T);
+    p.box(0.055, P.femur, 0.055, { y: -P.femur / 2, top: 1.0, bottom: 0.7 });
+    out.femur = p.build();
+  }
+  {
+    const p = parts(T);
+    p.box(0.045, P.tibia, 0.045, { y: -P.tibia / 2, top: 1.0, bottom: 0.55 });
+    out.tibia = p.build();
+  }
+
+  SGEO.set(P, out);
+  return out;
+}
+
 function buildScarab(spec, mats, actor) {
   const P = spec.proportions;
+  const G = scarabGeometry(P);
   const meshes = [];
   let triangles = 0;
 
@@ -75,58 +141,43 @@ function buildScarab(spec, mats, actor) {
   body.position.y = P.rideHeight;
   group.add(body);
 
-  // The shell. Wide and long and very low, so the outline against a floor is a
-  // horizontal bar rather than a vertical one.
-  add(body, sgeo(P.shellW, P.shellH, P.shellD), mats.accent, 'body');
-  add(body, sgeo(P.shellW * 0.68, P.shellH * 0.9, P.shellD * 0.6), mats.accent, 'body')
-    .position.y = P.shellH * 0.62;
+  // Per-instance shell, on the same principle as the humanoid's: geometry is
+  // shared, the rig is not, so a wider or longer shell is one scale.
+  const R = () => Math.random();
+  const j = { w: 0.88 + R() * 0.24, l: 0.9 + R() * 0.22 };
 
-  // Abdomen, tapering behind. Local -Z is behind: the actor faces +Z.
-  add(body, sgeo(P.shellW * 0.56, P.shellH * 0.72, P.shellD * 0.5), mats.wrapDark, 'body')
-    .position.set(0, -0.01, -P.shellD * 0.62);
+  add(body, G.shell, mats.accent, 'body').scale.set(j.w, 1, j.l);
+  add(body, G.abdomen, mats.wrapDark, 'body').scale.set(j.w, 1, j.l);
 
   // The head is a real hitbox on a real head. A swarm enemy with no head is a
   // swarm enemy that can never pay 100, which quietly makes precision worthless
   // against exactly the wave the player most wants to be precise in.
   const neck = new THREE.Group();
-  neck.position.z = P.shellD * 0.52;
+  neck.position.z = P.shellD * 0.52 * j.l;
   body.add(neck);
-  add(neck, sgeo(P.headW, P.headH, P.headD), mats.deep, 'head');
 
-  // Two sockets, matching the humanoids. A single wide slot here was the same
-  // visor mistake at a smaller size, and on a shell at knee height it read as a
-  // sensor bar on a drone.
-  for (const s of [-1, 1]) {
-    add(neck, sgeo(0.04, 0.035, 0.03), mats.eye, 'head')
-      .position.set(s * P.headW * 0.26, P.headH * 0.16, P.headD * 0.52);
-  }
-
-  for (const side of [-1, 1]) {
-    const m = add(neck, sgeo(0.045, 0.045, P.headD * 1.5), mats.accent, 'head');
-    m.position.set(side * P.headW * 0.42, -P.headH * 0.18, P.headD * 0.7);
-    m.rotation.y = side * 0.28;
-  }
+  add(neck, G.head, mats.deep, 'head');
+  add(neck, G.eyes, mats.eye, 'head');
+  add(neck, G.jaws, mats.accent, 'head');
 
   // --- legs ------------------------------------------------------------------
   const legs = [];
-  const rows = [P.shellD * 0.34, 0, -P.shellD * 0.34];
+  const rows = [P.shellD * 0.34 * j.l, 0, -P.shellD * 0.34 * j.l];
 
   for (let r = 0; r < 3; r++) {
     for (const side of [-1, 1]) {
       const hip = new THREE.Group();
-      hip.position.set(side * P.shellW * 0.46, -P.shellH * 0.2, rows[r]);
+      hip.position.set(side * P.shellW * 0.46 * j.w, -P.shellH * 0.2, rows[r]);
       hip.rotation.z = side * -0.55;
       body.add(hip);
 
-      add(hip, sgeo(0.05, P.femur, 0.05), mats.wrapDark, 'body')
-        .position.y = -P.femur / 2;
+      add(hip, G.femur, mats.wrapDark, 'body');
 
       const knee = new THREE.Group();
       knee.position.y = -P.femur;
       hip.add(knee);
 
-      add(knee, sgeo(0.04, P.tibia, 0.04), mats.deep, 'body')
-        .position.y = -P.tibia / 2;
+      add(knee, G.tibia, mats.deep, 'body');
 
       // Tripod phase: front-left, middle-right, rear-left share a half cycle.
       const tripod = ((r + (side < 0 ? 0 : 1)) % 2) * Math.PI;
@@ -134,13 +185,21 @@ function buildScarab(spec, mats, actor) {
     }
   }
 
+  // A swarm at ankle height is the case where a contact patch matters MOST: a
+  // low body with no cast shadow under it reads as hovering, and a scarab that
+  // hovers is a drone.
+  const blob = contactShadow((spec.radius ?? 0.3) * 1.9);
+  blob.position.y = 0.02;
+  group.add(blob);
+
   // Same asymmetry contract the humanoid returns, so the actor's spawn path
   // does not need to know which builder made it.
-  const asym = { scale: 0.86 + Math.random() * 0.28, tilt: 0, droop: 0, reach: 0 };
+  const asym = { scale: 0.86 + R() * 0.28, tilt: 0, droop: 0, reach: 0 };
+  const gait = { rate: 0.85 + R() * 0.3, stride: 0.85 + R() * 0.3, swing: 1 };
 
   return {
     group, body, neck, legs, arms: [], tatters: [],
-    torso: body, hips: body, meshes, triangles, asym,
+    torso: body, hips: body, meshes, triangles, asym, gait, blob,
   };
 }
 
@@ -239,9 +298,14 @@ export const HUSK = extend(MUMMY, {
     legX: 0.10, legW: 0.11, thighL: 0.42, shinL: 0.44,
     torsoY: 0.12, chestW: 0.30, chestH: 0.50,
     // Arms nearly as long as the legs. A hand that hangs below the knee is the
-    // single cheapest signal that a body is wrong.
-    shoulderX: 0.18, shoulderY: 0.46, armW: 0.095, upperL: 0.50, foreL: 0.52,
-    headY: 0.60, headW: 0.19, headH: 0.34, headD: 0.24,
+    // single cheapest signal that a body is wrong - and now that the forearm
+    // actually ENDS in a hand, the signal is available rather than implied.
+    //
+    // The shoulders go out and the skull comes in for the same reason they do
+    // on the shambler: head over span was 0.19 against 0.51, and 37 per cent is
+    // a toy. At 0.175 over 0.54 it is 32, which is a starved human.
+    shoulderX: 0.195, shoulderY: 0.46, armW: 0.095, upperL: 0.50, foreL: 0.52,
+    headY: 0.60, headW: 0.175, headH: 0.34, headD: 0.225,
     tatterRest: 0.34,
     // Two rags, both trailing off the spine and one arm, and no hem. Desiccated
     // rather than wrapped: the husk has burned out of most of its bindings, and

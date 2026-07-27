@@ -108,13 +108,34 @@ window.__E__ = {
     return { yaw: +yaw.toFixed(3), pitch: +pitch.toFixed(3) };
   },
 
-  /** World position of the first mesh of an actor tagged with a region. */
+  /**
+   * World position of the MIDDLE of the first mesh of an actor tagged with a
+   * region.
+   *
+   * The middle, via the geometry's bounding sphere, not the mesh's origin. This
+   * read the origin until the rig was rebuilt around merged geometry, and got
+   * away with it because every member was a centred box positioned by its mesh
+   * transform - so a head mesh's origin happened to sit inside the head.
+   *
+   * It does not any more. Members are now welded into one geometry per rig
+   * group per material, and each member's offset is baked into the vertices, so
+   * every mesh in a group shares that group's origin. For the head that origin
+   * is the NECK JOINT, which is below the jaw: aiming there put four hundred
+   * damage into a shoulder and reported that headshots do not register.
+   *
+   * A bounding-sphere centre is what "aim at the head" meant all along.
+   */
   regionPoint(actor, region) {
     const m = actor.rig.meshes.find((x) => x.userData.region === region);
     if (!m) return null;
     m.updateWorldMatrix(true, false);
-    const e = m.matrixWorld.elements;
-    return { x: e[12], y: e[13], z: e[14] };
+    const THREE = window.__SANDS__.THREE;
+    if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+    const p = m.geometry.boundingSphere
+      ? m.geometry.boundingSphere.center.clone()
+      : new THREE.Vector3();
+    p.applyMatrix4(m.matrixWorld);
+    return { x: p.x, y: p.y, z: p.z };
   },
 
   /**
@@ -401,6 +422,179 @@ await page.evaluate(() => window.__E__.place(0, 34, 0));
 const shotWave = await shoot('enemy-01-wave-courtyard', 'wave incoming, courtyard');
 
 // ---------------------------------------------------------------------------
+// 2b. THE ENEMIES ARE ON THE GROUND, AND IT IS MEASURED ON THE GROUND'S PIXELS
+// ---------------------------------------------------------------------------
+
+/**
+ * A blind side-by-side put "not one of them casts a shadow onto the sand. They
+ * float. Nothing plants them" at the top of its fix list, and TWO separate
+ * review rounds before it reached opposite conclusions from the same correct
+ * pixels: one said no shadow existed, one measured a real cast shadow and
+ * declared the complaint false. Both were right about what they measured. What
+ * neither measured is the only thing that matters - whether the ground
+ * DIRECTLY UNDER THE BODY is darker for the body being there.
+ *
+ * So this asks exactly that, and asks it of captured frames rather than of the
+ * scene graph. A patch of sand under the actor's feet is sampled twice, once
+ * with the actor's contact shadow enabled and once with it hidden, with nothing
+ * else in the frame changed. The difference is the darkening in luma.
+ *
+ * It is deliberately NOT a check that a particular mesh exists. A test that
+ * asserts `rig.blob` is present passes on a blob that renders to nothing, which
+ * is how the first implementation of this shipped: a silently no-op custom
+ * blend that logged no error and drew no pixel.
+ */
+const contact = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+  const d = g.director;
+  const THREE = g.THREE;
+
+  // A sunlit patch, found by asking the sun rather than by guessing: on a
+  // dressed courtyard most points are in something's shadow already, and a
+  // contact patch measured inside a pylon's shadow measures nothing.
+  const dir = g.sky.sunDir.clone().normalize();
+  const lit = (x, z) => {
+    const y = (g.world.heightAt ? g.world.heightAt(x, z, undefined) : 0) + 0.06;
+    const ray = new THREE.Raycaster(new THREE.Vector3(x, y, z), dir, 0.15, 300);
+    return !ray.intersectObjects(g.scene.children, true)
+      .some((h) => h.object.isMesh && h.object.castShadow);
+  };
+
+  let at = null;
+  for (let z = -14; z <= 24 && !at; z += 2) {
+    for (let x = -8; x <= 8; x += 4) if (lit(x, z)) { at = { x, z }; break; }
+  }
+  if (!at) return { found: false };
+
+  d.reset();
+  const a = d.placeAt('shambler', at.x, at.z);
+  if (!a) return { found: false };
+  a.st.speedScale = 0;
+  window.__E__.place(at.x, at.z + 7, 0);
+  window.__E__.sim(0.8);
+  a.st.speedScale = 0;
+  a.position.x = at.x; a.position.z = at.z;
+  // Frozen, so the two captures differ ONLY by the contact shadow. The walk
+  // phase still advances at zero speed, and a leg that has moved between the
+  // two frames is a difference this check would read as shadow.
+  //
+  // SAVED AND RESTORED, not simply overwritten. Actors are POOLED: this object
+  // goes back into the pool and is handed out again hundreds of times later in
+  // this same file. A permanently stubbed `update` on a pooled actor is an
+  // enemy that can never walk, never die and never be returned - which is
+  // exactly how it presented, as "pool returned everything" and "hitscan works
+  // inside" failing several hundred lines away from the code that broke them.
+  window.__E__.frozen = { actor: a, update: a.update };
+  a.update = () => {};
+  window.__E__.aimAt(at.x, 0.35, at.z);
+
+  /**
+   * PIN THE FRAME, OR THIS MEASURES THE CAMERA.
+   *
+   * Two captures three frames apart are not the same image of the same scene.
+   * Weapon sway and view bob advance PER FRAME, so the camera has moved between
+   * them, and film grain is a per-pixel hash of a clock. Measured before this
+   * was added: 271,440 pixels of a 1440x860 frame differed by more than four
+   * luma between two captures that should have differed only under the actor's
+   * feet, the largest single difference was 203 luma at a point six hundred
+   * pixels away from the actor, and the number this check actually wants came
+   * out at 3.16 - buried under its own noise floor.
+   *
+   * Both are saved and restored. `rig.update` is the frame loop's only writer
+   * of the camera transform, and nulling it holds the pose `aimAt` just set.
+   */
+  window.__E__.pinned = {
+    rigUpdate: g.rig.update,
+    grain: Object.getOwnPropertyDescriptor(g.post.grade.uniforms.uTime, 'value'),
+  };
+  g.rig.update = () => {};
+  Object.defineProperty(g.post.grade.uniforms.uTime, 'value',
+    { get: () => 0.25, set: () => {}, configurable: true });
+
+  // The sample window is derived from the PATCH ITSELF, not from a pixel offset
+  // off the feet: its rim is projected to screen and boxed, inset to 0.72 of
+  // the radius so the soft outer falloff does not dilute the number with pixels
+  // the patch barely touches.
+  //
+  // The legs stand inside that box and that is fine - they are identical in
+  // both captures, so they contribute exactly zero to the DIFFERENCE and only
+  // pull the mean toward zero. Deriving the box from the geometry rather than
+  // from a magic pixel offset is what makes this survive a change of stance,
+  // dune height or camera pitch; a hand-tuned +/-90 by +/-40 box measured 3.16
+  // where the patch itself was delivering 25.
+  const blob = a.rig.blob;
+  if (!blob) return { found: false, reason: 'no contact patch on the rig' };
+  blob.updateWorldMatrix(true, false);
+  const r = blob.scale.x * a.group.scale.x * 0.72;
+  const y = a.position.y + 0.02;
+
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const [dx, dz] of [[-r, 0], [r, 0], [0, -r], [0, r]]) {
+    const q = new THREE.Vector3(a.position.x + dx, y, a.position.z + dz).project(g.camera);
+    const sx = (q.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (-q.y * 0.5 + 0.5) * window.innerHeight;
+    x0 = Math.min(x0, sx); x1 = Math.max(x1, sx);
+    y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+  }
+
+  const bx = Math.max(0, Math.round(x0));
+  const by = Math.max(0, Math.round(y0));
+  const bw = Math.max(8, Math.min(window.innerWidth - bx, Math.round(x1 - x0)));
+  const bh = Math.max(8, Math.min(window.innerHeight - by, Math.round(y1 - y0)));
+
+  window.__E__.blob = blob;
+  return {
+    found: true, at,
+    hasBlob: true,
+    patchRadius: +r.toFixed(3),
+    box: { x: bx, y: by, w: bw, h: bh },
+  };
+});
+
+let contactDrop = 0;
+if (contact.found) {
+  const box = contact.box;
+  const meanIn = async (name) => {
+    await page.evaluate(() => window.__E__.frames(3));
+    const png = await page.screenshot({ path: `${OUT}${name}.png` });
+    const { data } = await sharp(png)
+      .extract({ left: box.x, top: box.y, width: box.w, height: box.h })
+      .removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    let s = 0;
+    for (let i = 0; i < data.length; i += 3) {
+      s += data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722;
+    }
+    return s / (data.length / 3);
+  };
+
+  await page.evaluate(() => { if (window.__E__.blob) window.__E__.blob.visible = true; });
+  const withShadow = await meanIn('enemy-02a-contact-on');
+  await page.evaluate(() => { if (window.__E__.blob) window.__E__.blob.visible = false; });
+  const without = await meanIn('enemy-02b-contact-off');
+  await page.evaluate(() => {
+    if (window.__E__.blob) window.__E__.blob.visible = true;
+    const g = window.__SANDS__;
+    const f = window.__E__.frozen;
+    if (f) { f.actor.update = f.update; window.__E__.frozen = null; }
+    const pin = window.__E__.pinned;
+    if (pin) {
+      g.rig.update = pin.rigUpdate;
+      if (pin.grain) Object.defineProperty(g.post.grade.uniforms.uTime, 'value', pin.grain);
+      else Object.defineProperty(g.post.grade.uniforms.uTime, 'value',
+        { value: 0.25, writable: true, enumerable: true, configurable: true });
+      window.__E__.pinned = null;
+    }
+    g.director.reset();
+  });
+
+  contactDrop = +(without - withShadow).toFixed(2);
+  contact.groundLuma = +without.toFixed(1);
+  contact.groundLumaShadowed = +withShadow.toFixed(1);
+  contact.dropPct = +((without - withShadow) / (without || 1) * 100).toFixed(1);
+}
+contact.drop = contactDrop;
+
+// ---------------------------------------------------------------------------
 // 3. silhouettes: one of each variant at twenty metres
 // ---------------------------------------------------------------------------
 
@@ -588,6 +782,71 @@ const cap = await page.evaluate(async () => {
     cap: d.stats().cap,
     variants: Array.from(new Set(d.live.map((a) => a.variant))),
   };
+});
+
+// ---------------------------------------------------------------------------
+// 6b. the player dying MID-TICK does not take the director with it
+// ---------------------------------------------------------------------------
+
+/**
+ * The one reentrant path through `director.update`, pinned.
+ *
+ * A shambler's strike lands inside `a.update()` -> `combat.damagePlayer` ->
+ * the player's health reaches zero -> `fell()` -> `director.reset()` ->
+ * `clearLive()`, which truncates the live list to nothing while the actor loop
+ * is still walking it. The next `live[i]` is a hole and the whole frame throws
+ * "Cannot read properties of undefined (reading 'update')".
+ *
+ * It is not exotic. Reproduced on the FIRST attempt with six shamblers in
+ * melee on a player at one hit point, which is a routine shape now that a
+ * grenade puts 260 damage inside 2.4 m and the horde arrives together.
+ *
+ * The check runs twelve rounds because the throw depends on WHERE in the
+ * descending loop the killing strike lands - an actor at index zero empties the
+ * list on the last iteration and gets away with it. Twelve rounds and
+ * twenty-plus deaths is well past that.
+ */
+const reentry = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+  const d = g.director;
+
+  const before = g.combat.state.invulnerable;
+  g.combat.state.invulnerable = false;
+  const downsBefore = g.combat.state.downs;
+
+  let threw = null;
+  let rounds = 0;
+
+  for (let attempt = 0; attempt < 12 && !threw; attempt++) {
+    rounds++;
+    d.reset();
+    window.__E__.place(0, 20, 0);
+    g.player.state.health = 1;
+
+    for (let i = 0; i < 6; i++) {
+      d.placeAt('shambler', Math.cos(i) * 1.2, 20 + Math.sin(i) * 1.2);
+    }
+
+    try {
+      for (let i = 0; i < 400; i++) {
+        d.update(1 / 30, i / 30);
+        g.combat.update(1 / 30);
+        // Held on the sliver, so every round actually reaches a death rather
+        // than regenerating out of range of the thing being tested.
+        g.player.state.health = Math.min(g.player.state.health, 1);
+      }
+    } catch (e) {
+      threw = e.message;
+    }
+  }
+
+  const downs = g.combat.state.downs - downsBefore;
+
+  g.player.heal(g.player.state.maxHealth);
+  g.combat.state.invulnerable = before;
+  d.reset();
+
+  return { rounds, threw, downs, liveAfter: d.live.length };
 });
 
 // Frame cost with the cap full, measured on real frames.
@@ -878,11 +1137,13 @@ const show = (name, o) => { console.log(`--- ${name} ---`); console.log(JSON.str
 
 show('boot', boot);
 show('approach', approach);
+show('contact', contact);
 show('lineup', lineup);
 show('hitting', hitting);
 show('dying', dying);
 show('pool', leak);
 show('cap', cap);
+show('reentry', reentry);
 show('frame cost', frameCost);
 show('boss', bossRun);
 show('boss hud', bossHud);
@@ -948,6 +1209,24 @@ const checks = {
   'all four variants build':           lineup.placed.length === 4,
   'variants differ in height':         new Set(lineup.heights.map((h) => h.h)).size >= 3,
 
+  // A sunlit stance was found to measure in. Without one the number below is
+  // meaningless, so it is asserted rather than skipped.
+  'a sunlit stance was found':         contact.found === true,
+  /**
+   * THE GROUND UNDER AN ENEMY IS DARKER FOR IT BEING THERE.
+   *
+   * Six luma, on a courtyard whose sunlit sand measures 148 to 159. That is not
+   * a brave threshold and it is not meant to be: the whole failure this replaces
+   * was a shadow that measured 4.8 luma of darkening at twenty metres - three
+   * per cent, invisible - while a review round called it present because the
+   * pixels had changed. Six is over the noise floor of this reader (a null test,
+   * two identical captures, differs by well under one) and far under what the
+   * contact patch actually delivers, so it fails on the patch being GONE rather
+   * than on it being retuned.
+   */
+  'the ground under an enemy is darker for it':
+                                       contact.drop > 6,
+
   'a clean line was found':            hitting.placed === true,
   'body hit registers on an enemy':    !!hitting.body && hitting.body.onEnemy === 1 && hitting.body.regions[0] === 'body',
   'head hit registers on an enemy':    !!hitting.head && hitting.head.onEnemy === 1 && hitting.head.regions[0] === 'head',
@@ -967,6 +1246,12 @@ const checks = {
 
   'live cap holds':                    cap.peakLive <= cap.cap && cap.peakLive >= 20,
   'late waves mix variants':           cap.variants.length >= 3,
+
+  // The player has to actually have DIED, or the check below passed by never
+  // running the path it exists for.
+  'the player died during the reentry run':
+                                       reentry.downs >= reentry.rounds,
+  'a death mid-tick does not throw':    reentry.threw === null,
 
   'boss spawned on wave five':         bossRun.spawned === true,
   'boss is the first god':             bossRun.variant === 'anubis',

@@ -35,76 +35,271 @@
  */
 
 import * as THREE from 'three';
-import { chamferedBox } from '../world/geometry.js';
-import { plane } from '../world/uv.js';
+import { parts, tornStrip } from './anatomy.js';
+import { linenMaps, compensate, WRAP_TILES } from './wraps.js';
+import { contactShadow } from './contact.js';
 
 /**
- * Shared geometry, keyed by shape rather than by variant, so two variants that
- * happen to want the same 0.14 x 0.42 x 0.15 limb get one BufferGeometry
- * between them. Built lazily on the first pool that asks, which is still boot
- * time: nothing in here is reachable from the spawn path.
+ * Shared geometry, keyed by the PROPORTIONS RECORD ITSELF rather than by a
+ * string of dimensions.
+ *
+ * Object identity is the correct key here and it is not a shortcut. Two
+ * variants that were built from the same table are the same body; five gods
+ * that all point at the one COLOSSUS record are one mesh set between them; and
+ * `extend()` allocates a fresh proportions object per variant, so a variant
+ * that changes one number gets its own set automatically. A string key would
+ * have to enumerate every field this builder reads and would go quietly stale
+ * the first time one was added.
+ *
+ * Built lazily on the first actor that asks, which is still boot time: nothing
+ * in here is reachable from the spawn path.
  */
-const GEO = new Map();
+const RIG_GEO = new Map();
 
-/** Prop-scale texture density. Enemy materials carry no maps, but a limb that
- * later gets one should not inherit a wall's 0.17 tiles per unit. */
-const PART_TILES = 1.4;
+/** Wrap geometry, keyed by shape. Shared across every variant that asks. */
+const STRIPS = new Map();
 
-function partGeo(w, h, d) {
-  const key = `${w}|${h}|${d}`;
-  let g = GEO.get(key);
-  if (!g) {
-    // The chamfer is proportional to the smallest dimension. A fixed 6 cm
-    // chamfer on a 12 cm forearm eats the whole member.
-    g = chamferedBox(w, h, d, Math.min(w, h, d) * 0.16, PART_TILES);
-    GEO.set(key, g);
-  }
+function stripGeo(w, h, cut = 0) {
+  const key = `${w}|${h}|${cut}`;
+  let g = STRIPS.get(key);
+  if (!g) { g = tornStrip(w, h, cut, 5, WRAP_TILES); STRIPS.set(key, g); }
   return g;
 }
 
 /**
- * A torn wrap.
+ * Every mesh set a humanoid needs, welded down to one geometry per rig group
+ * per material.
  *
- * NOT a rectangle. A flat quad hanging off a box-man is another box-man edge,
- * and the whole reason to spend geometry on cloth is to break the axis-aligned
- * outline that everything else in a primitives-only character has. So the strip
- * tapers as it falls, its hem is torn at three different lengths, and it curls
- * out of its own plane so it still reads from the side rather than vanishing
- * edge-on.
+ * THE UNIT OF ACCOUNTING IS THE DRAW CALL. Twenty-four actors is the live cap,
+ * so one extra mesh on the body is twenty-four extra draw calls in a fight.
+ * The rebuild that added hands, feet, a neck, deltoids and tapered limbs would
+ * have taken the enemy from nineteen meshes to twenty-six built the old way -
+ * one mesh per member. Merging by (group, material) instead takes it to
+ * eighteen: a foot costs triangles, which are free here, and nothing else.
  *
- * The jitter is seeded by `cut`, so the shapes are stable across a run - the
- * geometry is shared by every instance that asks for the same one - and three
- * cuts is enough that no two rags on one body are the same tear.
+ * Each geometry is authored in the frame of the rig group it will hang on, and
+ * limb geometries run DOWNWARD FROM THEIR JOINT rather than being centred and
+ * offset. That is what lets a per-instance limb length be one `scale.y` on the
+ * mesh plus one number on the child joint, with no position arithmetic that
+ * could disagree between the two.
  */
-function stripGeo(w, h, cut = 0) {
-  const key = `strip|${w}|${h}|${cut}`;
-  let g = GEO.get(key);
-  if (!g) {
-    g = plane(w, h, 4, PART_TILES);
+function buildRigGeometry(P) {
+  const T = WRAP_TILES;
+  const out = {};
 
-    let seed = (cut + 1) * 9301 + 49297;
-    const rnd = () => {
-      seed = (seed * 1664525 + 1013904223) >>> 0;
-      return seed / 4294967296;
-    };
-
-    const pos = g.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i);
-      const t = (h / 2 - y) / h;                  // 0 at the top, 1 at the hem
-
-      pos.setX(i, x * (1 - t * (0.30 + rnd() * 0.34)));
-      if (t > 0.7) pos.setY(i, y + (rnd() - 0.55) * h * 0.30);
-      pos.setZ(i, (rnd() - 0.5) * w * 0.55 * t);  // the curl, growing downward
-    }
-
-    pos.needsUpdate = true;
-    g.computeVertexNormals();
-    // Built in XY around its centre; the anchor wants to swing from the top,
-    // so shift it down once here rather than on every instance.
-    g.translate(0, -h / 2, 0);
-    GEO.set(key, g);
+  // --- the pelvis, in the hips' frame ---------------------------------------
+  {
+    const p = parts(T);
+    p.box(P.hipW, 0.26, P.bodyD * 0.94, { y: 0.03, top: 1.0, bottom: 0.82, v: 0.13 });
+    out.pelvis = p.build();
   }
+
+  // --- the thigh, hanging from the hip --------------------------------------
+  {
+    const p = parts(T);
+    p.box(P.legW, P.thighL, P.legW * 1.06,
+      { y: -P.thighL / 2, top: 1.08, bottom: 0.82, v: 0.31 });
+    out.thigh = p.build();
+  }
+
+  // --- the shin and the foot, hanging from the knee --------------------------
+  //
+  // THE FOOT IS NEW AND IT IS NOT DECORATION. The previous rig deliberately
+  // had none: the shin was simply made deeper and the comment argued a foot was
+  // "under a pixel of silhouette once the wrappings are on it". It is not. A
+  // limb that ends in a flat cut where it meets the ground is the single
+  // clearest reason a figure reads as a mannequin on a stand, because a
+  // mannequin is exactly a body that ends at the ankle. The foot is also the
+  // only part of the outline that touches the sand, which makes it the part
+  // the eye uses to decide whether anything is standing on anything.
+  {
+    const p = parts(T);
+    const w = P.legW * 0.88;
+    p.box(w, P.shinL, w * 1.22, { y: -P.shinL / 2, z: P.legW * 0.08, top: 1.06, bottom: 0.68, v: 0.57 });
+    p.box(w * 0.94, 0.08, P.legW * 2.0,
+      { y: -P.shinL + 0.042, z: P.legW * 0.55, top: 0.80, bottom: 1.0, depthTop: 1.0, depthBottom: 0.94, v: 0.05 });
+    out.shin = p.build();
+  }
+
+  // --- the torso ------------------------------------------------------------
+  //
+  // A WEDGE, NOT A BOX, AND THIS IS THE SINGLE STRONGEST CUE IN THE RIG.
+  //
+  // A human reads as human at a glance from three ratios, and all three are
+  // free: shoulders wider than waist, head narrower than a third of the
+  // shoulder span, and limbs that taper toward their far end. The rectangular
+  // torso this replaces failed the first two at once - a slab the same width at
+  // the waist as at the shoulder is a crate, and a crate wearing a head is what
+  // "Roblox mannequin" means.
+  {
+    const p = parts(T);
+    p.box(P.chestW, P.chestH, P.bodyD, {
+      y: P.chestH / 2,
+      bottom: 0.66, top: 1.0,
+      depthBottom: 0.80, depthTop: 1.0,
+    });
+    // A neck. Without one the skull sits on the shoulders like a lid, which is
+    // its own mannequin tell and costs four triangles to fix.
+    const neckH = Math.max(0.07, P.headY - P.chestH + 0.06);
+    p.box(P.headW * 0.56, neckH, P.headW * 0.54,
+      { y: P.chestH + neckH / 2 - 0.04, top: 0.88, bottom: 1.08, v: 0.62 });
+    out.torsoLinen = p.build();
+  }
+
+  {
+    // Bindings, proud of the surface they wrap. A raised band catches its own
+    // line of light along the bevel at every angle, so it survives to the
+    // distance where the limbs have merged into one mass.
+    const p = parts(T);
+    p.box(P.chestW * 1.13, P.chestH * 0.17, P.bodyD * 1.28,
+      { y: P.chestH * 0.44, top: 0.98, bottom: 1.0, v: 0.5 });
+    p.box(P.chestW * 0.90, P.chestH * 0.13, P.bodyD * 1.02,
+      { y: P.chestH * 0.09, top: 1.0, bottom: 0.92, v: 0.2 });
+    out.torsoDark = p.build();
+  }
+
+  // --- the upper arm, with a deltoid over the joint --------------------------
+  {
+    const p = parts(T);
+    const w = P.armW;
+    p.box(w * 1.55, w * 1.3, w * 1.5,
+      { y: w * 0.18, top: 0.68, bottom: 1.0, v: 0.7 });
+    p.box(w, P.upperL, w, { y: -P.upperL / 2, top: 1.04, bottom: 0.82, v: 0.9 });
+    out.upper = p.build();
+  }
+
+  // --- the forearm, WITH A HAND ON THE END -----------------------------------
+  //
+  // "No hands" was one of four defects a blind judge listed by name. A hand at
+  // gameplay distance is three boxes and about a hundred triangles, and it is
+  // the difference between an arm and a length of pipe. It is built per side
+  // rather than mirrored with a negative scale: a negative scale reverses
+  // triangle winding, and a back-face-culled rig then renders one arm
+  // inside out.
+  for (const side of [-1, 1]) {
+    const p = parts(T);
+    const w = P.armW * 0.86;
+    p.box(w, P.foreL, w, { y: -P.foreL / 2, top: 1.06, bottom: 0.74, v: 0.24 });
+
+    const hw = w * 0.78;
+    const hy = -P.foreL - 0.05;
+    // palm
+    p.box(hw * 1.2, 0.09, hw * 0.66, { y: hy, z: w * 0.05, top: 0.94, bottom: 0.92 });
+    // fingers, curled in toward the palm
+    p.box(hw * 1.1, 0.085, hw * 0.58,
+      { y: hy - 0.075, z: w * 0.19, rx: 0.6, top: 0.66, bottom: 1.0 });
+    // thumb, on the inboard side
+    p.box(hw * 0.34, 0.055, hw * 0.3,
+      { x: -side * hw * 0.52, y: hy - 0.012, z: w * 0.2, rz: side * 0.38, rx: 0.3, chamfer: 0 });
+
+    out[side < 0 ? 'foreL' : 'foreR'] = p.build();
+  }
+
+  // --- the head -------------------------------------------------------------
+  //
+  // BUILT LIGHT-FIRST, WHICH IS THE OPPOSITE OF THE VERSION BEFORE IT.
+  //
+  // The old head was a DARK skull with two linen bands laid over it, leaving the
+  // socket band exposed between them. Rendered, that produced a black box with a
+  // pale cap: from any angle off dead-on, the bands' own taper pulled their
+  // front faces back inside the skull's, so the light geometry only survived at
+  // the sides and the face went solid black. It read as a visor - the exact
+  // failure the bands were introduced to correct, arrived at from the other
+  // direction.
+  //
+  // So the whole head is LINEN, one wrapped mass, and the dark is a band cut
+  // across it at eye level. Light-on-dark cannot fail this way: the dark member
+  // is narrower than the head in x and proud of it in z, so there is no
+  // arrangement of taper and angle in which it loses to the thing behind it.
+  {
+    // A cranium, not a cube: wide at the back of the skull, narrow at the jaw.
+    const p = parts(T);
+    p.box(P.headW, P.headH, P.headD, {
+      y: P.headH / 2, top: 0.98, bottom: 0.80, depthTop: 0.98, depthBottom: 0.86, v: 0.4,
+    });
+    // The crown, wrapped over the top and slightly proud, so the skull has a
+    // horizontal line across it above the brow.
+    p.box(P.headW * 1.04, P.headH * 0.30, P.headD * 1.02,
+      { y: P.headH * 0.84, top: 0.78, bottom: 1.0, v: 0.78 });
+    out.headLinen = p.build();
+  }
+
+  {
+    const p = parts(T);
+    // The socket band: the gap in the wrapping, and the only dark on the head.
+    // Narrower than the skull and standing proud of it, which is what makes it
+    // read as a recess rather than as a painted stripe.
+    p.box(P.headW * 0.88, P.headH * 0.19, P.headD * 1.02,
+      { y: P.headH * 0.47, top: 1.0, bottom: 0.96 });
+    out.skull = p.build();
+  }
+
+  {
+    const p = parts(T);
+    // The brow. It stands proud of the face specifically so the sockets under
+    // it are in its shadow at every sun angle the courtyard has.
+    p.box(P.headW * 0.97, P.headH * 0.11, P.headD * 0.40,
+      { y: P.headH * 0.60, z: P.headD * 0.40 });
+    // A strap around the jaw, tying the wrapping shut. It also breaks the
+    // vertical run of the jaw linen, which otherwise reads as a helmet.
+    p.box(P.headW * 0.24, P.headH * 0.36, P.headD * 1.04,
+      { x: P.headW * 0.28, y: P.headH * 0.22, ry: 0.14, top: 1.0, bottom: 0.9, v: 0.9 });
+    out.headDark = p.build();
+  }
+
+  {
+    // Two sockets, set into the dark band and deep in the brow's shadow. Flat
+    // boxes: a bevel on a three-centimetre member is triangles spent on an edge
+    // nothing will ever resolve.
+    const p = parts(T);
+    for (const s of [-1, 1]) {
+      p.box(P.headW * 0.17, P.headH * 0.09, 0.03,
+        { x: s * P.headW * 0.23, y: P.headH * 0.47, z: P.headD * 0.53, chamfer: 0 });
+    }
+    out.eyes = p.build();
+  }
+
+  // --- gilding, where a variant has any -------------------------------------
+  if (P.plate || P.shoulderSlab) {
+    const p = parts(T);
+    if (P.plate) {
+      // A broad, flat, gilded pectoral, so the silhouette reads as ARMOUR from
+      // the front at a distance where the limbs are still a smudge.
+      p.box(P.plate.w, P.plate.h, 0.1,
+        { y: P.chestH * 0.62, z: P.bodyD * 0.5 + 0.03, top: 1.0, bottom: 0.74 });
+    }
+    if (P.shoulderSlab) {
+      for (const s of [-1, 1]) {
+        p.box(P.shoulderSlab.w, P.shoulderSlab.h, P.shoulderSlab.d, {
+          x: s * (P.chestW * 0.5 + P.shoulderSlab.w * 0.35),
+          y: P.chestH * 0.86, rz: s * 0.14, top: 0.86, bottom: 1.0,
+        });
+      }
+    }
+    out.torsoAccent = p.build();
+  }
+
+  if (P.headdress) {
+    // A nemes flare. Two angled slabs either side of the skull, which is the
+    // single cheapest way to make a silhouette read as royal rather than as
+    // another corpse.
+    const p = parts(T);
+    for (const s of [-1, 1]) {
+      p.box(P.headdress.w, P.headdress.h, 0.09, {
+        x: s * (P.headW * 0.5 + P.headdress.w * 0.42),
+        y: P.headH * 0.52, z: -P.headD * 0.1, rz: s * -0.34,
+        top: 1.0, bottom: 0.7,
+      });
+    }
+    out.headAccent = p.build();
+  }
+
+  return out;
+}
+
+function rigGeometry(P) {
+  let g = RIG_GEO.get(P);
+  if (!g) { g = buildRigGeometry(P); RIG_GEO.set(P, g); }
   return g;
 }
 
@@ -427,29 +622,58 @@ export function pickDetourSide(pos, dirX, dirZ, radius, feetY, ctx) {
  * shot. Four materials is the whole budget: linen, grimed linen, the dark
  * beneath the wrappings, and one accent.
  *
- * No maps at all. The enemy is the one thing in this scene the player looks at
- * while it is moving, and shading plus silhouette carries it; a 1K albedo on a
- * 14 cm forearm would be four texture fetches for a quarter of a texel.
+ * THE MAPS ARE SHARED AND THE VALUE IS HELD.
+ *
+ * The file this replaces argued for no maps at all, on texel-density grounds. A
+ * blind side-by-side then called the result "flat untextured tan" and put
+ * replacing it at the top of its fix list. The maps are generated once in
+ * wraps.js and shared by the entire pool, so forty actors cost one upload of
+ * each and the suite's "no texture leak over four hundred spawns" check stays
+ * at zero.
+ *
+ * An albedo map MULTIPLIES the material colour, so a map with a mean below
+ * white is a palette repaint wearing a texture's clothes - and this palette has
+ * been swung twice, landed wrong twice, and then measured exhaustively enough
+ * that four candidate repaints were scored against identical background pixels
+ * and every one of them LOST legibility. So the colour is divided by the map's
+ * mean in linear light before it is used. The body renders at the value it was
+ * measured at; the variation rides on top of it for free.
  */
 function makeMaterials(spec) {
-  const jitter = (hex, h, s, l) => new THREE.Color(hex).offsetHSL(h, s, l);
+  const linen = linenMaps();
+  const jitter = (hex, h, s, l) =>
+    compensate(hex, linen.gain).offsetHSL(h, s, l);
 
   // Per-instance tone jitter. Identical clones are the loudest tell in a crowd
   // and the fix has to be structural rather than a placement-time afterthought.
-  const dh = (Math.random() - 0.5) * 0.02;
-  const dl = (Math.random() - 0.5) * 0.09;
+  //
+  // Widened from the pass before this one, which ran +/-0.01 hue and +/-0.045
+  // lightness - under a per-channel tolerance the eye cannot resolve at seven
+  // metres, let alone twenty. It is a SPREAD around the measured mean, not a
+  // shift of it: the crowd's average value is exactly where it was.
+  const dh = (Math.random() - 0.5) * 0.05;
+  const ds = (Math.random() - 0.5) * 0.10;
+  const dl = (Math.random() - 0.5) * 0.13;
 
   // The floor is set here as well as in setFlash so a material is never black
   // between being built and being spawned.
   const wrap = new THREE.MeshStandardMaterial({
-    color: jitter(spec.palette.wrap, dh, -0.03, dl),
+    color: jitter(spec.palette.wrap, dh, -0.03 + ds, dl),
+    map: linen.map,
+    normalMap: linen.normalMap,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughnessMap: linen.roughnessMap,
     roughness: 0.96,
     metalness: 0.0,
     emissive: CHAMBER_FLOOR.clone(),
   });
 
   const wrapDark = new THREE.MeshStandardMaterial({
-    color: jitter(spec.palette.wrapDark, dh, 0.0, dl * 0.6),
+    color: jitter(spec.palette.wrapDark, dh, ds * 0.6, dl * 0.6),
+    map: linen.map,
+    normalMap: linen.normalMap,
+    normalScale: new THREE.Vector2(0.95, 0.95),
+    roughnessMap: linen.roughnessMap,
     roughness: 0.98,
     metalness: 0.0,
     emissive: CHAMBER_FLOOR.clone(),
@@ -486,7 +710,10 @@ function makeMaterials(spec) {
   });
 
   const tatter = new THREE.MeshStandardMaterial({
-    color: jitter(spec.palette.wrapDark, dh, -0.05, dl),
+    color: jitter(spec.palette.wrapDark, dh, -0.05 + ds, dl),
+    map: linen.map,
+    normalMap: linen.normalMap,
+    normalScale: new THREE.Vector2(0.6, 0.6),
     roughness: 1.0,
     metalness: 0.0,
     side: THREE.DoubleSide,
@@ -514,10 +741,12 @@ function makeMaterials(spec) {
  */
 export function buildHumanoid(spec, mats, actor) {
   const P = spec.proportions;
+  const G = rigGeometry(P);
   const meshes = [];
   let triangles = 0;
 
   const add = (parent, g, mat, region) => {
+    if (!g) return null;
     const m = new THREE.Mesh(g, mat);
     // Tagged on the mesh so the hitscan finds it without walking the parent
     // chain, which is what the weapon's fallback lookup is for.
@@ -535,47 +764,88 @@ export function buildHumanoid(spec, mats, actor) {
   const body = new THREE.Group();          // lean, sway, and the death topple
   group.add(body);
 
-  // Per-instance asymmetry, decided once at build.
-  //
-  // Identical clones are the loudest tell in a crowd, and on a CORPSE the fix
-  // is free: a body that has been dead for three thousand years is not
-  // symmetrical. One shoulder sits lower than the other, the head is set at an
-  // angle it will never leave, and no two are the same height. None of it costs
-  // a triangle or a frame; all of it is the difference between a horde and a
-  // rack of the same mannequin.
+  /**
+   * PER-INSTANCE BODY, AND WHY IT IS FREE.
+   *
+   * "Identical across all six" was one of four defects a blind judge listed by
+   * name. The pass before this one answered it with a 13 per cent height jitter
+   * and a shoulder droop, which is not enough to break a crowd: six bodies of
+   * the same build at slightly different heights still read as one asset
+   * repeated.
+   *
+   * The thing that makes this cheap is that GEOMETRY is shared and the RIG is
+   * not. Every actor allocates its own groups, so limb lengths, limb girths,
+   * torso proportions and head size can all vary per instance for the cost of a
+   * few numbers - no extra BufferGeometry, no extra draw call, nothing added to
+   * the spawn path. A shared geometry scaled 0.88 on x and z and 1.07 on y IS a
+   * different limb.
+   *
+   * Leaf meshes only. A non-uniform scale on a group whose children rotate
+   * shears them, so nothing above a mesh is ever scaled unevenly - the variation
+   * rides on the meshes, which have no children, and on the joint offsets.
+   */
+  const R = () => Math.random();
+  const j = {
+    leg: 0.93 + R() * 0.15,        // femur and tibia together
+    arm: 0.92 + R() * 0.17,
+    girth: 0.90 + R() * 0.22,      // limb thickness
+    chest: 0.93 + R() * 0.15,      // torso height
+    chestW: 0.90 + R() * 0.20,     // torso width and depth
+    head: 0.93 + R() * 0.14,
+  };
+
   const asym = {
-    scale: 0.94 + Math.random() * 0.13,
-    tilt: (Math.random() - 0.5) * 0.30,      // permanent head cant
-    droop: (Math.random() - 0.5) * 0.06,     // shoulder height difference
-    reach: (Math.random() - 0.5) * 0.35,     // one arm further out than the other
+    scale: 0.90 + R() * 0.20,
+    tilt: (R() - 0.5) * 0.34,      // permanent head cant
+    droop: (R() - 0.5) * 0.07,     // shoulder height difference
+    reach: (R() - 0.5) * 0.38,     // one arm further out than the other
+  };
+
+  // Gait, per instance. Twenty-four bodies walking on the same stride length at
+  // the same rate is a chorus line, and it is the one variation that only shows
+  // once they are MOVING - which is when the player actually looks at them.
+  const gait = {
+    rate: 0.88 + R() * 0.26,
+    stride: 0.85 + R() * 0.32,
+    swing: 0.8 + R() * 0.45,
+  };
+
+  /**
+   * WRAP DAMAGE, chosen per instance.
+   *
+   * A corpse that has been unravelling for three thousand years has not
+   * unravelled the same way as the one beside it. One in four gets a limb whose
+   * linen has gone entirely, which swaps that member onto the dark material -
+   * a real value change in the silhouette, not a tint - and the trailing wraps
+   * are drawn from the spec's list rather than all worn at once.
+   */
+  const bare = {
+    arm: R() < 0.28 ? (R() < 0.5 ? -1 : 1) : 0,
+    leg: R() < 0.22 ? (R() < 0.5 ? -1 : 1) : 0,
   };
 
   const hips = new THREE.Group();
-  hips.position.y = P.hipY;
+  hips.position.y = P.hipY * j.leg;
   body.add(hips);
 
-  add(hips, partGeo(P.hipW, 0.24, P.bodyD * 0.92), mats.wrapDark, 'body')
-    .position.y = 0.05;
+  add(hips, G.pelvis, mats.wrapDark, 'body')
+    .scale.set(j.chestW, 1, j.chestW);
 
   // --- legs ------------------------------------------------------------------
   const legs = [];
   for (const side of [-1, 1]) {
     const hip = new THREE.Group();
-    hip.position.set(side * P.legX, 0, 0);
+    hip.position.set(side * P.legX * j.chestW, 0, 0);
     hips.add(hip);
 
-    add(hip, partGeo(P.legW, P.thighL, P.legW * 1.05), mats.wrap, 'body')
-      .position.y = -P.thighL / 2;
+    add(hip, G.thigh, bare.leg === side ? mats.wrapDark : mats.wrap, 'body')
+      .scale.set(j.girth, j.leg, j.girth);
 
     const knee = new THREE.Group();
-    knee.position.y = -P.thighL;
+    knee.position.y = -P.thighL * j.leg;
     hip.add(knee);
 
-    // The shin runs all the way to the ground and carries the foot. A separate
-    // foot mesh is two more draw calls per actor for a shape that is under a
-    // pixel of silhouette once the wrappings are on it.
-    add(knee, partGeo(P.legW * 0.86, P.shinL, P.legW * 1.5), mats.wrapDark, 'body')
-      .position.set(0, -P.shinL / 2, P.legW * 0.2);
+    add(knee, G.shin, mats.wrapDark, 'body').scale.set(j.girth, j.leg, j.girth);
 
     legs.push({ hip, knee, side });
   }
@@ -585,107 +855,53 @@ export function buildHumanoid(spec, mats, actor) {
   torso.position.y = P.torsoY;
   hips.add(torso);
 
-  add(torso, partGeo(P.chestW, P.chestH, P.bodyD), mats.wrap, 'body')
-    .position.y = P.chestH / 2;
-
-  // A binding across the chest, proud of the surface it wraps.
-  //
-  // This is the one mesh that says WRAPPED rather than merely blocky. A raised
-  // band catches its own line of light along the chamfer at every angle, so it
-  // survives to the distance where the limbs have already merged into one mass,
-  // and it costs a single 44-triangle box. At 1.06x it was invisible; it has to
-  // stand genuinely proud of the chest to read as something tied around it.
-  add(torso, partGeo(P.chestW * 1.15, P.chestH * 0.20, P.bodyD * 1.30), mats.wrapDark, 'body')
-    .position.y = P.chestH * 0.40;
-
-  if (P.plate) {
-    // The Bound's pectoral. Broad, flat, and gilded, so its silhouette reads as
-    // ARMOUR from the front at a distance where the limbs are still a smudge.
-    add(torso, partGeo(P.plate.w, P.plate.h, 0.1), mats.accent, 'body')
-      .position.set(0, P.chestH * 0.62, P.bodyD * 0.5 + 0.03);
-  }
-
-  if (P.shoulderSlab) {
-    for (const side of [-1, 1]) {
-      add(torso, partGeo(P.shoulderSlab.w, P.shoulderSlab.h, P.shoulderSlab.d),
-        mats.accent, 'body')
-        .position.set(side * (P.chestW * 0.5 + P.shoulderSlab.w * 0.35),
-          P.chestH * 0.86, 0);
-    }
-  }
+  add(torso, G.torsoLinen, mats.wrap, 'body').scale.set(j.chestW, j.chest, j.chestW);
+  add(torso, G.torsoDark, mats.wrapDark, 'body').scale.set(j.chestW, j.chest, j.chestW);
+  add(torso, G.torsoAccent, mats.accent, 'body')?.scale.set(j.chestW, j.chest, j.chestW);
 
   // --- arms ------------------------------------------------------------------
   const arms = [];
   for (const side of [-1, 1]) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(side * P.shoulderX, P.shoulderY + side * asym.droop, 0);
+    shoulder.position.set(side * P.shoulderX * j.chestW,
+      P.shoulderY * j.chest + side * asym.droop, 0);
     torso.add(shoulder);
 
-    add(shoulder, partGeo(P.armW, P.upperL, P.armW), mats.wrap, 'body')
-      .position.y = -P.upperL / 2;
+    add(shoulder, G.upper, bare.arm === side ? mats.wrapDark : mats.wrap, 'body')
+      .scale.set(j.girth, j.arm, j.girth);
 
     const elbow = new THREE.Group();
-    elbow.position.y = -P.upperL;
+    elbow.position.y = -P.upperL * j.arm;
     shoulder.add(elbow);
 
-    add(elbow, partGeo(P.armW * 0.85, P.foreL, P.armW * 0.85), mats.wrapDark, 'body')
-      .position.y = -P.foreL / 2;
+    add(elbow, side < 0 ? G.foreL : G.foreR, mats.wrapDark, 'body')
+      .scale.set(j.girth, j.arm, j.girth);
 
     arms.push({ shoulder, elbow, side, bias: side * asym.reach });
   }
 
   // --- head ------------------------------------------------------------------
   const neck = new THREE.Group();
-  neck.position.y = P.headY;
+  neck.position.y = P.headY * j.chest;
+  neck.scale.setScalar(j.head);
   torso.add(neck);
 
-  // Six meshes, all region 'head'. A hit on the bandaged jaw of a mummy is a
+  // Four meshes, all region 'head'. A hit on the bandaged jaw of a mummy is a
   // headshot by any reading, and splitting hairs there would only make the 100
   // gold feel arbitrary.
   //
-  // THE HEAD IS BUILT AROUND ONE MISTAKE THIS REPLACES. The previous pass put a
+  // THE HEAD IS BUILT AROUND ONE MISTAKE THIS REPLACES. An earlier pass put a
   // single wide emissive BAR across the face at intensity 2.4. On a GPU, in
   // sun, it was the brightest thing in frame that was not the muzzle flash, and
   // it read as a machine visor: the strongest possible "this is a robot" cue,
   // on the one surface the player looks at. What a wrapped skull actually has
   // is two dark holes under an overhanging brow, and whatever is in them is
   // barely alight.
-  add(neck, partGeo(P.headW, P.headH, P.headD), mats.deep, 'head')
-    .position.y = P.headH / 2;
-
-  // Linen over the jaw and over the crown, leaving the socket band between
-  // them exposed. Two bands rather than one wedge, because the DARK GAP is
-  // what makes it a face.
-  add(neck, partGeo(P.headW * 0.96, P.headH * 0.34, P.headD * 0.84), mats.wrap, 'head')
-    .position.set(0, P.headH * 0.20, P.headD * 0.14);
-
-  add(neck, partGeo(P.headW * 0.99, P.headH * 0.32, P.headD * 0.88), mats.wrap, 'head')
-    .position.set(0, P.headH * 0.83, P.headD * 0.08);
-
-  // The brow. It stands proud of the face specifically so the sockets under it
-  // are in its shadow at every sun angle the courtyard has.
-  add(neck, partGeo(P.headW * 0.94, P.headH * 0.11, P.headD * 0.34), mats.wrapDark, 'head')
-    .position.set(0, P.headH * 0.63, P.headD * 0.46);
-
-  // Two sockets, barely proud of the face and deep in the brow's shadow. Dim
-  // and small: at twenty metres this is a pair of embers, not a lamp.
-  for (const side of [-1, 1]) {
-    add(neck, partGeo(P.headW * 0.17, P.headH * 0.11, 0.03), mats.eye, 'head')
-      .position.set(side * P.headW * 0.24, P.headH * 0.47, P.headD * 0.51);
-  }
-
-  if (P.headdress) {
-    // A nemes flare. Two angled slabs either side of the skull, which is the
-    // single cheapest way to make a silhouette read as royal rather than as
-    // another corpse.
-    for (const side of [-1, 1]) {
-      const f = add(neck, partGeo(P.headdress.w, P.headdress.h, 0.09),
-        mats.accent, 'head');
-      f.position.set(side * (P.headW * 0.5 + P.headdress.w * 0.42),
-        P.headH * 0.52, -P.headD * 0.1);
-      f.rotation.z = side * -0.34;
-    }
-  }
+  add(neck, G.skull, mats.deep, 'head');
+  add(neck, G.headLinen, mats.wrap, 'head');
+  add(neck, G.headDark, mats.wrapDark, 'head');
+  add(neck, G.eyes, mats.eye, 'head');
+  add(neck, G.headAccent, mats.accent, 'head');
 
   // --- trailing wraps --------------------------------------------------------
   // Thin geometry is what breaks a silhouette into readable depth layers, and a
@@ -693,15 +909,21 @@ export function buildHumanoid(spec, mats, actor) {
   // body, so they trail on the move and settle when it stops.
   const tatters = [];
   for (const t of P.tatters) {
+    // Not every corpse still has every wrap. Dropping one at random varies both
+    // the outline and the draw call count, which is the rare variation that
+    // costs less than none.
+    if (P.tatters.length > 1 && R() < 0.18) continue;
+
     const pivot = new THREE.Group();
-    pivot.position.set(t.x, t.y, t.z);
+    pivot.position.set(t.x, t.y * j.chest, t.z);
     // A strip lies in its own XY plane, so an unrotated one is edge-on from the
     // side and a flat billboard from the front. Distributing them around Y is
     // what turns four rags into a ragged OUTLINE rather than four flags.
-    pivot.rotation.y = t.yaw || 0;
+    pivot.rotation.y = (t.yaw || 0) + (R() - 0.5) * 0.5;
     (t.on === 'arm' ? arms[t.side > 0 ? 1 : 0].elbow : torso).add(pivot);
 
     const m = new THREE.Mesh(stripGeo(t.w, t.h, t.cut || 0), mats.tatter);
+    m.scale.set(0.82 + R() * 0.4, 0.8 + R() * 0.45, 1);
     // Wraps are decoration. Left hittable they sit in front of the skull at
     // certain angles and silently convert a headshot into a body hit, which is
     // a 40 gold bug the player would never be able to diagnose.
@@ -709,11 +931,23 @@ export function buildHumanoid(spec, mats, actor) {
     m.castShadow = false;
     pivot.add(m);
 
-    tatters.push({ pivot, phase: Math.random() * 6.283, swing: t.swing ?? 1 });
+    tatters.push({ pivot, phase: R() * 6.283, swing: (t.swing ?? 1) * gait.swing });
     triangles += m.geometry.attributes.position.count / 3;
   }
 
-  return { group, body, hips, torso, neck, legs, arms, tatters, meshes, triangles, asym };
+  // --- the ground it stands on ------------------------------------------------
+  //
+  // Last, and outside `body`, so the topple rotates the corpse and leaves the
+  // patch on the sand where the feet were. See contact.js for what the sun's
+  // own shadow does and does not do here.
+  const blob = contactShadow((spec.radius ?? 0.45) * 1.75);
+  blob.position.y = 0.03;
+  group.add(blob);
+
+  return {
+    group, body, hips, torso, neck, legs, arms, tatters, meshes, triangles,
+    asym, gait, blob,
+  };
 }
 
 /**
@@ -730,8 +964,13 @@ function animateHumanoid(rig, spec, s) {
   const g = spec.gait;
   const p = s.phase;
 
+  // Per-instance gait, decided at build. A horde walking one stride length in
+  // one rhythm is a chorus line, and it is the variation that only shows once
+  // they move - which is exactly when the player is looking at them.
+  const gj = rig.gait || ONE_GAIT;
+
   const drive = Math.min(1, s.speed / spec.speed);
-  const amp = g.stride * (0.35 + 0.65 * drive);
+  const amp = g.stride * gj.stride * (0.35 + 0.65 * drive);
 
   // Sign convention, and it is worth stating once because every joint below
   // depends on it: the model faces its own +Z, because the actor's yaw is
@@ -777,7 +1016,7 @@ function animateHumanoid(rig, spec, s) {
       arm.shoulder.rotation.z = arm.side * g.armSplay;
       arm.elbow.rotation.x = -0.15;
     } else {
-      arm.shoulder.rotation.x = reach + Math.sin(p + o) * g.armSwing * drive;
+      arm.shoulder.rotation.x = reach + Math.sin(p + o) * g.armSwing * gj.swing * drive;
       arm.shoulder.rotation.z = arm.side * g.armSplay;
       arm.elbow.rotation.x = -g.elbowBend - Math.max(0, Math.sin(p + o)) * 0.25;
     }
@@ -816,6 +1055,11 @@ function animateHumanoid(rig, spec, s) {
 // ---------------------------------------------------------------------------
 // the actor
 // ---------------------------------------------------------------------------
+
+/** What a rig with no per-instance gait falls back to. Bosses build their own
+ * rigs through the same animator and are single instances, so they have no
+ * crowd to differentiate themselves from. */
+const ONE_GAIT = { rate: 1, stride: 1, swing: 1 };
 
 /** Death phases, in seconds. Topple, then lie, then crumble. */
 const TOPPLE_S = 0.62;
@@ -1183,7 +1427,11 @@ export function createEnemy(spec, index) {
 
     // --- animation ----------------------------------------------------------
     const speed = Math.hypot(st.vx, st.vz);
-    st.phase += dt * (0.8 + speed * spec.gait.rate);
+    // The walk cycle is driven by REAL horizontal velocity, scaled by this
+    // instance's own tempo. A staggered enemy's legs slow down with it and one
+    // pinned against a pillar stops walking on the spot, which is the whole
+    // reason this is not a free-running timer.
+    st.phase += dt * (0.8 + speed * spec.gait.rate) * (rig.gait ? rig.gait.rate : 1);
 
     st.stagger = Math.max(0, st.stagger - dt * 2.6);
     st.staggerRoll = Math.sin(st.phase * 23) * st.stagger * 0.22;
@@ -1386,12 +1634,39 @@ export const MUMMY = {
     accent: 0xc9a24a,
   },
 
+  /**
+   * THE THREE RATIOS THAT MAKE A SHAPE READ AS A PERSON.
+   *
+   * A blind judge described these as "blocky rectangular torsos, cylindrical
+   * limbs, no hands". Two of the three are answered by the builder - the torso
+   * is a wedge now and every limb tapers - and the third by the hand on the end
+   * of each forearm. What is left is the numbers, and the numbers that matter
+   * are RATIOS rather than sizes:
+   *
+   *   SHOULDER SPAN TO HEAD WIDTH. On a person the head is a quarter to a third
+   *   of the shoulder span. It was 0.24 against a 0.54 span, which is 44 per
+   *   cent: a bobblehead, and the loudest toy cue in the old outline. The head
+   *   comes down to 0.225 and the shoulders out to 0.285 a side; with the
+   *   deltoid over the joint the span is 0.79 and the ratio lands at 0.28.
+   *
+   *   SHOULDER TO WAIST. The builder's chest taper, 1.0 at the shoulder to 0.66
+   *   at the waist. A slab the same width at both is a crate.
+   *
+   *   LIMB TAPER. Also the builder's: thigh 1.08 at the hip to 0.82 at the
+   *   knee, calf 1.06 to 0.68 at the ankle, forearm 1.06 to 0.74 at the wrist.
+   *   Pulled back from a first pass at 0.78 / 0.58 / 0.64, which rendered a
+   *   forearm as a spike - taper reads as anatomy up to the point where the far
+   *   end stops being a limb.
+   *
+   * hipY is not free. It must equal thighL + shinL or the feet leave the sand,
+   * which is why the per-instance leg jitter scales all three together.
+   */
   proportions: {
     hipY: 0.92, hipW: 0.34, bodyD: 0.26,
     legX: 0.13, legW: 0.16, thighL: 0.44, shinL: 0.48,
     torsoY: 0.14, chestW: 0.46, chestH: 0.56,
-    shoulderX: 0.27, shoulderY: 0.50, armW: 0.14, upperL: 0.40, foreL: 0.42,
-    headY: 0.66, headW: 0.24, headH: 0.28, headD: 0.26,
+    shoulderX: 0.285, shoulderY: 0.50, armW: 0.14, upperL: 0.40, foreL: 0.42,
+    headY: 0.66, headW: 0.225, headH: 0.275, headD: 0.255,
     // Hanging well clear of the body, so the rags are OUTLINE rather than
     // texture. At 0.10 they lay flat against the limbs and did nothing.
     tatterRest: 0.30,

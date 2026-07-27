@@ -729,7 +729,18 @@ export function createDirector({
     live.pop();
   }
 
+  /**
+   * How many times the live list has been torn down wholesale.
+   *
+   * Read by the actor loop in `update()`, which can be re-entered by
+   * `clearLive()` through the player's death. See the comment there; this
+   * counter is the only thing that tells the loop its array is no longer the
+   * array it started on.
+   */
+  let generation = 0;
+
   function clearLive() {
+    generation++;
     for (let i = live.length - 1; i >= 0; i--) retire(live[i], i);
     bosses.effects.clear();
     state.boss = null;
@@ -905,9 +916,38 @@ export function createDirector({
     state.remaining = queue.length + live.length;
 
     // --- actors --------------------------------------------------------------
+    //
+    // AN ACTOR'S UPDATE CAN EMPTY THIS LIST FROM UNDER THE LOOP.
+    //
+    // Reproduced, not theorised: six shamblers in melee on a player at one hit
+    // point throws "Cannot read properties of undefined (reading 'update')" on
+    // the first attempt, with `live.length` at zero and the player's down
+    // counter incremented by one.
+    //
+    // The path is entirely inside this one call. A shambler's strike lands ->
+    // `combat.damagePlayer` -> the player's health reaches zero -> `fell()` ->
+    // `director.reset()` -> `clearLive()`, which retires every actor and
+    // truncates `live` to nothing. Control returns here mid-iteration and the
+    // next `live[i]` is a hole.
+    //
+    // Note what it is NOT, because the first diagnosis of this named the wrong
+    // mechanism and would have sent the fix to the wrong place: it is not a
+    // swap-and-pop race against `retire()`. Descending iteration with
+    // swap-and-pop is correct on its own - `retire` moves an element the cursor
+    // has already passed - and no actor ever retires a DIFFERENT actor. The
+    // reentrancy is the whole bug, and the only reentrant caller is the
+    // player's own death.
+    //
+    // Guarded with a generation counter rather than a null check because the
+    // right behaviour after a reset is to STOP, not to skip holes: every actor
+    // still ahead of the cursor belongs to a wave that no longer exists, and
+    // ticking one would advance a retired actor's gait and its audio emitter
+    // against a list that has been deliberately cleared.
+    const gen = generation;
     for (let i = live.length - 1; i >= 0; i--) {
       const a = live[i];
       a.update(dt, ctx);
+      if (generation !== gen) break;
       if (a.dead) {
         state.killed++;
         if (a === state.boss) state.boss = null;
