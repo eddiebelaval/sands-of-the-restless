@@ -37,6 +37,7 @@ import { createInteracts } from './ui/interact.js';
 import { createBoonStrip, createReadouts } from './ui/hud.js';
 import { createMinimap } from './ui/minimap.js';
 import { createObjectives, createObjectivePanel } from './ui/objective.js';
+import { createGrenades } from './systems/grenades.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
@@ -251,6 +252,21 @@ function boot() {
 
   combat.attach({ director });
 
+  /**
+   * Grenades.
+   *
+   * After the director because a blast measures THIS frame's bodies, and after
+   * combat because `combat` here already carries the Anubis intercept on
+   * `.damagePlayer` - the module calls it as a property lookup, so the free
+   * death covers blowing yourself up. That is deliberate: cooking one off in
+   * your hand is the most Anubis-shaped way to die in the game.
+   */
+  const grenades = createGrenades({
+    scene, camera, world, player, rig, audio, impacts,
+    combat, economy, director, spaces,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
   // -------------------------------------------------------------------------
   // where am I, and what next
   // -------------------------------------------------------------------------
@@ -415,6 +431,7 @@ function boot() {
     applyFidelity(buildMaterials(), high);
     viewmodel.setFidelity(high);
     impacts.setFidelity(high);
+    grenades.setFidelity(high);
     director.setFidelity(high);
     altar.setFidelity(high);
     audio.setFidelity(high);
@@ -633,6 +650,12 @@ function boot() {
       // After the player and the camera, because the horde seeks THIS frame's
       // position and a frame of lag on twenty-four actors reads as swimming.
       director.update(dt, elapsed);
+
+      // After the director so a blast measures this frame's bodies, and BEFORE
+      // combat.update so the red wash from your own frag reaches post.setDamage
+      // on the frame it happened rather than the frame after.
+      grenades.update(dt, input.state);
+
       combat.update(dt);
 
       // GOING DOWN COSTS THE BOONS, and it has to, or none of this is a wager.
@@ -739,7 +762,7 @@ function boot() {
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
     director, combat,
-    power, wallbuys, shrines, altar, mysterybox, interacts, promptBus,
+    power, wallbuys, shrines, altar, mysterybox, grenades, interacts, promptBus,
     readouts, objectives, objectivePanel, minimap,
     setFidelity, start,
     get elapsed() { return elapsed; },
