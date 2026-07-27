@@ -66,6 +66,65 @@ Public as of 2026-07-27.
 release. Verify against the LIVE url before calling a deploy good:
 `node test/shot.mjs https://eddiebelaval.github.io/sands-of-the-restless`.
 
+## The blind comparison, 2026-07-27
+
+Run against github.com/mshumer/Claude-of-Duty, the reference this project was
+built to match. Seven matched scenarios, both games captured on the same machine
+under the same hardware renderer (ANGLE Metal, M4 Max - neither fell back to
+software), sides randomized independently per pair, all UI hidden, judge told
+nothing about which was which and forbidden from reading the key.
+
+**We lost 5-2. Us 2.5/10, them 4/10.**
+
+Lost: spawn view (decisive), ADS (decisive), combat (clear), wide shot
+(decisive), muzzle flash (clear).
+Won: close ground material (decisive), interior (slight).
+
+The one structural criticism: they have a coherent world-lighting model and we
+do not. A sun in a known place that everything obeys, with contact shadows whose
+penumbra widens with distance from the caster. That single system won them four
+pairs. Ours reads as "a lit-from-nowhere postcard."
+
+Their verdict on us, worth keeping: "It is not an untextured blockout. It is a
+textured one."
+
+WHAT WE ACTUALLY WON, because it is not consolation:
+- our sand is the best material in either build and theirs is the worst. Pair 5
+  used a numerically identical camera in both. Ours holds up filling the frame;
+  theirs has no diffuse authorship at all and "reads as wet plastic or dirty ice"
+- we are the only build with an authored interior. Theirs is exterior lighting
+  with a roof on it
+- our muzzle flash propagates light. Theirs does not illuminate the hands
+  holding the gun, and its tracer leaves at the wrong angle
+- our enemies are readable at range. Theirs needed a 4x crop to confirm one
+  existed
+
+THEIR DEFECTS: a see-through glove on the hero asset in five of seven frames,
+broken alpha sorting throughout, and that ground texture.
+
+THE FIX LIST, in the judge's priority order:
+1. Replace the characters. "Nothing else you fix matters while six untextured
+   mannequins float over the sand." They cast no contact shadow, which is why
+   they float.
+2. Distance fog. Highest gain-to-effort in either build.
+3. Make the lights actually light. A brazier does not illuminate the plinth it
+   stands on.
+4. Break the tiling and bevel the geometry.
+5. Dress the set and land everything on the ground with real occlusion contact.
+
+TWO CRITICISMS I VERIFIED IN SOURCE, because both contradicted work we had done,
+and both were true in the same specific way - the feature EXISTS and is too weak
+to read:
+
+- aerial perspective: fog.js is a real height-fog pass with per-channel
+  extinction, but sigmaE at 2.6e-3 contributes only 14% at the pyramid's 60m. A
+  previous lighting pass measured far/sky 0.83 -> 0.96 and called it two thirds
+  done; the blind judge said nothing recedes. THE METRIC MOVED AND THE IMAGE DID
+  NOT. Trust the image.
+- the chamfer: it defaults to 0.06 world units. Six centimetres is sub-pixel on
+  a 40m pyramid step. The winding fix means the bevels finally DRAW; they are
+  still too small to catch a highlight, so stone reads as painted cardboard.
+
 ## Open items, in priority order
 
 1. **The pistol pose.** The MK9 camera looks straight down at two hand-BACKS,
@@ -146,6 +205,13 @@ release. Verify against the LIVE url before calling a deploy good:
   luminance - so blowing out the highlights made the number go UP. Fixing the
   flare cost that check half its score. Measure clip fraction and spread next to
   any brightness metric.
+- **A rubric is a ceiling; a blind comparison has no floor to hide in.** Ten
+  critic agents and 1.5M tokens scored this build on lighting, composition and
+  materials and moved the mean from 4.1 to 4.25. Every one of those rounds
+  KNEW which build was ours. One blind A/B against the reference, with the
+  sides randomized and the judge unable to read the key, produced a more useful
+  fix list in twenty minutes than the entire scored loop. If you run a critic,
+  make it blind or do not bother.
 - **Half the "failures" in a suite can be the suite.** Of six failing box
   checks, three were harness bugs: an affordability assertion run on a player
   who genuinely could not afford it, a settle-time assertion that was
