@@ -1,0 +1,25 @@
+{
+  "name": "sands-of-the-restless",
+  "version": "1.0.0",
+  "description": "A browser FPS built in a weekend. Three.js, no build step, everything generated in code.",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "scripts": {
+    "start": "python3 -m http.server 4177",
+    "test": "node test/shot.mjs && node test/gun.mjs && node test/interior.mjs && node test/economy.mjs && node test/enemies.mjs && node test/mysterybox.mjs",
+    "test:shot": "node test/shot.mjs",
+    "test:gun": "node test/gun.mjs",
+    "test:interior": "node test/interior.mjs",
+    "test:economy": "node test/economy.mjs",
+    "test:enemies": "node test/enemies.mjs",
+    "test:box": "node test/mysterybox.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0",
+    "sharp": "^0.33.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -28,8 +28,8 @@
  * simulation whose clock runs six times slower than the wall.
  */
 
-import { chromium } from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/playwright/index.mjs';
-import sharp from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/sharp/lib/index.js';
+import { chromium } from 'playwright';
+import sharp from 'sharp';
 import { resolveChrome } from './chrome.mjs';
 import { mkdirSync } from 'node:fs';
 

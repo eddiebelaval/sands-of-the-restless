@@ -16,7 +16,7 @@
  * that are working perfectly.
  */
 
-import { chromium } from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { resolveChrome } from './chrome.mjs';
 import { mkdirSync } from 'node:fs';
 

@@ -11,7 +11,7 @@
  * PNGs, so it needs no image decoding dependency.
  */
 
-import { chromium } from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { resolveChrome } from './chrome.mjs';
 
 const CHROME = resolveChrome();

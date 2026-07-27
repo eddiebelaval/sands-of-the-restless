@@ -1,46 +1,82 @@
 # Sands of the Restless
 
-A first-person shooter. Call of Duty pacing, ancient Egyptian setting, Treyarch
-zombies economy. Three.js, no build step, no downloaded assets: every mesh,
-texture, and sound is generated procedurally in code.
+A first-person wave shooter that runs in a browser tab. Call of Duty pacing,
+ancient Egyptian setting, Treyarch zombies economy. Three.js, ES modules, an
+import map, and no build step.
 
-## Run it
+Almost everything is generated in code: every mesh, every animation, every
+sound, and most textures. The exceptions are one HDRI for image-based lighting
+and five scanned PBR material sets, all CC0 from Poly Haven and ambientCG and
+committed to the repo so it runs offline. See `ASSETS-SOURCING.md` for the
+provenance of each file.
+
+Built over a weekend with Claude Code. `STATE.md` is the honest account of what
+works, what does not, and the bugs that cost the most to find.
+
+## Play it
 
 ES modules and import maps do not work over `file://`, so it needs a static
 server. Any will do.
 
 ```bash
+git clone https://github.com/eddiebelaval/sands-of-the-restless
 cd sands-of-the-restless
 python3 -m http.server 4177
 # open http://127.0.0.1:4177/index.html
 ```
 
+Click to lock the pointer. `WASD` move, `shift` sprint, `space` jump, left mouse
+fire, right mouse aim, `R` reload, `1`-`7` weapons, `F` to buy.
+
+You start with 500 gold and a pistol. Kills pay 60, headshots 100. The sealed
+doorway at the end of the avenue costs 1000 and everything else is inside.
+
 ## Test it
 
 The known weakness of generated game code is that nobody runs it. The harness
 boots the real thing in Chromium with WebGL, drives the simulation, writes
-screenshots to `shots/`, and fails on any console error.
+screenshots to `shots/`, and fails on console errors, console warnings, or a
+frame that is too dark to be a real render.
 
 ```bash
-node test/shot.mjs                    # against http://127.0.0.1:4177
-CHROME_BIN=/path/to/chrome node test/shot.mjs
+npm install          # playwright and sharp, for the harness only
+npm start            # serve on 4177, in another terminal
+npm test             # all six suites
 ```
 
-## Milestones
+The Chrome resolver in `test/chrome.mjs` scans the macOS Playwright cache and
+`/Applications`. On any other platform, or an unusual install, point it at a
+binary:
 
-| | Scope | State |
-|---|---|---|
-| M1 | Stage, post chain, procedural materials, courtyard, player | **done** |
-| M2 | Room graph, colliders, portals, doors, power | next |
-| M3 | Weapons, ADS, viewmodels, enemies, wave director | |
-| M4 | Economy, wall buys, mystery box, shrines, upgrade altar | |
-| M5 | Audio, bosses, puzzle chain, HUD, bundler | |
+```bash
+CHROME_BIN=/path/to/chrome npm run test:shot
+```
+
+## What is built
+
+| Scope | State |
+|---|---|
+| Stage, post chain, procedural materials, courtyard, player | done |
+| Room graph, colliders, portals, buy-doors, the power gate | done |
+| Weapons, ADS, viewmodels, enemies, wave director | done |
+| Economy, wall buys, shrines, the upgrade altar | done |
+| Audio, five bosses with telegraphed abilities | done |
+| The mystery box | partial |
+| The canopic-jar puzzle chain and the Serdab | not built |
 
 ## Architecture notes
 
-**The map will be data, not geometry.** From M2 on, `world/rooms.js` holds room
-records (bounds, portals, lighting profile, spawn points, prop slots) and
-`world/build.js` is the only thing that turns them into meshes and colliders.
+**The map is data, not geometry.** `world/rooms.js` holds room records (bounds,
+portals, lighting profile, spawn points, prop slots) and `world/build.js` is the
+only thing that turns them into meshes and colliders.
+
+**Winding order is load-bearing.** `world/geometry.js` builds a chamfered box as
+6 face quads, 12 edge bevels and 8 corner triangles, non-indexed so every facet
+gets a flat normal. For two days it emitted 28 of those 44 triangles wound
+inside out, which made the bevels back faces and culled them, so the chamfer
+that the module exists to draw was never drawn once. If you touch that file,
+audit it: recompute each triangle's normal from vertex order and dot it against
+the outward direction. All 44 must be positive.
 
 **Collision has one representation.** A flat array of `{x, z, r, h}` cylinders
 that every system resolves against. There is no second collision path.
@@ -59,7 +95,10 @@ vignette and aberration after it, SMAA last.
 
 Held from the original design, and checked before each milestone closes.
 
-- No asset loaders. `GLTFLoader` and friends stay out. Nothing is downloaded.
+- No asset loaders for geometry. `GLTFLoader` and friends stay out; every mesh
+  in the game is built in code. The HDRI and the PBR maps are the one deliberate
+  exception to the no-files rule, taken to fix lighting that procedural
+  materials could not.
 - No `CapsuleGeometry` (too new for older builds).
 - No browser storage. All state in memory.
 - No image, audio, or font files.
