@@ -1353,7 +1353,7 @@ function foreArm(P, x, y, z, yaw = -0.85, pitch = 0.80, len = 0.40) {
  * flank and wraps forward through the front strap to a little past the left,
  * with the thumb riding the left side above the fingertips.
  */
-function gripHand(P, x, y, z, rake = 0, support = false) {
+function gripHand(P, x, y, z, rake = 0, support = false, hold = null) {
   const g = new THREE.Group();
   // Named so a harness can project this subtree's bounds into NDC and MEASURE
   // whether the hand is in frame, rather than deciding it by eye off a
@@ -1363,7 +1363,7 @@ function gripHand(P, x, y, z, rake = 0, support = false) {
   g.position.set(x, y, z);
   g.rotation.x = rake;
 
-  const h = wrappedHand(P, {
+  const h = wrappedHand(P, Object.assign({
     rx: 0.019, ry: 0.026,          // grips are deeper than they are wide
     a0: -0.78, dir: 1, wrap: 3.90,
     triggerWrap: 0.44,
@@ -1380,7 +1380,7 @@ function gripHand(P, x, y, z, rake = 0, support = false) {
     back: 1.18,
     thumbA: 3.50, thumbTilt: 0.88,
     wristA: -0.62, wristZ: -1.15,
-  });
+  }, hold));
   h.rotation.x = -Math.PI / 2;
   g.add(h);
 

@@ -96,6 +96,13 @@ const LIGHTING = {
  * stock bar overlap the receiver bar, and the result photographed as a capital
  * T. A silhouette with its parts in the wrong order is not a stylised weapon,
  * it is a shape, and the player reads it as decoration and walks past it.
+ *
+ * THIS TABLE IS ALSO THE MYSTERY BOX'S STOCK LIST. The Chest of the Nameless
+ * floats one of these marks over itself while it rolls, so every id in
+ * systems/mysterybox.js's POOL must have an entry here or the chest presents a
+ * blank plate. The two lists are asserted equal by test/mysterybox.mjs rather
+ * than by a runtime warning, because a warning in a frame loop is a warning
+ * printed sixty times a second.
  */
 const CHALK = {
   smg: [
@@ -130,6 +137,29 @@ const CHALK = {
     [0.40, 0.18, -0.86, 0.16],   // stock
     [0.08, 0.34, 0.88, -0.06],   // bipod, splayed
     [0.08, 0.30, 0.72, -0.08],
+  ],
+
+  // The two the box exists for. Neither has a wall of its own anywhere in the
+  // map, so these marks are only ever seen floating over an open chest.
+  bolt: [
+    [1.50, 0.08, 0.44, 0.16],    // the longest barrel in the set, and thin
+    [0.46, 0.20, -0.30, 0.15],   // receiver, deep for the action
+    [0.34, 0.09, -0.10, 0.34],   // SCOPE: the bolt-gun tell, and nothing else
+    [0.07, 0.11, -0.24, 0.26],   //   has one. Two mounts under it so it reads
+    [0.07, 0.11, 0.04, 0.26],    //   as fitted rather than as a floating bar.
+    [0.17, 0.08, -0.46, 0.25],   // bolt handle, turned up out of the receiver
+    [0.13, 0.26, -0.40, -0.08],  // wrist, dropping to the grip
+    [0.56, 0.15, -0.80, 0.02],   // long stock, and it sits LOW: a rifle stock
+  ],                             //   in line with the bore is a carbine
+
+  sunspear: [
+    [0.70, 0.36, 0.04, 0.16],    // the deepest body in the set: an emitter, not
+    [0.42, 0.07, 0.62, 0.32],    //   a receiver, so it has no magazine at all
+    [0.42, 0.07, 0.62, 0.16],    // three prongs, evenly split
+    [0.42, 0.07, 0.62, 0.00],
+    [0.07, 0.42, 0.86, 0.16],    // the bar across all three: a trident head
+    [0.15, 0.30, -0.24, -0.12],  // grip, well back under the mass
+    [0.42, 0.14, -0.54, 0.14],   // short stock
   ],
 };
 
@@ -1035,26 +1065,387 @@ const INTERACTS = {
     return g;
   },
 
-  /** Mystery box: a banded chest that sits closed until the round claims it. */
+  /**
+   * THE CHEST OF THE NAMELESS: the mystery box, and the only fixture that MOVES.
+   *
+   * Three of these are built, one per spawn point, and systems/mysterybox.js
+   * keeps exactly one of them awake. That is why the fixture is in two parts:
+   *
+   *   the PLINTH is permanent. It is built at all three spawns, it is always
+   *   visible, and it is the only piece carrying a collider. A chest that
+   *   teleported its own collider with it would leave an invisible wall behind
+   *   at the spawn it left - the exact bug the STATE note warns about, arrived
+   *   at from the other direction - and three empty plinths standing in three
+   *   rooms is also the only honest way the map can tell the player where the
+   *   chest CAN be before it has ever been there.
+   *
+   *   the CHEST is the thing that moves. It is scaled to nothing when it is
+   *   asleep rather than faded, because every stone material in this map is
+   *   shared by half the props in the pyramid and setting `opacity` on one of
+   *   them would turn the whole interior translucent.
+   *
+   * FINDABILITY IS THE FIRST REQUIREMENT and it is a measurement, not a taste.
+   * The Anubis shrine was once functionally perfect and photographed at 5.5 mean
+   * luminance: correct behaviour, correct text, impossible to find. So the chest
+   * carries its own raking light whenever it is awake, before anything has been
+   * bought and with the pyramid unpowered, and test/mysterybox.mjs measures the
+   * frame it appears in against the frame it left.
+   *
+   * The beam, the floating mark and the scarab are all tagged `noHit` so a
+   * bullet passes through them, and `noPick` so the interaction raycast is not
+   * answering a question about a five-metre cone of light when the player is
+   * looking at a chest.
+   */
   box(ctx, slot) {
     const { M, addCollider } = ctx;
     const g = new THREE.Group();
 
-    const body = slab(2.4, 1.15, 1.5, M.limestone, DENSITY.limestone);
-    body.position.y = 0.58;
-    g.add(body);
+    // -------------------------------------------------------------------
+    // the plinth: permanent, and the only part with a collider
+    // -------------------------------------------------------------------
 
-    const lid = slab(2.5, 0.3, 1.6, M.carved, DENSITY.carved);
-    lid.position.y = 1.3;
-    g.add(lid);
+    const kerb = slab(3.5, 0.16, 2.6, M.limestone, DENSITY.limestone);
+    kerb.position.y = 0.08;
+    g.add(kerb);
 
-    for (const sx of [-0.85, 0.85]) {
-      const band = slab(0.22, 1.5, 1.62, M.gold, DENSITY.gold);
-      band.position.set(sx, 0.72, 0);
-      g.add(band);
+    const plinth = slab(3.0, 0.42, 2.1, M.granite, DENSITY.granite);
+    plinth.position.y = 0.37;
+    g.add(plinth);
+
+    // Four gold studs at the corners. They are what makes an empty plinth read
+    // as a socket waiting for something rather than as a block of rubble.
+    for (const sx of [-1.28, 1.28]) {
+      for (const sz of [-0.82, 0.82]) {
+        const stud = slab(0.2, 0.1, 0.2, M.gold, DENSITY.gold);
+        stud.position.set(sx, 0.63, sz);
+        g.add(stud);
+      }
     }
 
-    addCollider(slot.x, slot.z, 1.35, 1.5);
+    // -------------------------------------------------------------------
+    // the chest
+    // -------------------------------------------------------------------
+
+    const chest = new THREE.Group();
+    chest.position.y = 0.58;
+    chest.visible = false;
+    g.add(chest);
+
+    const body = slab(2.4, 1.05, 1.5, M.limestone, DENSITY.limestone);
+    body.position.y = 0.53;
+    chest.add(body);
+
+    for (const sx of [-0.86, 0.86]) {
+      const band = slab(0.22, 1.12, 1.58, M.gold, DENSITY.gold);
+      band.position.set(sx, 0.53, 0);
+      chest.add(band);
+    }
+
+    // The lock, on the face the player walks up to. A slot's rot is the
+    // direction it FACES and forward is (-sin, 0, -cos), so local -Z is the
+    // front of every fixture in this file.
+    const lock = slab(0.5, 0.34, 0.12, M.gold, DENSITY.gold);
+    lock.position.set(0, 0.62, -0.79);
+    chest.add(lock);
+
+    /**
+     * The lid, hinged at the BACK top edge.
+     *
+     * A pivot group rather than a rotated mesh, because a lid rotated about its
+     * own centre passes through the back wall of its own chest on the way up
+     * and the whole animation reads as the box shearing in half. The mesh sits
+     * forward of the pivot so the far edge is what swings.
+     */
+    const lidPivot = new THREE.Group();
+    lidPivot.position.set(0, 1.06, 0.75);
+    chest.add(lidPivot);
+
+    const lid = slab(2.5, 0.28, 1.62, M.carved, DENSITY.carved);
+    lid.position.set(0, 0.14, -0.81);
+    lidPivot.add(lid);
+
+    const lidTrim = slab(2.56, 0.09, 0.2, M.gold, DENSITY.gold);
+    lidTrim.position.set(0, 0.16, -1.55);
+    lidPivot.add(lidTrim);
+
+    // -------------------------------------------------------------------
+    // the beam
+    // -------------------------------------------------------------------
+
+    /**
+     * Own material instances, and they have to be: this is the one place in the
+     * fixture where opacity is animated, and the three chests hold three
+     * independent states.
+     *
+     * Additive with depthWrite off, because a beam of light is light and not a
+     * surface. Depth TEST stays on so the beam is occluded by a column standing
+     * in front of it, which is the difference between a light in a room and a
+     * decal on the camera.
+     */
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0xffcf7d,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xfff0cf,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
+    const BEAM_H = 5.6;
+
+    const beam = new THREE.Group();
+    beam.visible = false;
+    chest.add(beam);
+
+    // Open-ended on purpose. The player is meant to see UP the shaft from
+    // underneath; a capped cylinder puts a lit disc across the top of it.
+    const cone = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.25, 0.44, BEAM_H, 20, 1, true), beamMat);
+    cone.position.y = 1.06 + BEAM_H / 2;
+    beam.add(cone);
+
+    const core = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.2, 0.14, BEAM_H, 10, 1, true), coreMat);
+    core.position.y = 1.06 + BEAM_H / 2;
+    beam.add(core);
+
+    const beamLight = new THREE.PointLight(0xffcf7d, 0, 24, 2);
+    beamLight.position.y = 2.4;
+    beamLight.castShadow = false;
+    chest.add(beamLight);
+
+    // -------------------------------------------------------------------
+    // the mark that rides the beam
+    // -------------------------------------------------------------------
+
+    const plateMat = M.granite.clone();
+    plateMat.emissive.setHex(0x241a0c);
+    plateMat.emissiveIntensity = 1.0;
+
+    const markMat = M.gold.clone();
+    markMat.emissive.setHex(0xffa326);
+    markMat.emissiveIntensity = 1.4;
+
+    const riser = new THREE.Group();
+    riser.position.y = 1.4;
+    riser.visible = false;
+    chest.add(riser);
+
+    // A dark ground for the gold to be gold AGAINST, the same correction the
+    // wall buy needed: chalk on limestone at the same value is a texture, not
+    // a picture.
+    const plate = new THREE.Mesh(box(2.3, 1.5, 0.09, DENSITY.granite), plateMat);
+    riser.add(plate);
+
+    for (const sy of [-0.72, 0.72]) {
+      const rail = new THREE.Mesh(box(2.44, 0.1, 0.16, DENSITY.gold), markMat);
+      rail.position.set(0, sy, 0.02);
+      riser.add(rail);
+    }
+
+    /** One prebuilt mark per weapon, exactly one of them visible. */
+    const tokens = {};
+    for (const [id, marks] of Object.entries(CHALK)) {
+      const t = new THREE.Group();
+      t.visible = false;
+      for (const [w, h, x, y] of marks) {
+        const bar = new THREE.Mesh(box(w, h, 0.06, DENSITY.gold), markMat);
+        bar.position.set(x, y - 0.08, -0.07);
+        t.add(bar);
+      }
+      riser.add(t);
+      tokens[id] = t;
+    }
+
+    // -------------------------------------------------------------------
+    // the scarab
+    // -------------------------------------------------------------------
+
+    const scarabMat = M.ember.clone();
+    scarabMat.color.setHex(0xcfe9ff);
+    scarabMat.emissive.setHex(0x63c6ff);
+    scarabMat.emissiveIntensity = 3.4;
+
+    const scarab = new THREE.Group();
+    scarab.visible = false;
+    chest.add(scarab);
+
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 9), scarabMat);
+    shell.scale.set(1, 0.66, 1.35);
+    scarab.add(shell);
+
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 9, 7), scarabMat);
+    head.position.z = -0.3;
+    scarab.add(head);
+
+    const wings = [];
+    for (const sx of [-1, 1]) {
+      const wing = new THREE.Mesh(box(0.42, 0.02, 0.26, DENSITY.gold), scarabMat);
+      wing.position.set(sx * 0.26, 0.1, 0.03);
+      scarab.add(wing);
+      wings.push(wing);
+    }
+
+    const scarabLight = new THREE.PointLight(0x63c6ff, 0, 16, 2);
+    scarabLight.castShadow = false;
+    scarab.add(scarabLight);
+
+    // -------------------------------------------------------------------
+    // the fixture's own light
+    // -------------------------------------------------------------------
+
+    /**
+     * LOW AND FORWARD, the correction both the wall buy and the shrine already
+     * needed and the reason it is worth learning once: a point light square on
+     * a fixture is the inverse square law aimed at the one surface that
+     * matters, and it blows the front of the chest to white while leaving the
+     * room around it black. Raking it up off the floor lights the plinth, the
+     * chest front, and three metres of floor in every direction, which is what
+     * findable actually means.
+     *
+     * On `g` rather than on `chest`, so the chest can be scaled to nothing
+     * without the light being scaled somewhere else in the room with it.
+     */
+    const WARM = new THREE.Color(0xffb96a);
+    const COLD = new THREE.Color(0x6f86c4);
+
+    const glow = new THREE.PointLight(WARM.getHex(), 0, 22, 2);
+    glow.position.set(0, 1.1, -1.9);
+    glow.castShadow = false;
+    g.add(glow);
+
+    for (const o of [cone, core, ...scarab.children]) {
+      o.userData.noHit = true;
+      o.userData.noPick = true;
+    }
+    riser.traverse((o) => { if (o.isMesh) o.userData.noHit = true; });
+
+    // -------------------------------------------------------------------
+    // the handle systems/mysterybox.js drives
+    // -------------------------------------------------------------------
+
+    const GLOW_BASE = 8.5;
+    const LID_OPEN = 1.24;      // radians. Past this the lid lies on its back.
+
+    let present = false;
+    let cold = 0;
+    let glowK = 1;
+
+    const api = {
+      /** Every mark this chest can show. The harness checks POOL against it. */
+      tokenIds: Object.keys(tokens),
+
+      get present() { return present; },
+      get group() { return g; },
+
+      setPresent(on) {
+        present = !!on;
+        chest.visible = present;
+
+        // Everything the last occupancy left behind, put back. A chest that
+        // arrives somewhere new with its lid still up from the pull that sent
+        // it away is the whole illusion gone in one frame.
+        api.setLid(0);
+        api.setBeam(0);
+        api.setToken(null);
+        api.setScarab(0);
+        api.setCold(0);
+        api.setArrive(present ? 1 : 0);
+      },
+
+      /** 0 = not yet arrived, 1 = seated. Scale, never opacity. See above. */
+      setArrive(k) {
+        const s = Math.max(0.001, k);
+        chest.scale.setScalar(s);
+        glowK = k;
+        glow.intensity = present ? GLOW_BASE * k : 0;
+      },
+
+      setLid(k) { lidPivot.rotation.x = LID_OPEN * k; },
+
+      setBeam(k) {
+        const on = k > 0.002;
+        beam.visible = on;
+        beamMat.opacity = 0.30 * k;
+        coreMat.opacity = 0.55 * k;
+        cone.scale.set(1, 0.35 + 0.65 * k, 1);
+        core.scale.set(1, 0.35 + 0.65 * k, 1);
+        beamLight.intensity = 16 * k;
+      },
+
+      setToken(id) {
+        const want = id && tokens[id] ? tokens[id] : null;
+        for (const t of Object.values(tokens)) t.visible = (t === want);
+        riser.visible = !!want;
+        return !!want;
+      },
+
+      /**
+       * @param {number} y      height above the chest's lip
+       * @param {number} spin   yaw of the mark, in the chest's own frame
+       * @param {number} scale  1 while cycling, larger on the reveal
+       * @param {number} lit    emissive multiplier, 0..1.6
+       */
+      setTokenPose(y, spin, scale, lit) {
+        riser.position.y = 1.4 + y;
+        riser.rotation.y = spin;
+        riser.scale.setScalar(scale);
+        markMat.emissiveIntensity = 1.4 * lit;
+        plateMat.emissiveIntensity = 0.6 + 0.8 * lit;
+      },
+
+      /** 0 = docked in the chest, 1 = gone. */
+      setScarab(k) {
+        const on = k > 0.001 && k < 0.999;
+        scarab.visible = on;
+        if (!on) { scarabLight.intensity = 0; return; }
+
+        // Up out of the chest and away over the player's shoulder, on an arc,
+        // shrinking as it goes. A straight line reads as a projectile.
+        scarab.position.set(
+          Math.sin(k * 5.4) * 2.6 * k,
+          1.1 + k * 5.0,
+          -k * 3.4
+        );
+        scarab.rotation.set(-0.5 * k, Math.sin(k * 7.1) * 0.9, Math.sin(k * 9) * 0.3);
+        scarab.scale.setScalar(Math.max(0.05, 1 - k * 0.55));
+
+        const flap = Math.sin(k * 90) * 0.9;
+        wings[0].rotation.z = flap;
+        wings[1].rotation.z = -flap;
+
+        scarabLight.intensity = 9 * Math.sin(Math.PI * Math.min(1, k * 1.2));
+      },
+
+      /** 0 warm and open for business, 1 dead stone. */
+      setCold(k) {
+        cold = k;
+        glow.color.lerpColors(WARM, COLD, k);
+      },
+
+      /**
+       * The idle life of the fixture: a slow breath on the lamp, so a closed
+       * chest across a dark room is the one thing in the frame that is moving.
+       */
+      tick(dt, t) {
+        if (!present) return;
+        const breathe = 1 + Math.sin(t * 1.7 + slot.x * 0.7 + slot.z * 0.3) * 0.09;
+        glow.intensity = GLOW_BASE * glowK * breathe * (1 - 0.85 * cold);
+      },
+    };
+
+    api.setPresent(false);
+    ctx.lastVisuals = api;
+
+    addCollider(slot.x, slot.z, 1.5, 1.0);
     return g;
   },
 

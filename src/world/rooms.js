@@ -159,6 +159,17 @@ export const ROOMS = [
     ],
 
     interactSlots: [
+      // MYSTERY BOX SPAWN A. Dead centre of the hall, between the two offering
+      // tables, so the chest is on the axis the colonnade already draws the eye
+      // down and is visible the moment the player clears the debris doorway.
+      //
+      // The three spawns are A here, B in the Great Gallery and C in the Star
+      // Shaft, and their spread is the mechanic rather than a decoration: the
+      // chest relocates after four to eight pulls, and one of its three homes is
+      // in the cheap half of the map, one is on the route everything passes
+      // through, and one is behind the dearest gate in the pyramid. A player who
+      // opened only the west half can be sent somewhere they have not paid to
+      // reach, which is what stops the box being a vending machine to camp.
       { type: 'box', x: -31, z: -149, rot: 0, config: { spawn: 'A', cost: 950 } },
       {
         type: 'wallbuy',
@@ -285,6 +296,10 @@ export const ROOMS = [
     ],
 
     interactSlots: [
+      // MYSTERY BOX SPAWN B. The floor of the gallery, under sixteen units of
+      // air, which is the one place in the map where the beam has room to be a
+      // beam. It is also overlooked from both upper ledges, so a chest sitting
+      // here is legible from four different heights.
       { type: 'box', x: 0, z: -177, rot: 0, config: { spawn: 'B', cost: 950 } },
 
       // Both fixtures are on the gallery's NORTH wall and neither is on a side
@@ -448,6 +463,10 @@ export const ROOMS = [
     ],
 
     interactSlots: [
+      // MYSTERY BOX SPAWN C. The deepest of the three, behind the 1250 gate, and
+      // the only one the player can be sent to before they have opened the room.
+      // That is the point: the chest going cold is a place the run has to move
+      // to, and one of the three places is one you may still have to buy.
       { type: 'box', x: 27, z: -214, rot: 0, config: { spawn: 'C', cost: 950 } },
 
       // The deepest wall buy in the map, and the dearest, behind the 1250 gate.

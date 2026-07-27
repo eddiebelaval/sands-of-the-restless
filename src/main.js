@@ -29,6 +29,7 @@ import { createCombat } from './systems/damage.js';
 import { createDirector } from './enemies/director.js';
 import { createPower } from './systems/power.js';
 import { createWallBuys } from './systems/wallbuy.js';
+import { createMysteryBox } from './systems/mysterybox.js';
 import { createShrines } from './systems/shrines.js';
 import { createAltar } from './systems/altar.js';
 import { createPromptBus } from './ui/prompt.js';
@@ -119,9 +120,10 @@ function boot() {
 
   // The player starts with the MK9 and nothing else. Every other weapon is
   // bought off a wall, which is what makes gold a currency rather than a key.
-  // (The bolt rifle and the Sunspear have no wall of their own on purpose:
-  // they are the mystery box's stock, and until it is written they are the two
-  // weapons a run cannot reach.)
+  // The bolt rifle and the Sunspear have no wall of their own on purpose: they
+  // are the Chest of the Nameless's stock and its only exclusive, so the two
+  // strongest weapons in the armoury are luck rather than a price tag any
+  // player can walk to. See systems/mysterybox.js.
 
   // --- economy, doors, and the fixtures -------------------------------------
 
@@ -165,15 +167,25 @@ function boot() {
     notice: (text, ms) => showNotice(text, ms),
   });
 
+  // The mystery box. Constructed before the interaction layer because that
+  // layer only builds targets for slot types it has a handler for, and attached
+  // after it because the fixtures come back out of it - the same late binding
+  // the shrines and the router use, for the same reason.
+  const mysterybox = createMysteryBox({
+    weapons, economy, player, audio,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
   const interacts = createInteracts({
     camera,
     interior: spaces.interior,
     spaces,
     prompt: promptBus.channel('fixtures', 2),
-    handlers: { wallbuy: wallbuys, shrine: shrines, altar },
+    handlers: { wallbuy: wallbuys, shrine: shrines, altar, box: mysterybox },
   });
 
   shrines.attach(interacts.records);
+  mysterybox.attach(interacts.records);
   createBoonStrip(document.getElementById('r-boons'), shrines);
 
   // The router needs these three, and none of them can exist before it does:
@@ -587,6 +599,13 @@ function boot() {
       // prompt being wrong rather than late.
       doors.update(dt);
 
+      // The chest advances BEFORE the fixture layer reads it. Its prompt is a
+      // running countdown on an offer that expires, so a frame of lag here is
+      // not a late prompt, it is a prompt quoting a second that has already
+      // gone - and on the last frame of an offer it would let the player take a
+      // weapon the box has already withdrawn.
+      mysterybox.update(dt, elapsed);
+
       // Then the fixtures, then the arbiter. Both write to their own channel
       // and neither can see the other's, so the order of these two is a matter
       // of taste; paint() is what has to come last.
@@ -711,7 +730,7 @@ function boot() {
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
     director, combat,
-    power, wallbuys, shrines, altar, interacts, promptBus,
+    power, wallbuys, shrines, altar, mysterybox, interacts, promptBus,
     setFidelity, start,
     get elapsed() { return elapsed; },
   };

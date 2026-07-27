@@ -47,7 +47,16 @@ export function createInteracts({ camera, interior, spaces, prompt, handlers = {
   for (const slot of interior.interacts) {
     if (!handlers[slot.type]) continue;
     records.push(slot);
-    slot.group.traverse((o) => { if (o.isMesh) targets.push(o); });
+
+    // `noPick` is how a fixture keeps its own effects out of its own hitbox.
+    // The mystery box's beam is a five-metre cone of additive light standing on
+    // top of a one-metre chest, and without this the prompt for the chest
+    // appears when the player is looking at the ceiling three metres above it.
+    // Note that three.js does NOT skip invisible objects when raycasting, so
+    // "it is hidden most of the time" is not a defence.
+    slot.group.traverse((o) => {
+      if (o.isMesh && !o.userData.noPick) targets.push(o);
+    });
   }
 
   const ray = new THREE.Raycaster();
