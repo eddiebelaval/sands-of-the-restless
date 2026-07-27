@@ -1135,8 +1135,28 @@ const INTERACTS = {
     body.position.y = 0.53;
     chest.add(body);
 
+    /**
+     * The chest's own gold, and it is a CLONE for the same reason the beam's
+     * materials are: this is the one place in the map where gold carries its own
+     * light, and M.gold is shared by half the props in the pyramid.
+     *
+     * Findability was originally bought entirely with the raking lamp below, and
+     * buying it that way cost the fixture its own shape - a point light strong
+     * enough to be seen at six metres blew the chest front past white, and what
+     * the player found across a dark room was a glare, not a chest. A LOW
+     * emissive on the trim alone is the other half of the trade: the bands, the
+     * lock and the lid edge carry their own value, so the silhouette survives at
+     * range and the limestone body stays a lit surface with texture on it.
+     *
+     * The plinth's studs deliberately do NOT get this. They are permanent at all
+     * three spawns, and a glowing empty plinth is a false landmark.
+     */
+    const trimMat = M.gold.clone();
+    trimMat.emissive.setHex(0xffa63a);
+    trimMat.emissiveIntensity = 1.05;
+
     for (const sx of [-0.86, 0.86]) {
-      const band = slab(0.22, 1.12, 1.58, M.gold, DENSITY.gold);
+      const band = slab(0.22, 1.12, 1.58, trimMat, DENSITY.gold);
       band.position.set(sx, 0.53, 0);
       chest.add(band);
     }
@@ -1144,6 +1164,10 @@ const INTERACTS = {
     // The lock, on the face the player walks up to. A slot's rot is the
     // direction it FACES and forward is (-sin, 0, -cos), so local -Z is the
     // front of every fixture in this file.
+    //
+    // Plain gold rather than the emissive trim: it faces the lamp square on at
+    // under two metres, and the emissive version photographed as a featureless
+    // white square punched through the front of the chest.
     const lock = slab(0.5, 0.34, 0.12, M.gold, DENSITY.gold);
     lock.position.set(0, 0.62, -0.79);
     chest.add(lock);
@@ -1164,7 +1188,7 @@ const INTERACTS = {
     lid.position.set(0, 0.14, -0.81);
     lidPivot.add(lid);
 
-    const lidTrim = slab(2.56, 0.09, 0.2, M.gold, DENSITY.gold);
+    const lidTrim = slab(2.56, 0.09, 0.2, trimMat, DENSITY.gold);
     lidTrim.position.set(0, 0.16, -1.55);
     lidPivot.add(lidTrim);
 
@@ -1217,8 +1241,20 @@ const INTERACTS = {
     core.position.y = 1.06 + BEAM_H / 2;
     beam.add(core);
 
-    const beamLight = new THREE.PointLight(0xffcf7d, 0, 24, 2);
-    beamLight.position.y = 2.4;
+    /**
+     * UP THE SHAFT, not inside the chest.
+     *
+     * At 2.4 this sat a metre above the lid with the inverse square law pointed
+     * straight down at it, and the open chest photographed as a white hole with
+     * a gold rim: the lid, the plate and the mark all past clipping and bloom
+     * smearing the result over the room behind. Raising it into the beam and
+     * cutting the intensity lights the COLUMN of air and the tops of the walls
+     * around it, which is what a shaft of light looks like, and leaves the mark
+     * to be the brightest thing in the frame - which is the only thing the
+     * player is being asked to read.
+     */
+    const beamLight = new THREE.PointLight(0xffcf7d, 0, 20, 2);
+    beamLight.position.y = 3.3;
     beamLight.castShadow = false;
     chest.add(beamLight);
 
@@ -1226,16 +1262,39 @@ const INTERACTS = {
     // the mark that rides the beam
     // -------------------------------------------------------------------
 
+    /**
+     * The plate stays DARK. That is the whole job it has.
+     *
+     * It was authored as "a dark ground for the gold to be gold against" and
+     * then driven to an emissive intensity within a hair of the mark's own, so
+     * plate and mark clipped together and the reveal photographed as a white
+     * rectangle with a slightly whiter shape in it. A mark is legible because of
+     * the CONTRAST between the two, so the plate's emissive is a tenth of the
+     * mark's and stays there through the whole pose curve.
+     */
     const plateMat = M.granite.clone();
-    plateMat.emissive.setHex(0x241a0c);
-    plateMat.emissiveIntensity = 1.0;
+    // Darker than the granite it is cloned from, because the plate stands in a
+    // warm beam and inherited granite goes the colour of the light hitting it -
+    // which is the colour of the mark. Gold on gold is a texture, not a picture.
+    plateMat.color.setHex(0x2b2119);
+    plateMat.emissive.setHex(0x1a1208);
+    plateMat.emissiveIntensity = 0.12;
 
     const markMat = M.gold.clone();
     markMat.emissive.setHex(0xffa326);
-    markMat.emissiveIntensity = 1.4;
+    markMat.emissiveIntensity = 1.1;
 
+    /**
+     * IN FRONT OF THE BEAM, not inside it.
+     *
+     * Authored at z 0 the plate shared an axis with the beam's core cylinder,
+     * and the core is additive: it drew a white stripe straight down the middle
+     * of every mark, through the one part of the glyph that tells a bolt rifle
+     * from a Sunspear. Half a metre forward and the beam is a backlight, which
+     * is what a shaft of light behind an object is for.
+     */
     const riser = new THREE.Group();
-    riser.position.y = 1.4;
+    riser.position.set(0, 1.4, -0.5);
     riser.visible = false;
     chest.add(riser);
 
@@ -1313,12 +1372,22 @@ const INTERACTS = {
      *
      * On `g` rather than on `chest`, so the chest can be scaled to nothing
      * without the light being scaled somewhere else in the room with it.
+     *
+     * IT IS ALSO WEAKER AND FURTHER OUT THAN IT WAS, and that is the correction
+     * that mattered. At 8.5 units 1.9m from the chest the lamp was 1.15m off the
+     * front face, and inverse square at 1.15m clipped the limestone to pure
+     * white before bloom had touched it: the fixture measured findable and was
+     * unreadable, which is the shrine failure with the sign flipped. Dropped and
+     * pushed out, it still lays a warm pool over the plinth and three metres of
+     * floor - the part that survives at six metres in a dark room - while the
+     * chest itself is now lit by it rather than erased by it. What replaced the
+     * lost brightness is the emissive trim above: shape, not glare.
      */
     const WARM = new THREE.Color(0xffb96a);
     const COLD = new THREE.Color(0x6f86c4);
 
-    const glow = new THREE.PointLight(WARM.getHex(), 0, 22, 2);
-    glow.position.set(0, 1.1, -1.9);
+    const glow = new THREE.PointLight(WARM.getHex(), 0, 26, 2);
+    glow.position.set(0, 0.72, -2.5);
     glow.castShadow = false;
     g.add(glow);
 
@@ -1332,12 +1401,13 @@ const INTERACTS = {
     // the handle systems/mysterybox.js drives
     // -------------------------------------------------------------------
 
-    const GLOW_BASE = 8.5;
+    const GLOW_BASE = 7.0;
     const LID_OPEN = 1.24;      // radians. Past this the lid lies on its back.
 
     let present = false;
     let cold = 0;
     let glowK = 1;
+    let token = null;
 
     const api = {
       /** Every mark this chest can show. The harness checks POOL against it. */
@@ -1345,6 +1415,29 @@ const INTERACTS = {
 
       get present() { return present; },
       get group() { return g; },
+
+      /**
+       * Which mark is on the plate RIGHT NOW, or null.
+       *
+       * Readable because the cycle's deceleration is the whole feel of the roll
+       * and the only honest way to measure it is to watch the mark change. The
+       * state machine's own schedule proves what it intended; this proves what
+       * the chest actually showed.
+       */
+      get token() { return token; },
+
+      /**
+       * The plate itself, for the harness to PROJECT.
+       *
+       * systems/mysterybox.js turns this to face whoever is standing there, and
+       * for a while it turned it exactly HALF A TURN the wrong way: the reveal
+       * presented the back of a slab of granite and every state check around it
+       * stayed green, because a plate facing away is still bright, still settles
+       * on time, and still names the right weapon in the prompt. The only thing
+       * that catches it is measuring how wide the plate actually lands on the
+       * screen, and that needs the object and the camera in the same hand.
+       */
+      get mark() { return riser; },
 
       setPresent(on) {
         present = !!on;
@@ -1374,15 +1467,19 @@ const INTERACTS = {
       setBeam(k) {
         const on = k > 0.002;
         beam.visible = on;
-        beamMat.opacity = 0.30 * k;
-        coreMat.opacity = 0.55 * k;
+        // Additive, so these are the amount of light the beam ADDS to whatever
+        // is behind it. At 0.55 the core alone drove the centre of the frame
+        // past white on its own and the mark was reading THROUGH a flare.
+        beamMat.opacity = 0.19 * k;
+        coreMat.opacity = 0.30 * k;
         cone.scale.set(1, 0.35 + 0.65 * k, 1);
         core.scale.set(1, 0.35 + 0.65 * k, 1);
-        beamLight.intensity = 16 * k;
+        beamLight.intensity = 6.5 * k;
       },
 
       setToken(id) {
         const want = id && tokens[id] ? tokens[id] : null;
+        token = want ? id : null;
         for (const t of Object.values(tokens)) t.visible = (t === want);
         riser.visible = !!want;
         return !!want;
@@ -1398,8 +1495,10 @@ const INTERACTS = {
         riser.position.y = 1.4 + y;
         riser.rotation.y = spin;
         riser.scale.setScalar(scale);
-        markMat.emissiveIntensity = 1.4 * lit;
-        plateMat.emissiveIntensity = 0.6 + 0.8 * lit;
+        markMat.emissiveIntensity = 1.1 * lit;
+        // A tenth of the mark, and it MUST stay a tenth of the mark. See the
+        // note where the two materials are made.
+        plateMat.emissiveIntensity = 0.08 + 0.10 * lit;
       },
 
       /** 0 = docked in the chest, 1 = gone. */

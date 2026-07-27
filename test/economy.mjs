@@ -20,7 +20,7 @@
  * animation halfway through and reports a working system as broken.
  */
 
-import { chromium } from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { resolveChrome } from './chrome.mjs';
 import { mkdirSync } from 'node:fs';
 
@@ -811,7 +811,16 @@ const boughtFour = ['anubis', 'shu', 'set', 'sekhmet']
 const checks = {
   // wiring
   'starts holding only the MK9':      opening.ownedAtStart.length === 1 && opening.ownedAtStart[0] === 'mk9',
-  'eleven fixtures are wired':        opening.fixtures === 11,
+  // FOURTEEN, not eleven, and the change is a feature landing rather than a
+  // regression. This suite's original eleven was four wall buys, six shrines and
+  // the Altar. systems/mysterybox.js then added the Chest of the Nameless, whose
+  // three plinths are built at three spawns and registered on the SAME
+  // interaction records as everything else - one plinth per spawn, permanently,
+  // because only the chest moves and the plinth it stands on never does. So the
+  // count is 4 + 6 + 1 + 3. It is asserted as a literal rather than derived from
+  // rooms.js because the whole value of the check is that it fails when a
+  // fixture is authored and never wired.
+  'fourteen fixtures are wired':      opening.fixtures === 14,
   'four wall buys, priced':           opening.wallbuys.join() === 'smg:1000,shotgun:1200,carbine:1500,lmg:1600',
   'six shrines exist':                opening.shrines.length === 6,
   'one altar exists':                 opening.altars === 1,

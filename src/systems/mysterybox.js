@@ -418,7 +418,22 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
 
     const dx = player.position.x - rec.x;
     const dz = player.position.z - rec.z;
-    const want = Math.atan2(dx, dz) - (rec.rot || 0);
+
+    /**
+     * THE HALF TURN IS NOT A FUDGE.
+     *
+     * atan2(dx, dz) - rot is the player's bearing in the fixture's own frame,
+     * measured off local +Z. The mark's FACE is on local -Z - the same
+     * convention every fixture in world/build.js keeps, because -Z is the side
+     * the player walks up to - so pointing the face at a bearing means turning
+     * to that bearing plus half a turn.
+     *
+     * Without it the plate turned its BACK on whoever had just paid 950 gold,
+     * at every spawn, in every room, and the bug survived a green suite because
+     * the only thing measured was how bright the reveal was. A slab of granite
+     * lit from behind by a beam is very bright indeed.
+     */
+    const want = Math.atan2(dx, dz) - (rec.rot || 0) + Math.PI;
 
     // Keep turning the way it was already turning. Unwrapping to the nearest
     // equivalent angle is what stops the mark snapping backwards through three

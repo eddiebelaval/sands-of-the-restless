@@ -27,14 +27,189 @@
  * right text, impossible to find. So every spawn is photographed with the chest
  * and without it from the same camera, and the difference is the number that
  * decides whether this fixture is done.
+ *
+ * EVERY NUMBER IN HERE COMES OUT OF A DECODED PNG, and that is a correction.
+ * The first version of this file read pixels in the page with
+ * `ctx.drawImage(renderer.domElement)`, which is the same reader STATE.md
+ * already records as blind: the renderer does not preserve its drawing buffer,
+ * so a read that lands in the wrong turn samples a cleared one. It does not fail
+ * loudly - it returns a plausible, entirely black measurement. Two of fifteen
+ * patches in one probe run came back at mean 1.7 while the frame around them was
+ * at 130. So the screenshot IS the measurement now: page.screenshot() to a
+ * buffer, inflate it here, and every luminance figure below is of pixels that
+ * were definitely on the screen.
  */
 
-import { chromium } from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { resolveChrome } from './chrome.mjs';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 
 const OUT = new URL('../shots/', import.meta.url).pathname;
 mkdirSync(OUT, { recursive: true });
+
+// ---------------------------------------------------------------------------
+// pixels
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode a PNG to raw samples. Enough of the format for what Chrome emits:
+ * 8-bit, non-interlaced, colour type 2 (RGB) or 6 (RGBA).
+ *
+ * Deliberately not a dependency. A decoder for the one file format we produce
+ * ourselves is forty lines of zlib and arithmetic, and zlib is in the standard
+ * library - so the only thing this suite needs installed is the browser driver.
+ */
+function decodePNG(buf) {
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG');
+
+  let p = 8;
+  let w = 0, h = 0, depth = 0, type = 0, interlace = 0;
+  const idat = [];
+
+  while (p < buf.length) {
+    const len = buf.readUInt32BE(p);
+    const tag = buf.toString('ascii', p + 4, p + 8);
+    const body = buf.subarray(p + 8, p + 8 + len);
+
+    if (tag === 'IHDR') {
+      w = body.readUInt32BE(0);
+      h = body.readUInt32BE(4);
+      depth = body[8]; type = body[9]; interlace = body[12];
+    } else if (tag === 'IDAT') {
+      idat.push(body);
+    } else if (tag === 'IEND') break;
+
+    p += 12 + len;
+  }
+
+  if (depth !== 8 || interlace !== 0 || (type !== 2 && type !== 6)) {
+    throw new Error(`unsupported PNG: depth ${depth} type ${type} interlace ${interlace}`);
+  }
+
+  const ch = type === 6 ? 4 : 3;
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = w * ch;
+  const out = Buffer.alloc(stride * h);
+
+  // Undo the per-scanline filters. Each row is prefixed by its filter byte and
+  // predicts from the pixel to the left (a), the row above (b) and the pixel
+  // above-left (c) - so this has to run in order and cannot be vectorised away.
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)];
+    const src = (y * (stride + 1)) + 1;
+    const dst = y * stride;
+    const up = dst - stride;
+
+    for (let i = 0; i < stride; i++) {
+      const x = raw[src + i];
+      const a = i >= ch ? out[dst + i - ch] : 0;
+      const b = y > 0 ? out[up + i] : 0;
+      const c = (y > 0 && i >= ch) ? out[up + i - ch] : 0;
+
+      let v;
+      switch (f) {
+        case 0: v = x; break;
+        case 1: v = x + a; break;
+        case 2: v = x + b; break;
+        case 3: v = x + ((a + b) >> 1); break;
+        case 4: {
+          const pp = a + b - c;
+          const pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c);
+          v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+          break;
+        }
+        default: throw new Error(`bad filter ${f}`);
+      }
+      out[dst + i] = v & 0xff;
+    }
+  }
+
+  return { w, h, ch, data: out };
+}
+
+/**
+ * Luma over a normalised rect. Defaults to the UPPER TWO THIRDS, because the
+ * lower third is the weapon and the weapon renders perfectly well when nothing
+ * else in the scene does.
+ *
+ * Reports the distribution and not only the mean. `clip` and `spread` are the
+ * two that decide whether the reveal is a weapon mark or a white blob: a blob
+ * has a high mean, a high clip and almost no spread, and a mean alone cannot
+ * tell the two apart. That is how a plate lit to the same value as the mark on
+ * it passed a brightness check for a fortnight.
+ */
+function luma(img, rect) {
+  const { w, h, ch, data } = img;
+  const x0 = Math.floor((rect ? rect[0] : 0) * w);
+  const x1 = Math.floor((rect ? rect[2] : 1) * w);
+  const y0 = Math.floor((rect ? rect[1] : 0) * h);
+  const y1 = Math.floor((rect ? rect[3] : 0.66) * h);
+
+  const hist = new Uint32Array(256);
+  let sum = 0, n = 0, lit = 0, peak = 0, clip = 0;
+
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x += 2) {
+      const i = (y * w + x) * ch;
+      const l = ((data[i] + data[i + 1] + data[i + 2]) / 3) | 0;
+      hist[l]++;
+      sum += l; n++;
+      if (l > 10) lit++;
+      if (l > peak) peak = l;
+      if (l >= 248) clip++;
+    }
+  }
+
+  const at = (q) => {
+    let want = q * n, acc = 0;
+    for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= want) return i; }
+    return 255;
+  };
+
+  return {
+    meanLuma: +(sum / n).toFixed(2),
+    percentLit: +((lit / n) * 100).toFixed(1),
+    peak,
+    clip: +((clip / n) * 100).toFixed(2),
+    spread: at(0.90) - at(0.10),
+  };
+}
+
+/**
+ * What one fixture did to a frame, pixel by pixel.
+ *
+ * Two shots from an identical camera with only the chest moved, so every pixel
+ * that changed changed because of the chest. This is the findability number
+ * that survives the room it is standing in: a ratio of patch means says a chest
+ * is twice as findable in a dark hall as in a lit gallery, which is a fact
+ * about the halls and not about the chest.
+ */
+function diff(a, b, rect) {
+  const w = a.w, h = a.h;
+  const x0 = Math.floor((rect ? rect[0] : 0) * w);
+  const x1 = Math.floor((rect ? rect[2] : 1) * w);
+  const y0 = Math.floor((rect ? rect[1] : 0) * h);
+  const y1 = Math.floor((rect ? rect[3] : 0.66) * h);
+
+  let n = 0, changed = 0, gain = 0;
+
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x += 2) {
+      const ia = (y * w + x) * a.ch;
+      const ib = (y * w + x) * b.ch;
+      const la = (a.data[ia] + a.data[ia + 1] + a.data[ia + 2]) / 3;
+      const lb = (b.data[ib] + b.data[ib + 1] + b.data[ib + 2]) / 3;
+      n++;
+      if (la - lb >= 12) { changed++; gain += la - lb; }
+    }
+  }
+
+  return {
+    changedPct: +((changed / n) * 100).toFixed(2),
+    lift: changed ? +(gain / changed).toFixed(1) : 0,
+  };
+}
 
 const browser = await chromium.launch({
   executablePath: resolveChrome(),
@@ -128,43 +303,68 @@ window.__B__ = {
   },
 
   /**
-   * Mean luminance and lit coverage.
+   * Which weapon mark the chest is SHOWING, straight off the fixture.
    *
-   * Whole-frame default samples the UPPER TWO THIRDS only. Pass a normalised
-   * rect to measure a patch instead, which is how the chest is weighed against
-   * the room it is standing in.
+   * The state machine's schedule proves what the roll intended. This proves
+   * what the chest put on the plate, and the two are only the same thing if
+   * the wiring between them works.
    */
-  luma(rect) {
-    const c = window.__SANDS__.renderer.domElement;
-    const sc = document.createElement('canvas');
-    sc.width = c.width; sc.height = c.height;
-    const ctx = sc.getContext('2d', { willReadFrequently: true });
+  token() {
+    const rec = window.__SANDS__.mysterybox.record;
+    return rec && rec.visuals ? rec.visuals.token : null;
+  },
 
-    return new Promise((resolve) => requestAnimationFrame(() => {
-      ctx.drawImage(c, 0, 0);
-      const d = ctx.getImageData(0, 0, sc.width, sc.height).data;
+  /**
+   * How square-on the reveal plate lands, measured in SCREEN SPACE.
+   *
+   * The plate is authored 2.3 wide by 1.5 high, so face-on it projects at about
+   * 1.53 wide for tall. Turned away it foreshortens toward zero while its
+   * height barely changes, and turned all the way round it foreshortens through
+   * zero and comes back - so the aspect alone would not tell a front from a
+   * back. The dot of the plate's own normal against the direction to the camera
+   * settles that: positive is the face, negative is the back of a slab of
+   * granite, and it is the number that would have caught the half-turn.
+   *
+   * Both are computed from the live object through the live camera. Nothing
+   * here reimplements the aiming maths, so agreeing with it proves nothing and
+   * disagreeing with it means the player is looking at the wrong side.
+   */
+  markFacing() {
+    const g = window.__SANDS__;
+    const rec = g.mysterybox.record;
+    const mark = rec && rec.visuals && rec.visuals.mark;
+    if (!mark || !mark.visible) return null;
 
-      const x0 = Math.floor((rect ? rect[0] : 0) * sc.width);
-      const x1 = Math.floor((rect ? rect[2] : 1) * sc.width);
-      const y0 = Math.floor((rect ? rect[1] : 0) * sc.height);
-      const y1 = Math.floor((rect ? rect[3] : 0.66) * sc.height);
+    const { THREE, camera } = g;
+    camera.updateMatrixWorld(true);
+    mark.updateMatrixWorld(true);
 
-      let sum = 0, n = 0, lit = 0, peak = 0;
-      for (let y = y0; y < y1; y++) {
-        for (let x = x0; x < x1; x += 2) {
-          const i = (y * sc.width + x) * 4;
-          const l = (d[i] + d[i + 1] + d[i + 2]) / 3;
-          sum += l; n++;
-          if (l > 10) lit++;
-          if (l > peak) peak = l;
-        }
-      }
-      resolve({
-        meanLuma: +(sum / n).toFixed(2),
-        percentLit: +((lit / n) * 100).toFixed(1),
-        peak: +peak.toFixed(0),
-      });
-    }));
+    const project = (x, y) => {
+      const v = new THREE.Vector3(x, y, 0).applyMatrix4(mark.matrixWorld).project(camera);
+      return v;
+    };
+
+    const l = project(-1.15, 0), r = project(1.15, 0);
+    const t = project(0, 0.75), b = project(0, -0.75);
+
+    // Aspect in pixels, so the projection's own x/y scaling is accounted for.
+    const px = (v) => [v.x * 720, v.y * 430];
+    const [lx, ly] = px(l), [rx, ry] = px(r), [tx, ty] = px(t), [bx, by] = px(b);
+    const width = Math.hypot(rx - lx, ry - ly);
+    const height = Math.hypot(bx - tx, by - ty);
+
+    // The plate's face is its local -Z, the same convention every fixture keeps.
+    const normal = new THREE.Vector3(0, 0, -1)
+      .transformDirection(mark.matrixWorld).normalize();
+    const toCam = new THREE.Vector3()
+      .setFromMatrixPosition(camera.matrixWorld)
+      .sub(new THREE.Vector3().setFromMatrixPosition(mark.matrixWorld))
+      .normalize();
+
+    return {
+      aspect: +(width / Math.max(1e-6, height)).toFixed(2),
+      facing: +normal.dot(toCam).toFixed(3),
+    };
   },
 
   /** Everything about the chest, in one read. */
@@ -196,12 +396,25 @@ window.__B__ = {
 
 const shots = [];
 
-async function shoot(name, label) {
+/**
+ * Render, photograph, and measure THE PHOTOGRAPH.
+ *
+ * One screenshot, decoded once, measured as many times as the caller likes.
+ * The frame figure is the upper two thirds; the patch figure is the centre,
+ * which is where the fixture being looked at actually is. The decoded image
+ * comes back so findability can diff two of them.
+ */
+async function shoot(name, label, rect = CENTRE) {
   await page.evaluate(() => window.__B__.frames(3));
-  const stats = await page.evaluate(() => window.__B__.luma());
-  await page.screenshot({ path: `${OUT}${name}.png`, timeout: 90000 });
-  shots.push({ name, label, ...stats });
-  return stats;
+  const buf = await page.screenshot({ timeout: 90000 });
+  writeFileSync(`${OUT}${name}.png`, buf);
+
+  const img = decodePNG(buf);
+  const frame = luma(img);
+  const patch = luma(img, rect);
+
+  shots.push({ name, label, ...frame, patchLuma: patch.meanLuma });
+  return { img, frame, patch, ...frame };
 }
 
 /** The centre of the screen, where the fixture being looked at actually is. */
@@ -284,11 +497,22 @@ const placement = await page.evaluate(async () => {
 
 const closed = await page.evaluate(async () => {
   const g = window.__SANDS__;
+
+  // RICH FIRST, and this line is the whole of what "the price is not red when
+  // rich" was failing on. The run starts on 500 gold and a pull costs 950, so
+  // the prompt read here was the AFFORDABILITY REFUSAL, correctly red, being
+  // asserted not-red. systems/mysterybox.js's describe() is the same
+  // `deny: !afford` that wallbuy.js and doors.js draw - it was never the thing
+  // that was wrong. The next section takes the money away again and asserts the
+  // red state on purpose.
+  g.economy.reset(2000);
+
   const at = window.__B__.faceBox(3.4);
   await window.__B__.frames(3);
 
   return {
     at,
+    gold: g.economy.gold,
     candidate: g.interacts.candidate && g.interacts.candidate.type,
     ...window.__B__.hud(),
   };
@@ -368,8 +592,8 @@ const rolling = await page.evaluate(async () => {
   };
 });
 
-await shoot('box-03-rolling-A', 'spawn A: open, beam up, marks cycling');
-const rollPatch = await page.evaluate(() => window.__B__.luma([0.30, 0.22, 0.70, 0.72]));
+const rollShot = await shoot('box-03-rolling-A', 'spawn A: open, beam up, marks cycling');
+const rollPatch = rollShot.patch;
 
 // The settle. The roll has to land ON the weapon that was drawn before the
 // cycle started, or the whole sequence is decoration over a coin flip.
@@ -377,7 +601,7 @@ const settled = await page.evaluate(async () => {
   const g = window.__SANDS__;
   const drawn = g.mysterybox.state.offer;
 
-  const spent = window.__B__.pumpUntil('settling');
+  const reachedIn = window.__B__.pumpUntil('settling');
   const reached = g.mysterybox.state.phase;
 
   // Photographed at the END of the settle, where the mark is fully risen and
@@ -390,7 +614,7 @@ const settled = await page.evaluate(async () => {
   await window.__B__.frames(3);
 
   return {
-    spent,
+    reachedIn,
     drawn,
     reached,
     phase: g.mysterybox.state.phase,
@@ -401,11 +625,88 @@ const settled = await page.evaluate(async () => {
     offerLeft: +g.mysterybox.state.offerLeft.toFixed(2),
     prompt: document.getElementById('prompt').textContent,
     deny: document.getElementById('prompt').classList.contains('deny'),
+    ...window.__B__.markFacing(),
   };
 });
 
-await shoot('box-04-reveal-A', 'spawn A: the roll settled, one weapon presented');
-const revealPatch = await page.evaluate(() => window.__B__.luma([0.30, 0.22, 0.70, 0.72]));
+const revealShot = await shoot('box-04-reveal-A', 'spawn A: the roll settled, one weapon presented');
+const revealPatch = revealShot.patch;
+
+// ---------------------------------------------------------------------------
+// 4b. THE ROLL ITSELF, timed off the mark the chest actually showed
+// ---------------------------------------------------------------------------
+
+/**
+ * The roll is the mechanic. Everything else here is a shop.
+ *
+ * The old check for this pumped a roll that was ALREADY MOSTLY OVER - the
+ * section above spends 1.6 of its 3.1 seconds, and the rendered frames of two
+ * screenshots eat more - and then asserted that reaching the settle took over
+ * three seconds. It could not: there were not three seconds left to spend. So
+ * this measures a roll of its own, from nothing, and it measures the two things
+ * that make a roll a moment rather than a slot machine printing a name:
+ *
+ *   HOW LONG it takes from paying to landing, in simulated seconds.
+ *   WHETHER IT SLOWS, by watching the mark on the plate change and comparing
+ *   the last gap to the first. Linear cycling reads as the animation running
+ *   out of frames; a real deceleration ends with three or four marks the player
+ *   can individually read, and that is where the tension is.
+ *
+ * Pumped at 1/240 rather than the frame delta so a 55-millisecond gap at the
+ * start of the cycle is resolvable at all. Nothing is rendered, so it is free.
+ */
+const cadence = await page.evaluate(() => {
+  const g = window.__SANDS__;
+  const b = g.mysterybox;
+
+  window.__B__.pumpUntil('idle', 60);
+  b.placeAt('A');
+  window.__B__.pumpUntil('idle');
+  g.economy.reset(5000);
+
+  const paidAt = b.buy(b.record);
+  const dt = 1 / 240;
+  const changes = [];
+  let last = window.__B__.token();
+  let t = 0;
+
+  while (b.state.phase !== 'settling' && t < 12) {
+    window.__B__.clock += dt;
+    b.update(dt, window.__B__.clock);
+    t += dt;
+
+    const tok = window.__B__.token();
+    if (tok !== last) { changes.push(+t.toFixed(3)); last = tok; }
+  }
+
+  const gaps = [];
+  for (let i = 1; i < changes.length; i++) gaps.push(+(changes[i] - changes[i - 1]).toFixed(3));
+
+  const head = gaps.slice(0, 3);
+  const tail = gaps.slice(-3);
+  const avg = (a) => a.reduce((s, v) => s + v, 0) / Math.max(1, a.length);
+
+  return {
+    paid: paidAt === true,
+    secondsToLand: +t.toFixed(2),
+    landedOn: b.state.offer,
+    showing: window.__B__.token(),
+    marks: changes.length,
+    firstGaps: head,
+    lastGaps: tail,
+    slowdown: +(avg(tail) / Math.max(0.001, avg(head))).toFixed(2),
+    // The last few have to be individually readable. A quarter of a second is
+    // about the floor for "I saw that one go past" at this size.
+    gaps,
+    finalGap: gaps.length ? gaps[gaps.length - 1] : 0,
+    // Never speeds back up. The tolerance is TWO SAMPLE STEPS and it has to be:
+    // a gap found by polling at 1/240 is only known to within one step at each
+    // end, so two adjacent 55-millisecond gaps at the head of the cycle can
+    // legitimately measure 0.058 and 0.054 while the schedule that produced
+    // them is flat. Anything tighter is testing the sampler.
+    monotonic: gaps.every((v, i) => i === 0 || v >= gaps[i - 1] - (1 / 120)),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // 5. take it. The weapon has to end up IN THE HANDS, not in an inventory.
@@ -583,17 +884,58 @@ const goingCold = await page.evaluate(async () => {
   b.buy(b.record);
   window.__B__.pumpUntil('cooling', 20);
 
-  // A third of the way in: the scarab is clear of the chest and the chest is
-  // still there. Any later and the photograph is of an empty plinth.
-  window.__B__.pump(0.75);
+  /**
+   * READ THE BANNER HERE, on the synchronous frame the lid drops on.
+   *
+   * The notice element is ONE SLOT shared by every system that has something to
+   * say, and the wave director is the loudest of them: read two rendered frames
+   * later this came back "WAVE 1", which is not the chest failing to speak, it
+   * is the chest having been spoken over. The pump is synchronous, so nothing
+   * else can have run between the transition into `cooling` and this line.
+   */
+  const banner = document.getElementById('notice').textContent;
+
+  // A quarter of the way in: the scarab is clear of the chest and the chest is
+  // still there. Any later and the photograph is of an empty plinth - and the
+  // rendered frames below are themselves simulated time, so this leaves room
+  // for the eight of them that follow.
+  window.__B__.pump(0.60);
+
+  /**
+   * TWO CAMERAS, because the moment says two things and they are said at
+   * different distances.
+   *
+   * The PROMPT is said to whoever is standing at the chest, which is exactly
+   * where the player who just spent 950 gold is standing. ui/interact.js reaches
+   * 5.5 metres and casts from the crosshair, so a camera six metres back and
+   * pitched thirty degrees up - which is what this section used to do, to frame
+   * the scarab - is aimed at a wall three metres above a fixture it is already
+   * out of range of. It read an empty prompt and called the go-cold moment
+   * silent. It is not silent; nobody was standing where it speaks.
+   *
+   * The NOTICE is the other half, and it is the half that carries across the
+   * room: systems/mysterybox.js posts THE CHEST OF THE NAMELESS HAS MOVED to
+   * the banner the instant the lid drops, so a player who has already run does
+   * not simply find the plinth empty next lap.
+   */
+  window.__B__.face(b.record.x, b.record.z, b.record.rot || 0, 3.6, 0.02);
+  await window.__B__.frames(2);
+
+  const said = {
+    candidate: g.interacts.candidate && g.interacts.candidate.type,
+    prompt: document.getElementById('prompt').textContent,
+    deny: document.getElementById('prompt').classList.contains('deny'),
+    notice: banner,
+  };
+
+  // Now stand off and look up, for the photograph of the scarab leaving.
   window.__B__.face(b.record.x, b.record.z, b.record.rot || 0, 6.0, 0.30);
   await window.__B__.frames(3);
 
   return {
     spawnBefore,
     phase: b.state.phase,
-    prompt: document.getElementById('prompt').textContent,
-    deny: document.getElementById('prompt').classList.contains('deny'),
+    ...said,
   };
 });
 
@@ -638,7 +980,6 @@ for (const spawn of ['A', 'B', 'C']) {
   }, spawn);
 
   const shot = await shoot(`box-07-${spawn}-present`, `spawn ${spawn}: the chest, from 6.5m`);
-  const patch = await page.evaluate((r) => window.__B__.luma(r), CENTRE);
 
   // The same camera, with the chest somewhere else. This is the control, and it
   // is the whole measurement: a fixture is findable if it changes the frame.
@@ -655,20 +996,35 @@ for (const spawn of ['A', 'B', 'C']) {
   }, spawn);
 
   const emptyShot = await shoot(`box-08-${spawn}-empty`, `spawn ${spawn}: the same view, plinth only`);
-  const emptyPatch = await page.evaluate((r) => window.__B__.luma(r), CENTRE);
+
+  /**
+   * The per-pixel A/B is the number that decides this, and the patch ratio
+   * beside it is context.
+   *
+   * A ratio of patch means is a measurement of the ROOM as much as of the
+   * fixture. The Great Gallery is a lit hall and the Hall of Offerings is not,
+   * so the identical chest scores 2.1 in one and 1.3 in the other while being
+   * equally impossible to walk past in both. Worse, the ratio REWARDED the one
+   * defect worth fixing: a chest whose own lamp clipped it to white scored 2.0
+   * everywhere, and dragging it back to a readable object cost it half its
+   * score. Counting the pixels the fixture changed, and by how much, cannot be
+   * gamed that way and means the same thing in a dark room and a lit one.
+   */
+  const changed = diff(shot.img, emptyShot.img, CENTRE);
 
   findability.push({
     spawn,
     room: withBox.room,
     movedTo: without.movedTo,
-    frameWith: shot.meanLuma,
-    frameWithout: emptyShot.meanLuma,
-    patchWith: patch.meanLuma,
-    patchWithout: emptyPatch.meanLuma,
-    patchPeakWith: patch.peak,
-    patchPeakWithout: emptyPatch.peak,
-    delta: +(patch.meanLuma - emptyPatch.meanLuma).toFixed(2),
-    ratio: +(patch.meanLuma / Math.max(0.01, emptyPatch.meanLuma)).toFixed(2),
+    frameWith: shot.frame.meanLuma,
+    frameWithout: emptyShot.frame.meanLuma,
+    patchWith: shot.patch.meanLuma,
+    patchWithout: emptyShot.patch.meanLuma,
+    patchClip: shot.patch.clip,
+    delta: +(shot.patch.meanLuma - emptyShot.patch.meanLuma).toFixed(2),
+    ratio: +(shot.patch.meanLuma / Math.max(0.01, emptyShot.patch.meanLuma)).toFixed(2),
+    changedPct: changed.changedPct,
+    lift: changed.lift,
   });
 }
 
@@ -687,28 +1043,65 @@ for (const spawn of ['A', 'B', 'C']) {
     window.__B__.pumpUntil('idle');
     g.economy.reset(5000);
 
+    /**
+     * STAND THERE FIRST. This ordering is the assertion, not a convenience.
+     *
+     * systems/mysterybox.js aims the plate once, at the instant the roll lands,
+     * at whoever is standing in front of the chest - deliberately, because a
+     * plate that tracks the camera every frame is a billboard and a billboard in
+     * a room made of stone reads as a bug. This section used to pull, land, and
+     * THEN teleport the camera into place, which meant every photograph was of a
+     * plate aimed at the previous spawn's camera position: correct code,
+     * meaningless shot. Move first, then buy.
+     */
+    const rec = b.record;
+    window.__B__.face(rec.x, rec.z, rec.rot || 0, 4.6, 0.16);
+    await window.__B__.frames(2);
+
     b.buy(b.record);
     window.__B__.pumpUntil('settling');
     const reached = b.state.phase;
     window.__B__.pump(0.85);
 
-    const rec = b.record;
-    window.__B__.face(rec.x, rec.z, rec.rot || 0, 4.6, 0.16);
     await window.__B__.frames(3);
 
     return {
       spawn: b.state.spawn,
       room: g.spaces.roomId,
       reached,
+      ...window.__B__.markFacing(),
       phase: b.state.phase,
       offer: b.state.offer,
+      showing: window.__B__.token(),
       prompt: document.getElementById('prompt').textContent,
     };
   }, spawn);
 
   const shot = await shoot(`box-09-${spawn}-reveal`, `spawn ${spawn}: the reveal, in its own room`);
-  const patch = await page.evaluate((r) => window.__B__.luma(r), CENTRE);
-  perSpawn.push({ ...s, meanLuma: shot.meanLuma, patch: patch.meanLuma, peak: patch.peak });
+
+  /**
+   * READABLE, not merely bright. This is the check that had nothing behind it.
+   *
+   * The old one asked whether the reveal patch was over 12 mean luminance, and
+   * for a fortnight it was over 180 - because the plate, the mark, the beam and
+   * the chest were all clipping together into one white rectangle. You could
+   * not tell a bolt rifle from a Sunspear in any of the three photographs, and
+   * every state assertion around it was green. So:
+   *
+   *   `clip` is the fraction of the patch pushed past 248. A weapon mark is a
+   *   shape; a flare is an area. This ran at 1.0-1.1% and now runs near 0.15%.
+   *
+   *   `spread` is the 90th percentile minus the 10th. Gold glyph on dark plate
+   *   is a wide histogram. A white blob is a narrow one sitting at the top.
+   */
+  perSpawn.push({
+    ...s,
+    meanLuma: shot.frame.meanLuma,
+    patch: shot.patch.meanLuma,
+    peak: shot.patch.peak,
+    clip: shot.patch.clip,
+    spread: shot.patch.spread,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -733,7 +1126,7 @@ const unpowered = await page.evaluate(async () => {
 });
 
 const darkShot = await shoot('box-10-unpowered-A', 'spawn A with the Kindling cold: still findable');
-const darkPatch = await page.evaluate((r) => window.__B__.luma(r), CENTRE);
+const darkPatch = darkShot.patch;
 
 await browser.close();
 
@@ -756,6 +1149,7 @@ section('cannot afford', broke);
 section('pulled', pulled);
 section('rolling', { ...rolling, patch: rollPatch });
 section('settled', { ...settled, patch: revealPatch });
+section('roll cadence', cadence);
 section('taken', taken);
 section('left it', leftIt);
 section('go cold', cold);
@@ -763,7 +1157,7 @@ section('going cold frame', goingCold);
 section('moved', moved);
 section('findability', findability);
 section('per spawn reveal', perSpawn);
-section('unpowered', { ...unpowered, patch: darkPatch, frame: darkShot });
+section('unpowered', { ...unpowered, patch: darkPatch, frame: darkShot.frame });
 
 console.log('--- frames ---');
 for (const s of shots) {
@@ -808,13 +1202,20 @@ const checks = {
 
   'the roll runs':                   rolling.phase === 'rolling',
   'the roll says so':                /STIRS/.test(rolling.prompt) && rolling.deny === false,
-  'the roll settles':                settled.reached === 'settling' && settled.spent > 3,
+  'the roll settles':                settled.reached === 'settling',
   'it lands on what was drawn':      settled.landedOnDraw === true,
   'the prize is in the pool':        settled.inPool === true,
   'the prize is never the pistol':   settled.notThePistol === true,
   'the reveal names the weapon':     /^TAKE THE /.test(settled.prompt) && settled.deny === false,
   'the reveal shows a countdown':    /- \d+ +\[F\]$/.test(settled.prompt),
   'the offer is a real window':      settled.offerLeft > 4,
+
+  // The roll, measured on its own. See the note above section 4b.
+  'the roll is a real moment':       cadence.paid === true && cadence.secondsToLand > 3,
+  'the marks really cycle':          cadence.marks >= 12,
+  'the cycle slows into it':         cadence.slowdown > 3 && cadence.monotonic === true,
+  'the last marks are readable':     cadence.finalGap > 0.18,
+  'and it stops on the prize':       cadence.showing === cadence.landedOn,
 
   'taking it grants the weapon':     taken.owned === true,
   'taking it puts it in hand':       taken.inHand === true,
@@ -844,14 +1245,32 @@ const checks = {
 
   'going cold is a red prompt':      goingCold.phase === 'cooling' && goingCold.deny === true,
   'going cold says so':              /GOES COLD/.test(goingCold.prompt),
+  // Across the room as well as at the chest. A player who has already run from
+  // the plinth is the one who most needs telling.
+  'the room is told it has moved':   /HAS MOVED/.test(goingCold.notice),
   'the chest actually moved':        moved.different === true,
   'one chest awake after the move':  moved.onlyOneAwake === 1,
   'the new placement is fresh':      moved.pullsReset === true && moved.freshThreshold === true,
 
   'the chest lights its own spot':   findability.every((f) => f.delta > 3),
   'and by a real multiple':          findability.every((f) => f.ratio > 1.25),
+  // The A/B that means the same thing in a dark hall and a lit one.
+  'it changes the frame it is in':   findability.every((f) => f.changedPct > 3),
+  'and changes it by a real amount': findability.every((f) => f.lift > 25),
   'no spawn is a black hole':        findability.every((f) => f.patchWith > 8),
+  'no spawn is a white hole':        findability.every((f) => f.patchClip < 0.5),
+
   'the reveal reads at every spawn': perSpawn.every((p) => p.reached === 'settling' && p.patch > 12),
+  'the reveal is not a flare':       perSpawn.every((p) => p.clip < 0.5 && p.peak > 200),
+  'the mark has shape on it':        perSpawn.every((p) => p.spread > 90),
+  'the plate shows the prize':       perSpawn.every((p) => p.showing === p.offer),
+  // Turned TOWARDS whoever paid for it, at every spawn. `facing` is the plate's
+  // own normal against the direction to the camera; the half-turn bug put this
+  // at about -1.
+  'the plate faces the buyer':       settled.facing > 0.8
+                                       && perSpawn.every((p) => p.facing > 0.8),
+  'and lands square, not edge-on':   settled.aspect > 1.2
+                                       && perSpawn.every((p) => p.aspect > 1.2),
   'every spawn names its prize':     perSpawn.every((p) => /^TAKE THE /.test(p.prompt)),
   'findable with the map unlit':     darkPatch.meanLuma > 8 && unpowered.powered === false,
 

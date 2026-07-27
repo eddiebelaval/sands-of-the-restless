@@ -163,6 +163,15 @@ export const ROOMS = [
       // tables, so the chest is on the axis the colonnade already draws the eye
       // down and is visible the moment the player clears the debris doorway.
       //
+      // IT FACES ALONG THE AISLE, and the rotation is load-bearing rather than
+      // decorative. At rot 0 the chest faced -Z, straight into the colonnade at
+      // (-32, -152.5): approached from its own front the fixture stood BEHIND a
+      // two-metre column, and the findability measurement said so - the chest
+      // changed its own patch of frame by a factor of 1.10 where the other two
+      // spawns manage 2.0. Turned a quarter, the approach runs down the empty
+      // central aisle with the two colonnade rows flanking it, which is the shot
+      // the note above always claimed this placement had.
+      //
       // The three spawns are A here, B in the Great Gallery and C in the Star
       // Shaft, and their spread is the mechanic rather than a decoration: the
       // chest relocates after four to eight pulls, and one of its three homes is
@@ -170,7 +179,11 @@ export const ROOMS = [
       // through, and one is behind the dearest gate in the pyramid. A player who
       // opened only the west half can be sent somewhere they have not paid to
       // reach, which is what stops the box being a vending machine to camp.
-      { type: 'box', x: -31, z: -149, rot: 0, config: { spawn: 'A', cost: 950 } },
+      {
+        type: 'box',
+        x: -31, z: -149, rot: Math.PI / 2,
+        config: { spawn: 'A', cost: 950 },
+      },
       {
         type: 'wallbuy',
         x: -40, z: -156.6, rot: Math.PI,

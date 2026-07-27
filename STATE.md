@@ -54,39 +54,52 @@ screenshot. Four scored critic rounds never found it because they graded the
 symptom - "materials 5.0", "composition 4.5" - and never asked whether the
 geometry was being drawn at all.
 
+## Shipped
+
+Public as of 2026-07-27.
+
+- Play: https://eddiebelaval.github.io/sands-of-the-restless/
+- Source: https://github.com/eddiebelaval/sands-of-the-restless
+- Write-up: https://id8labs.app/essays/half-unrendered
+
+`main` is the default branch and Pages deploys from it, so a push to main is a
+release. Verify against the LIVE url before calling a deploy good:
+`node test/shot.mjs https://eddiebelaval.github.io/sands-of-the-restless`.
+
 ## Open items, in priority order
 
-1. **THE HORDE STALLS. Gameplay-breaking.** `test/enemies.mjs` fails
-   `the horde closes on the player`. Wave one closes 16.7m -> 10.3m then stops
-   dead: mean and max distance identical at t=14, t=20 and t=29 simulated
-   seconds, one enemy pinned at 16.96m having never moved. `the horde closes
-   inside too` PASSES and the same run reports a closest of 1.57m, so SOME
-   arrive and others never do - outdoor steering fails where indoor works.
-   Proven unrelated to the palette (reproduces byte-for-byte with the emissive
-   floor at 0.0). Repro probe: `scratchpad/approach.mjs`. Ask which of three
-   bugs it is - failing to path, physically wedged, or never ticked - because
-   they have three different fixes.
-2. **The mystery box is UNVERIFIED.** Committed by the nightly bot at 02:00 from
-   a dying agent, 631 lines plus an 877-line suite. It IS fully wired (main.js
-   32, 174, 188, 607) and its pool includes bolt and sunspear, the two weapons
-   with no other route into the player's hands. Nobody has confirmed it works.
-3. **The pistol pose.** The MK9 camera looks straight down at two hand-BACKS,
+1. **The pistol pose.** The MK9 camera looks straight down at two hand-BACKS,
    which are legitimately smooth vaults, while every piece of finger
-   articulation sits on the far side of the grip where nothing can see it. The
-   dead agent added an unused `hold` parameter to `gripHand`; the hook exists,
-   the pose change does not. `wrap` and `a0` on the two-handed hold.
-4. **`test/enemies.mjs` is partly blind.** Its `luma()` reads back via
-   `drawImage(renderer.domElement)` with `preserveDrawingBuffer: false`, so it
-   samples a stale or cleared buffer - it reported a sunlit courtyard at luma 7.
-   Its dark-frame gate sits at `meanLuma < 6` and proves nothing.
-   `page.screenshot()` is the correct path.
+   articulation sits on the far side of the grip where nothing can see it. An
+   agent added an unused `hold` parameter to `gripHand` before it died; the hook
+   exists, the pose change does not. `wrap` and `a0` on the two-handed hold.
+   Judge it BY EYE at playing size and judge it early - two rounds here improved
+   every metric and looked worse.
+2. **`test/interior.mjs` and `test/shot.mjs` still carry the blind reader.**
+   Both measure via `drawImage(renderer.domElement)` with
+   `preserveDrawingBuffer: false`, so they sample a stale or cleared buffer, and
+   `interior.mjs` still gates at `meanLuma < 6 || percentLit < 25` - a threshold
+   calibrated AGAINST the broken reader, so it cannot fire. `enemies.mjs` and
+   `mysterybox.mjs` have both been converted to `page.screenshot()` decoded in
+   node; copy that. Real frames measure 99-124 luma, black measures 0.14.
+3. **Spawn distances are short.** With the walkable rectangle at x +/-23.2 and
+   z -33 to 38.4, every out-of-view point is 6-10m behind the player, so the -45
+   view penalty makes the director prefer the player's lap over the 22m band it
+   asks for. One run spawned a boss at 5.9m. That is a tuning call on
+   `SPAWN_NEAR`/`VIEW_COS` with real gameplay blast radius, deliberately not
+   made alongside the stall fix.
+4. **One thin threshold.** `mysterybox.mjs` findability at spawn B sits at
+   1.28-1.29 against a 1.25 gate, +/-0.02 noise. That metric measures the ROOM
+   as much as the fixture and the Great Gallery is a lit hall; it previously
+   scored 2.0 only because the chest was clipping to white. If it flakes, retire
+   that ratio in favour of the per-pixel A/B beside it (`changedPct`, `lift`),
+   which has 10x the margin. Do NOT re-inflate the fixture to pass it.
 5. The canopic-jar puzzle chain is unbuilt. Shrine cap is already data
    (`{base: 4, ceiling: 6}` with `raise()`), so it can lift the cap without
    touching shrines.js.
 6. ~20% of near-surface meshes sit >0.25m above local ground, almost all of it
    the avenue's own architecture at y=0 over a dune floor that swells. Fixing
    means re-seating the finished avenue; judged a worse risk than the defect.
-7. No remote. Nothing pushed. Branch is `feature/enemies-and-horde`.
 
 ## Lessons that cost real time - do not relearn these
 
@@ -128,3 +141,14 @@ geometry was being drawn at all.
 - **The nightly EOD bot commits whatever is in the tree at 02:00.** When agents
   die mid-write, their partial work gets committed unverified. Check
   `git show --stat` on any `chore(eod)` commit before trusting the tree.
+- **A metric can REWARD the defect.** The mystery box fixture was clipping to
+  white, which made it unreadable, and the findability check scored it on mean
+  luminance - so blowing out the highlights made the number go UP. Fixing the
+  flare cost that check half its score. Measure clip fraction and spread next to
+  any brightness metric.
+- **Half the "failures" in a suite can be the suite.** Of six failing box
+  checks, three were harness bugs: an affordability assertion run on a player
+  who genuinely could not afford it, a settle-time assertion that was
+  arithmetically impossible because an earlier section had already spent the
+  time, and a prompt read from 6.0m when the interaction range is 5.5m. Read the
+  assertion before you change the code.
