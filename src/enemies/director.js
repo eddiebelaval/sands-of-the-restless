@@ -89,6 +89,34 @@ const VIEW_COS = Math.cos(0.95);   // about 54 degrees off the view axis
 const CELL = 5;
 const BIG_R = CELL * 0.5;
 
+/**
+ * Resolution of the walk-component field, and the disc it is carved with.
+ *
+ * The step has to be finer than the narrowest gap that counts as a way through,
+ * and the pad has to be at least as fat as the widest thing that has to fit.
+ * The Bound is the widest at 0.60 x 1.24 = 0.74; 0.55 sits between it and the
+ * shambler's 0.40, which is deliberate: over-fat strands a real route, over-thin
+ * declares a route the horde cannot use. Swept at 0.30 / 0.35 / 0.50 step
+ * against 0.45 / 0.75 pad, the courtyard answered 71 reachable spawn points out
+ * of 89 in ALL SIX combinations, so the number below is not balanced on the
+ * resolution.
+ */
+const NAV_STEP = 0.35;
+const NAV_PAD = 0.55;
+
+/**
+ * And the same field again, carved for a god.
+ *
+ * A boss is radius 0.95 at scale 1.9 - 1.81 m, two and a half times the widest
+ * thing in the horde - so "a shambler can walk from here to the player" is not
+ * a promise a colossus can use. Measured before this existed: Anubis placed at
+ * (-16.7, 22.5), a point the 0.55 field calls perfectly reachable because a
+ * mummy fits through a chapel gap in the colonnade, held 2.6 m/s for 1,116 of
+ * 1,200 frames and moved 0.00 m in forty simulated seconds. Wave five ends when
+ * the boss dies; a boss that can neither arrive nor be shot ends the run.
+ */
+const NAV_PAD_BOSS = 1.85;
+
 function createColliderGrid() {
   const buckets = new Map();
   const big = [];
@@ -129,7 +157,8 @@ function createColliderGrid() {
    * nobody would ever work out why the wave had stopped arriving.
    */
   function sync(list) {
-    if (list !== source || list.length !== sourceLen) build(list);
+    if (list !== source || list.length !== sourceLen) { build(list); return true; }
+    return false;
   }
 
   function near(x, z, r) {
@@ -260,6 +289,136 @@ export function createDirector({
   }
 
   /**
+   * WHICH PARTS OF THE COURTYARD CAN WALK TO WHICH.
+   *
+   * The interior has always answered this exactly: its rooms are a graph and
+   * computeReach() walks it door by door, so an enemy is never put down behind
+   * a barrier the player has not bought. The exterior had no equivalent. It had
+   * obstruction(), which samples the straight line and SCORES it - and a
+   * scoring heuristic cannot express "there is no route", only "this one looks
+   * awkward".
+   *
+   * That gap is the bug. Measured on the current tree: 8,647 of 29,447 open
+   * cells in the courtyard are in components the player cannot reach, almost
+   * all of it the sealed pocket outside the colonnade, whose wall run
+   * (x = +/-15, discs r=1.7 every 2.4) meets the north bound at z=38.4 with no
+   * gap and runs unbroken to the temple face at the south. NINETEEN of the
+   * director's own EIGHTY-NINE spawn points sat in that pocket - 21 per cent -
+   * and a 24-sample lottery put 26.5 per cent of wave one into it. An enemy
+   * placed there walks into stone at full speed and never arrives, and the wave
+   * never ends.
+   *
+   * obstruction() saw them, and under-charged: a colonnade wall is THIN, so at
+   * eighteen metres only one of four line samples lands inside it. A solid,
+   * impassable wall therefore scored 0.25, cost 22.5, and lost to the 45-point
+   * penalty for merely being in the player's view. The fix is not a bigger
+   * number on the heuristic - it is answering the question exactly, the way the
+   * interior already does.
+   *
+   * One flood fill over the walkable rectangle, four-connected, run at the
+   * transition alongside the collider grid it reads. About 27,000 cells for the
+   * courtyard; a label lookup at spawn time is two rounds and an index.
+   */
+  let nav = null;
+  let navBoss = null;
+
+  function buildWalkComponents(pad) {
+    const b = world.bounds;
+    const minX = b.minX ?? b.min;
+    const maxX = b.maxX ?? b.max;
+    const minZ = b.minZ ?? b.min;
+    const maxZ = b.maxZ ?? b.max;
+
+    const nx = Math.floor((maxX - minX) / NAV_STEP) + 1;
+    const nz = Math.floor((maxZ - minZ) / NAV_STEP) + 1;
+
+    const label = new Int32Array(nx * nz).fill(-1);
+    const open = new Uint8Array(nx * nz);
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < nz; j++) {
+        if (isClear(minX + i * NAV_STEP, minZ + j * NAV_STEP, pad)) open[j * nx + i] = 1;
+      }
+    }
+
+    // Iterative flood, because a recursive one on 27,000 cells is a stack
+    // overflow on the first courtyard that is mostly open.
+    const stack = [];
+    let next = 0;
+    let main = -1;
+    let mainSize = 0;
+
+    for (let s = 0; s < label.length; s++) {
+      if (!open[s] || label[s] >= 0) continue;
+      const id = next++;
+      let size = 0;
+      stack.length = 0;
+      stack.push(s);
+      label[s] = id;
+
+      while (stack.length) {
+        const k = stack.pop();
+        size++;
+        const i = k % nx;
+        const j = (k / nx) | 0;
+        if (i + 1 < nx && open[k + 1] && label[k + 1] < 0) { label[k + 1] = id; stack.push(k + 1); }
+        if (i > 0 && open[k - 1] && label[k - 1] < 0) { label[k - 1] = id; stack.push(k - 1); }
+        if (j + 1 < nz && open[k + nx] && label[k + nx] < 0) { label[k + nx] = id; stack.push(k + nx); }
+        if (j > 0 && open[k - nx] && label[k - nx] < 0) { label[k - nx] = id; stack.push(k - nx); }
+      }
+
+      if (size > mainSize) { mainSize = size; main = id; }
+    }
+
+    return {
+      pad,
+      components: next,
+      main,
+      /** -1 for outside the field or standing in something solid. */
+      at(x, z) {
+        const i = Math.round((x - minX) / NAV_STEP);
+        const j = Math.round((z - minZ) / NAV_STEP);
+        if (i < 0 || j < 0 || i >= nx || j >= nz) return -1;
+        return label[j * nx + i];
+      },
+
+      /**
+       * The same question asked of something that is already standing there.
+       *
+       * The field is carved with a disc slightly fatter than the body it is
+       * carved for - 0.55 against the shambler's 0.40 - so an actor
+       * legitimately hugging a wall sits in a cell the field calls solid.
+       * Asking `at` alone would report it stranded when it is merely close to
+       * the stone. Widening by two cells - 0.7 m, more than either margin -
+       * answers what was meant.
+       */
+      near(x, z) {
+        const direct = this.at(x, z);
+        if (direct >= 0) return direct;
+
+        const i0 = Math.round((x - minX) / NAV_STEP);
+        const j0 = Math.round((z - minZ) / NAV_STEP);
+        for (let r = 1; r <= 2; r++) {
+          for (let di = -r; di <= r; di++) {
+            for (let dj = -r; dj <= r; dj++) {
+              const i = i0 + di, j = j0 + dj;
+              if (i < 0 || j < 0 || i >= nx || j >= nz) continue;
+              const v = label[j * nx + i];
+              if (v >= 0) return v;
+            }
+          }
+        }
+        return -1;
+      },
+      /** How many of a point list share the player's island. Reporting only. */
+      countIn(list, id) {
+        let n = 0;
+        for (const p of list) if (this.at(p.x, p.z) === id) n++;
+        return n;
+      },
+    };
+  }
+
+  /**
    * The courtyard has no authored spawn points, so they are found rather than
    * declared: a coarse lattice over the playable rectangle, every node tested
    * against the live collider set. Doing it once at the transition rather than
@@ -379,11 +538,30 @@ export function createDirector({
    * distance band beats one that is not; a random sample of the candidate set
    * is enough to find a good one without walking eight hundred points.
    */
-  function pickPoint() {
+  function pickPoint(wide = false) {
     if (!points.length) return null;
 
     const interior = spaces.active === 'interior';
     if (interior) computeReach(spaces.roomId);
+
+    // Which body has to make the walk. A god is 1.81 m wide against the horde's
+    // 0.74, and the two answer differently: there are gaps in the colonnade a
+    // shambler uses and a colossus cannot.
+    const field = wide ? navBoss : nav;
+
+    // The island the player is standing on. Read per pick rather than cached:
+    // the player moves, and the field is rebuilt under them whenever the
+    // collider set changes. A player somehow inside geometry reads -1, which
+    // disables the term rather than rejecting the whole map.
+    //
+    // For the wide field the player almost never stands in an open cell - the
+    // avenue is wide but the player hugs walls - so it falls back to the
+    // largest component, which on any sane map is the one the fight is in.
+    const island = field
+      ? (field.near(player.position.x, player.position.z) >= 0
+        ? field.near(player.position.x, player.position.z)
+        : field.main)
+      : -1;
 
     // Forward is (-sin yaw, 0, -cos yaw), the same convention the player
     // controller and the camera rig use.
@@ -406,9 +584,18 @@ export function createDirector({
       score -= Math.abs(d - (SPAWN_NEAR + 9)) * 0.6;
       if (d > SPAWN_FAR) score -= 60;
 
+      // NO ROUTE AT ALL. The largest term in the function by two orders of
+      // magnitude, and still a score rather than a veto, for the reason every
+      // other term is: a filter that finds nothing has to fall back on
+      // something it already rejected. At a thousand it can only win when the
+      // whole sample was unreachable, which on a sane map does not happen.
+      if (field && island >= 0 && field.at(p.x, p.z) !== island) score -= 1000;
+
       // Heavier than the view penalty on purpose. An enemy the player can see
       // arrive is a small cost; an enemy that has to walk round a colonnade to
-      // arrive at all is the round not ending.
+      // arrive at all is the round not ending. This stays as the WITHIN-island
+      // term - long way round versus short - now that no route at all is
+      // answered exactly above.
       score -= obstruction(p.x, p.z) * 90;
 
       // In view is a heavy penalty, not a veto: in a small chamber with the
@@ -589,7 +776,7 @@ export function createDirector({
 
     if (boss) {
       const god = bosses.forWave(state.wave);
-      const point = pickPoint();
+      const point = pickPoint(true);
       if (point) {
         god.spawn(point.x, point.z, ctx, 1 + (state.wave / 5 - 1) * 0.55);
         const slot = takeEmitter();
@@ -619,6 +806,18 @@ export function createDirector({
     ctx.walls = world.walls;
 
     grid.build(world.colliders);
+
+    // Exterior only. The interior already answers reachability EXACTLY through
+    // its room graph, and it answers a question a flood fill cannot: a barrier
+    // that is shut now can be bought open mid-wave, so geometry alone would
+    // strand rooms the player is about to unlock. Measured, a geometric fill of
+    // the interior cut its 21 authored points to 3 for exactly that reason.
+    nav = null;
+    navBoss = null;
+    if (spaces.active !== 'interior') {
+      nav = buildWalkComponents(NAV_PAD);
+      navBoss = buildWalkComponents(NAV_PAD_BOSS);
+    }
 
     points = spaces.active === 'interior' ? buildInteriorPoints() : buildExteriorPoints();
     pointSpace = spaces.active;
@@ -651,7 +850,15 @@ export function createDirector({
 
     // A bought door splices colliders out of the live array; the grid has to
     // notice or the horde keeps walking into a doorway that is already open.
-    grid.sync(world.colliders);
+    // And if the grid changed, so did what can walk to what: an opened barrier
+    // joins two islands, and a placement field that did not notice would keep
+    // refusing to spawn in a wing the player has just paid to open. Rebuilding
+    // costs one hitch on the frame a door is bought, which is a frame the
+    // player is already watching an animation on.
+    if (grid.sync(world.colliders) && nav) {
+      nav = buildWalkComponents(NAV_PAD);
+      navBoss = buildWalkComponents(NAV_PAD_BOSS);
+    }
 
     ctx.dt = dt;
     ctx.elapsed = elapsed;
@@ -749,6 +956,22 @@ export function createDirector({
       return place(actor, x, z);
     },
 
+    /**
+     * Could something standing here be walked to the player?
+     *
+     * True wherever the question does not apply - the interior, which answers
+     * it through its room graph instead, and a player who is somehow not on the
+     * field at all. The harness asserts this over every live actor, because a
+     * horde that arrives on average while one of its members is sealed in a
+     * pocket is the exact failure this field was built to end.
+     */
+    reachesPlayer(x, z) {
+      if (!nav) return true;
+      const island = nav.near(player.position.x, player.position.z);
+      if (island < 0) return true;
+      return nav.near(x, z) === island;
+    },
+
     /** Skip the breather. The harness and the debug console both want this. */
     forceWave(n) {
       clearLive();
@@ -784,6 +1007,21 @@ export function createDirector({
         pooled,
         cap: LIVE_CAP,
         spawnPoints: points.length,
+        // How many of them the player could actually be walked to from. The
+        // gap between these two numbers IS the bug this field was added for,
+        // so it is reported rather than left implicit.
+        spawnPointsReachable: nav
+          ? nav.countIn(points, nav.near(player.position.x, player.position.z))
+          : points.length,
+        // The same count for a god, which is a smaller number on any map with a
+        // colonnade in it. A wave-five point set that has collapsed to nothing
+        // is a boss wave that cannot start.
+        spawnPointsForBoss: navBoss
+          ? navBoss.countIn(points, navBoss.near(player.position.x, player.position.z) >= 0
+            ? navBoss.near(player.position.x, player.position.z)
+            : navBoss.main)
+          : points.length,
+        walkComponents: nav ? nav.components : 0,
         space: pointSpace,
         killed: state.killed,
         boss: state.boss ? state.boss.name : null,

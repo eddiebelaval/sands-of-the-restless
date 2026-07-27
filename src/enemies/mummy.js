@@ -306,6 +306,116 @@ function avoid(pos, dirX, dirZ, radius, look, feetY, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// wedges
+// ---------------------------------------------------------------------------
+
+/**
+ * WHY AVOIDANCE IS NOT ENOUGH, AND WHAT THE MISSING HALF IS.
+ *
+ * resolveAgainstWorld() has always returned whether it touched anything, and
+ * its own doc says the caller uses that "to decide whether it is wedged and
+ * should give up on its current heading". No caller ever read it. The hook
+ * existed; the behaviour did not.
+ *
+ * The failure it was meant to catch, measured per frame on wave one: a shambler
+ * pressed flat against the outside of the colonnade at (16.74, 30.34), holding
+ * st.v at the full 2.25 m/s for 635 consecutive ticks and moving 0.000 m on 606
+ * of them. It was ticked, it was pathing, it was not staggered, and it never
+ * moved, because avoid() SUMS a sideways force per collider and the two discs
+ * it was between - (15, 31.5) and (15, 29.1) - sat on opposite sides of its
+ * heading. Their contributions cancelled to nothing. A continuous wall run is
+ * built out of overlapping discs on purpose, so this is not a corner case on
+ * this map: it is what walking into any wall square-on does.
+ *
+ * "Frozen" and "wedged" also look identical on screen, because the walk phase
+ * is advanced by real horizontal velocity, so the actor stops animating too.
+ *
+ * The escape is a committed detour, not a per-frame nudge. Steering sideways
+ * only while the wedge is detected produces a stutter: the moment it slides it
+ * is making progress, the bias drops, and it turns back into the wall. So a
+ * wedge opens a DETOUR with a fixed duration and a fixed hand, and the hand is
+ * chosen by asking the map which way the obstacle ends.
+ */
+export const WEDGE_TRIP = 0.35;   // seconds of no ground made before it counts
+export const DETOUR_S = 2.4;      // how long a chosen hand is committed to
+export const DETOUR_BIAS = 1.7;   // sideways weight while detouring, vs 1.0 forward
+const DETOUR_PROBE = 3.0;         // metres between probes along the tangent
+const DETOUR_REACH = 5;           // how many probes, so 15 m of wall
+
+/** Is a disc of this radius free of the world at this point? */
+function pointClear(x, z, pad, feetY, ctx) {
+  if (ctx.walls) {
+    const head = feetY + ctx.actorHeight;
+    for (const w of ctx.walls) {
+      if (head <= w.y0 || feetY >= w.y1) continue;
+      if (Math.abs(x - w.x) < w.w / 2 + pad && Math.abs(z - w.z) < w.d / 2 + pad) return false;
+    }
+  }
+
+  const n = ctx.colliderGrid.near(x, z, pad);
+  const list = ctx.colliderGrid.out;
+  for (let i = 0; i < n; i++) {
+    const c = list[i];
+    const base = c.y0 === undefined ? groundAt(ctx, c.x, c.z, feetY) : c.y0;
+    if (feetY - base > c.h) continue;
+    const dx = x - c.x, dz = z - c.z;
+    const want = c.r + pad;
+    if (dx * dx + dz * dz < want * want) return false;
+  }
+  return true;
+}
+
+/**
+ * Which hand walks off the end of whatever is in the way.
+ *
+ * Not pathfinding, and it does not need to be. It steps sideways along the
+ * obstruction and, at each step, reaches one body-length back INTO the blocked
+ * heading. The first side where that reach comes up clear is the side the wall
+ * ends on. Probing the tangent alone would not do: outside a sixty-metre
+ * colonnade both tangents are wide open, and the one with more room is the one
+ * that leads away from the gap.
+ *
+ * Runs once when a detour opens, not per frame.
+ */
+export function pickDetourSide(pos, dirX, dirZ, radius, feetY, ctx) {
+  const tanX = -dirZ, tanZ = dirX;
+  const pad = radius + 0.15;
+  const ahead = radius + 1.0;
+
+  let best = 1;
+  let bestReach = Infinity;
+  let bestOpen = -1;
+
+  for (let s = 0; s < 2; s++) {
+    const side = s === 0 ? 1 : -1;
+    let cleared = Infinity;
+    let openTo = 0;
+
+    for (let i = 1; i <= DETOUR_REACH; i++) {
+      const step = i * DETOUR_PROBE;
+      const bx = pos.x + tanX * side * step;
+      const bz = pos.z + tanZ * side * step;
+      // The detour itself has to be walkable, or the answer is about a place
+      // this actor can never stand.
+      if (!pointClear(bx, bz, pad, feetY, ctx)) break;
+      openTo = step;
+      if (pointClear(bx + dirX * ahead, bz + dirZ * ahead, pad, feetY, ctx)) { cleared = step; break; }
+    }
+
+    // Nearest end wins. With no end on either side, the side with more room to
+    // work in wins, which at least keeps it moving while the horde behind it
+    // reshuffles.
+    if (cleared < bestReach || (cleared === bestReach && openTo > bestOpen)) {
+      bestReach = cleared;
+      bestOpen = openTo;
+      best = side;
+    }
+  }
+
+  return best;
+}
+
+// ---------------------------------------------------------------------------
 // materials
 // ---------------------------------------------------------------------------
 
@@ -780,6 +890,17 @@ export function createEnemy(spec, index) {
     groanIn: 0,
     footIn: 0,
     speedScale: 1,
+
+    // Wedge escape. `wedge` is seconds of holding velocity without covering
+    // ground, `detour` is seconds left on a committed sideways heading,
+    // `detourSide` the hand it committed to, `detourFrom` the distance to the
+    // player when it opened, and `forceSide` a hand the NEXT detour must take
+    // because the last one bought nothing.
+    wedge: 0,
+    detour: 0,
+    detourSide: 1,
+    detourFrom: 0,
+    forceSide: 0,
   };
   actor.st = st;
 
@@ -809,6 +930,8 @@ export function createEnemy(spec, index) {
     st.speedScale = speedScale;
     st.groanIn = 1.5 + Math.random() * 4;
     st.footIn = 0;
+    st.wedge = st.detour = st.detourFrom = st.forceSide = 0;
+    st.detourSide = 1;
 
     st.feetY = groundAt(ctx, x, z, undefined);
     rig.group.position.set(x, st.feetY, z);
@@ -944,6 +1067,14 @@ export function createEnemy(spec, index) {
     _dir.x += av.x * 1.5;
     _dir.z += av.z * 1.5;
 
+    // A committed detour outranks both, and is taken square off the line to the
+    // player rather than off the steered heading: the steered heading is the
+    // one that is already jammed.
+    if (st.detour > 0) {
+      _dir.x += -(tz / dist) * st.detourSide * DETOUR_BIAS;
+      _dir.z += (tx / dist) * st.detourSide * DETOUR_BIAS;
+    }
+
     const dl = Math.hypot(_dir.x, _dir.z) || 1;
     _dir.x /= dl; _dir.z /= dl;
 
@@ -986,6 +1117,7 @@ export function createEnemy(spec, index) {
     st.vx += (_dir.x * want - st.vx) * Math.min(1, accel);
     st.vz += (_dir.z * want - st.vz) * Math.min(1, accel);
 
+    const wasX = pos.x, wasZ = pos.z;
     pos.x += st.vx * dt;
     pos.z += st.vz * dt;
 
@@ -1003,6 +1135,41 @@ export function createEnemy(spec, index) {
 
     resolveAgainstWorld(pos, actor.radius * spec.scale, st.feetY, ctx);
     pos.y = st.feetY;
+
+    // --- wedged? ------------------------------------------------------------
+    //
+    // Measured on DISPLACEMENT, not on whether resolveAgainstWorld touched
+    // something. Touching is normal: the horde grinds past pillars and along
+    // walls constantly and arrives perfectly well. The thing that ends a round
+    // is holding a heading and covering no ground, and that is one subtraction.
+    {
+      const moved = Math.hypot(pos.x - wasX, pos.z - wasZ);
+      const wanted = Math.hypot(st.vx, st.vz) * dt;
+
+      if (st.detour > 0) {
+        st.detour -= dt;
+        if (st.detour <= 0) {
+          // A hand that bought nothing does not get a second turn. Without
+          // this an actor can commit to the long way round a sixty-metre wall
+          // forever, which is the same round-never-ends symptom with a longer
+          // period.
+          st.forceSide = dist > st.detourFrom - 0.75 ? -st.detourSide : 0;
+          st.wedge = 0;
+        }
+      } else {
+        if (wanted > 1e-3 && moved < wanted * 0.45) st.wedge += dt;
+        else st.wedge = Math.max(0, st.wedge - dt * 2.5);
+
+        if (st.wedge >= WEDGE_TRIP) {
+          st.detourSide = st.forceSide
+            || pickDetourSide(pos, tx / dist, tz / dist, actor.radius * spec.scale, st.feetY, ctx);
+          st.forceSide = 0;
+          st.detour = DETOUR_S;
+          st.detourFrom = dist;
+          st.wedge = 0;
+        }
+      }
+    }
 
     // --- facing -------------------------------------------------------------
     // Turn toward the player rather than toward the steering direction. An

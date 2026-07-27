@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import { chamferedBox } from '../world/geometry.js';
 import {
   MUMMY, buildHumanoid, animateHumanoid, groundAt, resolveAgainstWorld,
+  pickDetourSide, WEDGE_TRIP, DETOUR_S, DETOUR_BIAS,
 } from './mummy.js';
 
 const _v = new THREE.Vector3();
@@ -475,6 +476,22 @@ function createGod(god, effects) {
     summonWanted: 0,
     deathT: 0,
     toppleX: 0, toppleZ: 0,
+
+    // Wedge escape, the same one the horde runs. A god needs it MORE than a
+    // shambler does, not less: it has no local avoidance at all - it steers
+    // straight at the player by design, because a colossus that side-steps
+    // scenery reads as timid - and it is two to three times wider, so the walk
+    // field that clears a route for a mummy is not a promise it can use the
+    // same gap. Measured before this existed: Anubis placed at (-16.7, 22.5),
+    // 18.29 m out and on the player's own island, held 2.6 m/s for 1,116 of
+    // 1,200 frames and covered 0.00 m in forty simulated seconds. Wave five
+    // ends when the boss dies, and a boss behind a wall can neither arrive nor
+    // be shot, so that is the round over permanently.
+    wedge: 0,
+    detour: 0,
+    detourSide: 1,
+    detourFrom: 0,
+    forceSide: 0,
   };
   actor.st = st;
 
@@ -514,6 +531,8 @@ function createGod(god, effects) {
     st.tLeft = 0;
     st.nextAbility = 4.5;
     st.deathT = 0;
+    st.wedge = st.detour = st.detourFrom = st.forceSide = 0;
+    st.detourSide = 1;
 
     st.feetY = groundAt(ctx, x, z, undefined);
     rig.group.position.set(x, st.feetY, z);
@@ -741,16 +760,60 @@ function createGod(god, effects) {
         || st.phaseName === 'tell' || st.phaseName === 'recover';
       const want = busy || dist < reach * 0.9 ? 0 : spec.speed;
       const a = Math.min(1, spec.accel * dt);
-      st.vx += ((tx / dist) * want - st.vx) * a;
-      st.vz += ((tz / dist) * want - st.vz) * a;
+
+      // Straight at the player, unless it is jammed, in which case square off
+      // the line to the player until it is round whatever is in the way. The
+      // detour rides on the VELOCITY target rather than on the facing, so the
+      // colossus keeps looking at the player while it walks the wall - the same
+      // separation the horde makes between where it is going and where it is
+      // looking, and for the same reason.
+      let dx = tx / dist, dz = tz / dist;
+      if (st.detour > 0) {
+        dx += -(tz / dist) * st.detourSide * DETOUR_BIAS;
+        dz += (tx / dist) * st.detourSide * DETOUR_BIAS;
+        const l = Math.hypot(dx, dz) || 1;
+        dx /= l; dz /= l;
+      }
+
+      st.vx += (dx * want - st.vx) * a;
+      st.vz += (dz * want - st.vz) * a;
     }
 
+    const wasX = p.x, wasZ = p.z;
     p.x += st.vx * dt;
     p.z += st.vz * dt;
 
     st.feetY = groundAt(ctx, p.x, p.z, st.feetY);
     resolveAgainstWorld(p, spec.radius * spec.scale, st.feetY, ctx);
     p.y = st.feetY;
+
+    // --- wedged? ---------------------------------------------------------------
+    // Not while charging: a charge is SUPPOSED to end against a wall, and the
+    // ability's own recover phase is what gets it out of that.
+    if (!charging) {
+      const moved = Math.hypot(p.x - wasX, p.z - wasZ);
+      const wanted = Math.hypot(st.vx, st.vz) * dt;
+
+      if (st.detour > 0) {
+        st.detour -= dt;
+        if (st.detour <= 0) {
+          st.forceSide = dist > st.detourFrom - 0.75 ? -st.detourSide : 0;
+          st.wedge = 0;
+        }
+      } else {
+        if (wanted > 1e-3 && moved < wanted * 0.45) st.wedge += dt;
+        else st.wedge = Math.max(0, st.wedge - dt * 2.5);
+
+        if (st.wedge >= WEDGE_TRIP) {
+          st.detourSide = st.forceSide
+            || pickDetourSide(p, tx / dist, tz / dist, spec.radius * spec.scale, st.feetY, ctx);
+          st.forceSide = 0;
+          st.detour = DETOUR_S;
+          st.detourFrom = dist;
+          st.wedge = 0;
+        }
+      }
+    }
 
     const wantYaw = Math.atan2(tx, tz);
     let d = wantYaw - rig.group.rotation.y;

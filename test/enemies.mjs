@@ -29,6 +29,7 @@
  */
 
 import { chromium } from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/playwright/index.mjs';
+import sharp from '/Users/eddiebelaval/Development/.worktrees/parallax-hotfix-realtime/node_modules/sharp/lib/index.js';
 import { resolveChrome } from './chrome.mjs';
 import { mkdirSync } from 'node:fs';
 
@@ -223,30 +224,6 @@ window.__E__ = {
     };
   },
 
-  /** Mean luminance of the rendered canvas. The black-frame gate. */
-  luma() {
-    const c = window.__SANDS__.renderer.domElement;
-    const sc = document.createElement('canvas');
-    sc.width = c.width; sc.height = c.height;
-    const ctx = sc.getContext('2d', { willReadFrequently: true });
-
-    return new Promise((resolve) => requestAnimationFrame(() => {
-      ctx.drawImage(c, 0, 0);
-      const d = ctx.getImageData(0, 0, sc.width, sc.height).data;
-      let sum = 0, n = 0, lit = 0;
-      const rows = Math.floor(sc.height * 0.66);
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < sc.width; x += 4) {
-          const i = (y * sc.width + x) * 4;
-          const l = (d[i] + d[i + 1] + d[i + 2]) / 3;
-          sum += l; n++;
-          if (l > 10) lit++;
-        }
-      }
-      resolve({ meanLuma: +(sum / n).toFixed(2), percentLit: +((lit / n) * 100).toFixed(1) });
-    }));
-  },
-
   mem() {
     const g = window.__SANDS__;
     return {
@@ -264,10 +241,54 @@ window.__E__ = {
 
 const shots = [];
 
+/**
+ * THE BLACK-FRAME GATE READS THE FRAME THAT WAS ACTUALLY CAPTURED.
+ *
+ * The previous reader ran inside the page: it drew `renderer.domElement` into a
+ * 2D canvas and sampled that. With `preserveDrawingBuffer: false` - which is
+ * what this renderer is built with, and what it should be built with - the
+ * WebGL back buffer is not guaranteed to hold anything after the compositor has
+ * taken it, so `drawImage` samples whatever is left, which is a cleared buffer
+ * as often as not. It reported a sunlit courtyard at luma 7. The dark-frame
+ * gate was then calibrated to `meanLuma < 6` so that the harness would go
+ * green - a threshold set to accommodate a broken instrument, which is the
+ * project's most expensive recurring failure written into the test suite.
+ *
+ * `page.screenshot()` goes through the browser's own capture path and returns
+ * the composited frame, which is the same image a human would see. Decoding it
+ * in node rather than back in the page keeps the measurement independent of
+ * whatever state the page is in.
+ *
+ * UPPER TWO THIRDS ONLY. The bottom third is the viewmodel, and the weapon
+ * renders correctly when nothing else does; including it lifts a fully black
+ * scene to a number that passes.
+ */
+async function measure(png) {
+  const meta = await sharp(png).metadata();
+  const rows = Math.floor(meta.height * 0.66);
+
+  const { data, info } = await sharp(png)
+    .extract({ left: 0, top: 0, width: meta.width, height: rows })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const n = info.width * info.height;
+  let sum = 0;
+  let lit = 0;
+  for (let i = 0; i < data.length; i += 3) {
+    const l = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    sum += l;
+    if (l > 10) lit++;
+  }
+
+  return { meanLuma: +(sum / n).toFixed(2), percentLit: +((lit / n) * 100).toFixed(1) };
+}
+
 async function shoot(name, label) {
   await page.evaluate(() => window.__E__.frames(3));
-  const stats = await page.evaluate(() => window.__E__.luma());
-  await page.screenshot({ path: `${OUT}${name}.png` });
+  const png = await page.screenshot({ path: `${OUT}${name}.png` });
+  const stats = await measure(png);
   shots.push({ name, label, ...stats });
   return stats;
 }
@@ -290,6 +311,27 @@ const boot = await page.evaluate(() => {
 // 2. a wave arrives and walks to the player
 // ---------------------------------------------------------------------------
 
+/**
+ * THE START DISTANCE IS SAMPLED AT SPAWN, NOT NINE SECONDS IN.
+ *
+ * This block used to sim(9) to get the wave down, call the distances at that
+ * moment the "start", and assert the mean fell by another three metres. Two
+ * things are wrong with that. A wave of seven spawns over about nine seconds at
+ * the 1.455s interval, so at the moment of sampling the first arrivals are
+ * already in melee and the last has not been placed - the "start" mean is a
+ * blend of both, and it moves with spawn order. And when the horde is FAST the
+ * mean has already collapsed before the window opens, so there is no room left
+ * to fall by three: measured five times over on a build where every enemy
+ * arrived, the delta came out 4.70, 2.71, 6.54, 3.68, 3.23 and the check failed
+ * once. A test that fails because the thing it tests works is not a test.
+ *
+ * So each actor is measured the frame it goes live, which is what "spawns at
+ * X metres" actually means, and the arrival is asserted directly: not that a
+ * mean moved, but that NOTHING IS LEFT BEHIND. That is strictly the harder
+ * claim, and it is the one that catches the bug this block exists for - a
+ * stranded enemy holding 16.75 m forever while its neighbours reach melee and
+ * drag the mean down over it.
+ */
 const approach = await page.evaluate(async () => {
   const g = window.__SANDS__;
   const d = g.director;
@@ -298,15 +340,19 @@ const approach = await page.evaluate(async () => {
   window.__E__.place(0, 30, 0);
   d.forceWave(1);
 
-  // Spawn the wave.
-  window.__E__.sim(9);
+  const dist = (a) => Math.hypot(a.position.x - g.player.position.x,
+                                 a.position.z - g.player.position.z);
+
+  // Spawn the wave, catching each actor on its first live frame.
+  const spawnDist = new Map();
+  const dt = 1 / 30;
+  for (let i = 0; i < Math.ceil(9 / dt); i++) {
+    g.director.update(dt, i * dt);
+    g.combat.update(dt);
+    for (const a of d.live) if (!spawnDist.has(a)) spawnDist.set(a, dist(a));
+  }
 
   const first = d.stats();
-  const start = [];
-  for (const a of d.live) {
-    start.push(Math.hypot(a.position.x - g.player.position.x,
-                          a.position.z - g.player.position.z));
-  }
 
   // Let them walk. The player does not move, so any closing is theirs.
   //
@@ -318,23 +364,35 @@ const approach = await page.evaluate(async () => {
 
   const end = [];
   let closest = Infinity;
+  let furthest = 0;
   for (const a of d.live) {
-    const d2 = Math.hypot(a.position.x - g.player.position.x,
-                          a.position.z - g.player.position.z);
+    const d2 = dist(a);
     end.push(d2);
     if (d2 < closest) closest = d2;
+    if (d2 > furthest) furthest = d2;
   }
 
   const mean = (a) => a.reduce((s, x) => s + x, 0) / (a.length || 1);
+  const start = [...spawnDist.values()];
 
   return {
     spawned: first.live,
     queued: first.queued,
+    spawnPoints: first.spawnPoints,
+    spawnPointsReachable: first.spawnPointsReachable,
     meanStart: +mean(start).toFixed(2),
+    maxStart: +Math.max(...start).toFixed(2),
     meanEnd: +mean(end).toFixed(2),
     closest: +closest.toFixed(2),
+    furthest: +furthest.toFixed(2),
     stillLive: d.live.length,
     variants: d.live.map((a) => a.variant),
+    // Nobody sealed in a pocket. Asked of the director's own walk field, so it
+    // is the same answer the placement search uses rather than a second guess.
+    allOnPlayersIsland: d.live.every((a) => d.reachesPlayer(a.position.x, a.position.z)),
+    stranded: d.live
+      .filter((a) => !d.reachesPlayer(a.position.x, a.position.z))
+      .map((a) => ({ v: a.variant, x: +a.position.x.toFixed(1), z: +a.position.z.toFixed(1) })),
   };
 });
 
@@ -613,11 +671,26 @@ const bossRun = await page.evaluate(async () => {
   const boss = d.boss;
   const startHealth = boss.health;
 
+  const dist = () => Math.hypot(boss.position.x - g.player.position.x,
+                                boss.position.z - g.player.position.z);
+  const spawnDist = dist();
+
   // Let it act, so an ability is observed rather than assumed.
+  //
+  // CLOSEST APPROACH, not the distance on the final tick. A god charges,
+  // recovers and volleys, so where it happens to be standing forty seconds in
+  // says very little; whether it ever got its hands on the player says
+  // everything, and it is the number that catches a boss that cannot arrive.
+  // Wave five ends when the boss dies. A boss walled off from the player can
+  // neither reach them nor be shot by them, so a stall here does not slow the
+  // round down, it ends the run.
   const seen = new Set();
+  let closest = spawnDist;
   for (let i = 0; i < 400; i++) {
     window.__E__.sim(0.1);
     if (boss.ability) seen.add(boss.ability);
+    const now = dist();
+    if (now < closest) closest = now;
   }
 
   boss.hurt(boss.maxHealth * 0.55, 'body', 0, 1);
@@ -630,8 +703,10 @@ const bossRun = await page.evaluate(async () => {
     startHealth,
     healthNow: boss.health,
     abilitiesSeen: Array.from(seen),
-    distance: +Math.hypot(boss.position.x - g.player.position.x,
-                          boss.position.z - g.player.position.z).toFixed(1),
+    spawnDistance: +spawnDist.toFixed(1),
+    closest: +closest.toFixed(1),
+    distance: +dist().toFixed(1),
+    spawnPointsForBoss: d.stats().spawnPointsForBoss,
   };
 });
 
@@ -822,9 +897,37 @@ for (const s of shots) {
 if (errors.length) { console.log('--- errors ---'); for (const e of errors) console.log(e); }
 if (warnings.length) { console.log('--- warnings ---'); for (const w of warnings) console.log(w); }
 
-// A shot of an unlit frame proves nothing about a silhouette, so every one is
-// gated before it is allowed to count as evidence.
-const DARK = shots.filter((s) => s.meanLuma < 6 || s.percentLit < 25);
+/**
+ * A shot of an unlit frame proves nothing about a silhouette, so every one is
+ * gated before it is allowed to count as evidence.
+ *
+ * RECALIBRATED AGAINST WHAT A REAL FRAME MEASURES. The old threshold - luma 6,
+ * lit 25% - was set so that a reader which reported a sunlit courtyard at luma
+ * 7 would still go green. It could not have failed on anything, which on a
+ * project that has shipped a fully black screen under a fully green suite three
+ * times is the failure written into the gate. Every number below was measured
+ * on this build through the reader above, at 1440x860, upper two thirds:
+ *
+ *     courtyard, sunlit                     116.44 luma    95.1% lit
+ *     this suite's eleven exterior shots    99.10-123.65   90.6-98.3%
+ *     this suite's interior shot             42.02-43.43   97.9-98.8%
+ *     the darkest lit interior reachable      6.21-14.79   13.8-41.7%
+ *     the whole canvas at 12% brightness       5.47         4.4%
+ *     the whole canvas at 4% brightness        1.90         0.1%
+ *     A GENUINELY BLACK CAPTURED FRAME         0.14         0.1%
+ *
+ * Black is not near the floor of the legitimate range, it is two orders of
+ * magnitude below it, so the gate does not have to be brave. Eighteen sits 2.3x
+ * under the darkest shot this suite actually takes and 128x over black; 55 per
+ * cent lit sits 1.65x under the least-lit shot and 550x over black. Both catch
+ * the 4% and 12% cases, which are what a scene that renders but is never lit
+ * looks like.
+ *
+ * If a future shot in this suite is framed somewhere that reads under 18, that
+ * is not a reason to lower this number. It is a shot too dark to judge a
+ * silhouette in, which is the thing the gate is for.
+ */
+const DARK = shots.filter((s) => s.meanLuma < 18 || s.percentLit < 55);
 
 const checks = {
   'pool allocated at boot':            boot.stats.pooled >= 40,
@@ -834,8 +937,13 @@ const checks = {
   'spawn points found in courtyard':   boot.stats.spawnPoints > 50,
 
   'wave one spawned':                  approach.spawned > 0,
+  'no enemy is sealed off from the player':
+                                       approach.allOnPlayersIsland === true,
   'the horde closes on the player':    approach.meanEnd < approach.meanStart - 3,
   'something reached melee range':     approach.closest < 4,
+  // The one that catches a stranded actor. A mean can be dragged down over the
+  // top of an enemy pinned in a pocket forever; a maximum cannot.
+  'the WHOLE horde arrives':           approach.furthest < 6 && approach.meanEnd < 4,
 
   'all four variants build':           lineup.placed.length === 4,
   'variants differ in height':         new Set(lineup.heights.map((h) => h.h)).size >= 3,
@@ -863,6 +971,10 @@ const checks = {
   'boss spawned on wave five':         bossRun.spawned === true,
   'boss is the first god':             bossRun.variant === 'anubis',
   'boss used a telegraphed ability':   bossRun.abilitiesSeen.length > 0,
+  // A god is 1.81 m wide against the horde's 0.74, so it needs its own answer
+  // to "can this point walk to the player". These two are that answer's gate.
+  'boss has somewhere a god can fit':  bossRun.spawnPointsForBoss > 10,
+  'the boss reaches the player':       bossRun.closest < 6,
   'boss bar is shown':                 bossHud.hidden === false,
   'boss bar is named':                 bossHud.name === bossRun.name,
   'boss bar tracks health':            /^[0-9.]+%$/.test(bossHud.width),
