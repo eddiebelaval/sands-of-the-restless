@@ -11,6 +11,12 @@
   :root {
     --gold: #d9b26a;
     --gold-dim: #8a6f3e;
+    /* Between the two. Secondary HUD text - the reserve count, the map footer,
+       the objective's place line - needs to read as quieter than the primary
+       gold WITHOUT falling under the contrast floor, and --gold-dim measures
+       3.70 to one against the plate over sunlit sand. This measures 5.32.
+       test/hud.mjs audits every label against the worst plate it can find. */
+    --gold-mid: #a08b64;
     --lapis: #2c4a7c;
     --ink: #0d0a07;
     --bone: #e8dcc4;
@@ -98,9 +104,37 @@
     min-height: 12px;
   }
 
-  /* ---- hud ---- */
+  /* ---- hud ----
+
+     ONE OBJECT, USED EVERYWHERE: the plate. A near-opaque dark ground with a
+     gold hairline and a gilded top edge, which is exactly what #prompt has
+     always been and is the only part of this interface anybody has said feels
+     right. Every readout now stands on one.
+
+     That is a legibility fix and not a decorative one. The game has two
+     backgrounds - a sunlit avenue around luma 190 and a fire-lit chamber around
+     luma 25 - and text with a drop shadow is readable on precisely one of them.
+     A plate makes the local background a constant, so the contrast of the HUD
+     is a property of the HUD rather than of wherever the player happens to be
+     standing. The alpha is high on purpose: at .55 the sand read straight
+     through it. */
   #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
   #hud[hidden] { display: none; }
+
+  .plate {
+    background: linear-gradient(180deg, rgba(9,6,3,.95), rgba(4,3,1,.90));
+    border: 1px solid rgba(217,178,106,.30);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.55), 0 8px 26px rgba(0,0,0,.5);
+    position: relative;
+  }
+  /* The gilded top edge. One line, and it is what makes a dark rectangle read
+     as a piece of the same building as the doorways. */
+  .plate::before {
+    content: ""; position: absolute; left: -1px; right: -1px; top: -1px;
+    height: 2px;
+    background: linear-gradient(90deg,
+      rgba(217,178,106,.15), rgba(217,178,106,.85), rgba(217,178,106,.15));
+  }
 
   #crosshair {
     position: absolute; left: 50%; top: 50%;
@@ -108,29 +142,68 @@
     transform: translate(-50%, -50%);
   }
 
+  /* Icons are drawn, never typed. A 12px gold mark in the same weight as the
+     crosshair, sitting on the label's baseline.
+
+     --gold-dim would have been the obvious choice and is too dark: measured
+     against the plate over sunlit sand it comes out at 3.70 to one, under the
+     4.5 floor everything else on this HUD clears. --gold-mid exists for exactly
+     the labels and marks that want to sit below the primary gold without
+     dropping out of legibility. */
+  .ico {
+    width: 12px; height: 12px; flex: none;
+    fill: none; stroke: var(--gold-mid); stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+
   .readout {
     position: absolute;
+    padding: 8px 13px 9px;
     font-size: 12px;
     letter-spacing: .18em;
     text-transform: uppercase;
     color: var(--gold);
-    text-shadow: 0 1px 3px #000;
   }
-  #r-health { left: 28px; bottom: 26px; }
+  .readout .cap {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 9px; letter-spacing: .26em; color: var(--gold);
+  }
+
+  #r-health { left: 22px; bottom: 22px; min-width: 148px; }
+
+  /* The bar is the readout the number cannot be. Sekhmet moves the ceiling
+     from 100 to 250, and at that point an absolute figure has stopped saying
+     anything about how close the player is to the floor. */
+  #r-health .track {
+    display: block; height: 3px; margin-top: 7px;
+    background: rgba(217,178,106,.14);
+    overflow: hidden;
+  }
+  #r-health .track i {
+    display: block; height: 100%; width: 100%;
+    transform-origin: left center;
+    background: linear-gradient(90deg, #b8894a, var(--gold));
+  }
+  /* One swing from the floor, and it is the PLATE that changes, not the
+     numeral: this has to be caught without being looked at. */
+  #r-health.hurt { border-color: rgba(224,86,60,.55); }
+  #r-health.hurt .val { color: #ff8a6c; }
+  #r-health.hurt .track i { background: linear-gradient(90deg, #7d2114, #e0563c); }
 
   /* The boon strip. Directly above vitality, because the two are read
      together: how much life you have and what is keeping you alive. Empty
      slots are drawn as well as full ones, so the strip answers "should I stop
      at the next shrine" and not only "what did I buy". */
   #r-boons {
-    position: absolute; left: 28px; bottom: 84px;
+    position: absolute; left: 22px; bottom: 96px;
     display: flex; gap: 7px; align-items: center;
   }
   .boon[hidden] { display: none; }
   .boon {
     display: flex; align-items: center; gap: 5px;
-    border: 1px solid rgba(217,178,106,.22);
-    background: rgba(10,7,4,.45);
+    border: 1px solid rgba(217,178,106,.26);
+    background: rgba(6,4,2,.90);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.5);
     padding: 3px 7px 3px 5px;
     min-width: 22px;
     min-height: 20px;
@@ -149,30 +222,117 @@
   /* An unheld slot is a socket, not a button: no glow, no border highlight. */
   .boon:not(.held) i { box-shadow: none; opacity: .55; }
   .boon.held { border-color: rgba(217,178,106,.45); }
-  #r-wave   { right: 28px; bottom: 26px; text-align: right; }
-  #r-gold   { right: 28px; top: 24px; text-align: right; }
-  .readout .val { display: block; font-size: 26px; letter-spacing: .1em; color: var(--bone); }
 
-  #fps {
-    position: absolute; left: 28px; top: 24px;
-    font-size: 11px; letter-spacing: .1em; color: #5d4e39;
-  }
+  #r-gold { right: 22px; top: 22px; text-align: right; min-width: 118px; }
+  #r-gold .cap { justify-content: flex-end; }
+  .readout .val { display: block; font-size: 26px; letter-spacing: .08em; color: var(--bone); }
 
-  /* Ammunition sits just inboard of the wave counter, low right, where the
-     eye can catch it without leaving the crosshair. */
+  /* Ammunition and the wave share one plate, low right, where the eye can
+     catch them without leaving the crosshair. They are separated by a rule
+     rather than by empty space, because two plates in one corner is two things to
+     find and this is one glance. Lifted clear of the fidelity buttons, which
+     the wave counter used to sit on top of. */
   #r-ammo {
-    right: 28px; bottom: 84px; text-align: right;
-    font-size: 11px; color: var(--gold-dim);
+    right: 22px; bottom: 62px; text-align: right; min-width: 156px;
   }
-  #r-ammo .val { display: block; }
-  #r-ammo b { font-weight: normal; font-size: 30px; color: var(--bone); }
+  #r-ammo .cap { justify-content: flex-end; }
+  #r-ammo .val { display: block; margin-top: 1px; }
+  #r-ammo b { font-weight: normal; font-size: 30px; letter-spacing: .04em; color: var(--bone); }
   #r-ammo i {
-    font-style: normal; font-size: 15px; color: var(--gold-dim);
+    font-style: normal; font-size: 15px; color: var(--gold-mid);
     margin-left: 7px;
   }
   #r-ammo i::before { content: "/ "; }
-  #r-ammo.empty b { color: #c2452f; }
+  #r-ammo.empty b { color: #ff6a4c; }
   #r-ammo.reloading b { color: var(--gold); }
+
+  #r-ammo .wave {
+    display: flex; align-items: center; justify-content: flex-end; gap: 7px;
+    margin-top: 8px; padding-top: 7px;
+    border-top: 1px solid rgba(217,178,106,.18);
+    font-size: 9px; letter-spacing: .26em; color: var(--gold);
+  }
+  #r-ammo .wave u {
+    text-decoration: none; font-size: 15px; letter-spacing: .06em; color: var(--bone);
+  }
+
+  /* ---- the left column: where am I, and what next ----
+
+     One stack, because the two questions are one question. The map answers
+     "where", the tracker answers "what next", and putting them anywhere but
+     adjacent would make the player's eye do the joining. */
+  #hud-left {
+    position: absolute; left: 22px; top: 20px;
+    width: 290px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+
+  .card { padding: 0; }
+  .card-head {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 11px 6px;
+    border-bottom: 1px solid rgba(217,178,106,.16);
+    font-size: 9px; letter-spacing: .26em; text-transform: uppercase;
+    color: var(--gold);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  #map-canvas {
+    display: block;
+    width: 268px; height: 296px;
+    margin: 8px 11px 0;
+  }
+  .map-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 11px 8px;
+    font-size: 8px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--gold-mid);
+  }
+  /* The chest legend. The box moving between three plinths is the one mechanic
+     that moves the map underneath the player, and a map that only ever drew it
+     where it currently is would make a cold plinth look like a broken game. */
+  .key { display: flex; align-items: center; gap: 6px; }
+  .key .k-chest {
+    display: block; width: 9px; height: 7px;
+    border: 1px solid var(--gold); border-top-width: 3px;
+  }
+  #fps { color: var(--gold-mid); }
+
+  /* The objective. The headline is the only string on the HUD a player has to
+     actually READ, so it is the only one set at a size that invites it. */
+  #objective { padding: 0 0 9px; }
+  .obj-text {
+    padding: 9px 11px 0;
+    font-size: 12px; line-height: 1.4; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--bone);
+  }
+  .obj-detail {
+    padding: 5px 11px 0;
+    font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--gold);
+  }
+  .obj-where {
+    padding: 4px 11px 0;
+    font-size: 9px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--gold-mid);
+  }
+  .obj-where[hidden] { display: none; }
+
+  /* Shown only while gold is what stands in the way. A full bar under an
+     objective that has nothing to do with money is a gauge lying about what it
+     measures. */
+  .obj-track {
+    height: 2px; margin: 9px 11px 0;
+    background: rgba(217,178,106,.14);
+    overflow: hidden; visibility: hidden;
+  }
+  #objective.short .obj-track { visibility: visible; }
+  #objective.short .obj-detail { color: #e0563c; }
+  .obj-track i {
+    display: block; height: 100%; width: 100%;
+    transform: scaleX(0); transform-origin: left center;
+    background: linear-gradient(90deg, #7d5a24, var(--gold));
+  }
 
   /* The hitmarker is the single most important piece of shooting feedback.
      It confirms the shot connected without the player leaving the crosshair. */
@@ -198,16 +358,16 @@
     position: absolute; left: 50%; top: 57%;
     transform: translateX(-50%);
     font-size: 13px; letter-spacing: .2em; text-transform: uppercase;
-    color: var(--gold); text-shadow: 0 1px 4px #000;
-    border: 1px solid rgba(217,178,106,.35);
-    background: rgba(10,7,4,.55);
+    color: var(--gold);
     padding: 7px 16px;
     white-space: nowrap;
     opacity: 0; transition: opacity .12s ease;
   }
   #prompt.on { opacity: 1; }
   /* Cannot afford it, or it is not for sale at any price. */
-  #prompt.deny { color: #e0563c; border-color: rgba(224,86,60,.45); }
+  #prompt.deny { color: #ff6a4c; border-color: rgba(224,86,60,.55); }
+  #prompt.deny::before { background: linear-gradient(90deg,
+      rgba(224,86,60,.12), rgba(224,86,60,.8), rgba(224,86,60,.12)); }
 
   /* Floating gold. The container is a zero-size anchor at the crosshair and
      every popup positions off it, so the animation never triggers layout. */
@@ -235,21 +395,23 @@
      hidden until a god is live and it disappears with it, so its presence is
      itself the readout. */
   #boss {
-    position: absolute; left: 50%; top: 26px;
+    position: absolute; left: 50%; top: 24px;
     transform: translateX(-50%);
     width: min(520px, 56vw);
     text-align: center;
+    padding: 8px 14px 10px;
   }
   #boss[hidden] { display: none; }
   #boss-name {
     font-size: 12px; letter-spacing: .38em; text-transform: uppercase;
-    color: var(--gold); text-shadow: 0 1px 4px #000;
-    margin-bottom: 7px;
+    color: var(--gold);
+    margin-bottom: 8px;
   }
   #boss-track {
     height: 6px;
-    background: rgba(10,7,4,.72);
+    background: rgba(10,7,4,.86);
     border: 1px solid rgba(217,178,106,.34);
+    overflow: hidden;
   }
   #boss-bar {
     height: 100%; width: 100%;
@@ -261,8 +423,10 @@
   #notice {
     position: absolute; left: 50%; top: 62%;
     transform: translateX(-50%);
+    padding: 6px 14px;
     font-size: 12px; letter-spacing: .2em; text-transform: uppercase;
-    color: var(--gold); text-shadow: 0 1px 4px #000;
+    color: var(--gold);
+    white-space: nowrap;
     opacity: 0; transition: opacity .2s ease;
   }
   #notice.on { opacity: 1; }
@@ -296,6 +460,32 @@
 
 <canvas id="stage"></canvas>
 
+<!-- Drawn marks, never glyphs from a font and never emoji. Each is the same
+     1.5px gold stroke the crosshair is, so the icon set reads as one hand.
+     Outside #hud on purpose: #hud starts hidden, and a <use> should never have
+     to depend on whether its referent's ancestor is being rendered. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- ankh: the sign for life, which is what vitality is -->
+    <symbol id="i-ankh" viewBox="0 0 12 12">
+      <ellipse cx="6" cy="3.2" rx="2.3" ry="2.6"/>
+      <path d="M6 5.8V11M3 7.4h6"/>
+    </symbol>
+    <!-- deben: the weight gold was measured against -->
+    <symbol id="i-deben" viewBox="0 0 12 12">
+      <circle cx="6" cy="6" r="4.4"/><circle cx="6" cy="6" r="1.5"/>
+    </symbol>
+    <!-- a cartridge, standing on its base -->
+    <symbol id="i-round" viewBox="0 0 12 12">
+      <path d="M4 11h4V6.2L6 1.4 4 6.2z"/><path d="M4 7.6h4"/>
+    </symbol>
+    <!-- the step ahead -->
+    <symbol id="i-step" viewBox="0 0 12 12">
+      <path d="M2 6h7M6 3l3 3-3 3"/>
+    </symbol>
+  </defs>
+</svg>
+
 <div id="hud" hidden>
   <svg id="crosshair" viewBox="0 0 22 22" aria-hidden="true">
     <g stroke="#d9b26a" stroke-width="1.4" stroke-linecap="round" opacity=".9">
@@ -307,22 +497,58 @@
     <circle cx="11" cy="11" r="1" fill="#d9b26a" opacity=".9"/>
   </svg>
 
-  <div id="fps">--- fps</div>
-  <div id="r-boons"></div>
-  <div class="readout" id="r-health">Vitality<span class="val" data-health>100</span></div>
-  <div class="readout" id="r-gold">Gold<span class="val" data-gold>500</span></div>
-  <div class="readout" id="r-wave">Wave<span class="val" data-wave>1</span></div>
-  <div class="readout" id="r-ammo">
-    <span data-weapon>MK9</span>
-    <span class="val"><b data-mag>12</b><i data-reserve>96</i></span>
+  <div id="hud-left">
+    <!-- THE MAP. A floorplan of the room graph at true scale and true bearing;
+         see src/ui/minimap.js for why that rather than an overhead slice. -->
+    <div class="plate card" id="map">
+      <div class="card-head"><span id="map-room">The Necropolis</span></div>
+      <canvas id="map-canvas" width="536" height="592"></canvas>
+      <div class="map-foot">
+        <span class="key"><i class="k-chest"></i>chest moves</span>
+        <span id="fps">--- fps</span>
+      </div>
+    </div>
+
+    <!-- THE NEXT STEP. Derived from the economy, the doors, the power system
+         and the room graph; see src/ui/objective.js. -->
+    <div class="plate card" id="objective">
+      <div class="card-head">
+        <svg class="ico"><use href="#i-step"/></svg><span>Next</span>
+      </div>
+      <div class="obj-text" data-obj-text>Buy the sealed doorway</div>
+      <div class="obj-detail" data-obj-detail>1000 gold</div>
+      <div class="obj-where" data-obj-where hidden></div>
+      <div class="obj-track"><i data-obj-bar></i></div>
+    </div>
   </div>
-  <div id="boss" hidden>
+
+  <div id="r-boons"></div>
+
+  <div class="readout plate" id="r-health">
+    <span class="cap"><svg class="ico"><use href="#i-ankh"/></svg>Vitality</span>
+    <span class="val" data-health>100</span>
+    <span class="track"><i data-health-bar></i></span>
+  </div>
+
+  <div class="readout plate" id="r-gold">
+    <span class="cap"><svg class="ico"><use href="#i-deben"/></svg>Gold</span>
+    <span class="val" data-gold>500</span>
+  </div>
+
+  <div class="readout plate" id="r-ammo">
+    <span class="cap"><svg class="ico"><use href="#i-round"/></svg><span data-weapon>MK9</span></span>
+    <span class="val"><b data-mag>12</b><i data-reserve>96</i></span>
+    <span class="wave">Wave<u data-wave>1</u></span>
+  </div>
+
+  <div class="plate" id="boss" hidden>
     <div id="boss-name">ANUBIS</div>
     <div id="boss-track"><div id="boss-bar"></div></div>
   </div>
+
   <div id="gold-pops"></div>
-  <div id="prompt"></div>
-  <div id="notice"></div>
+  <div class="plate" id="prompt"></div>
+  <div class="plate" id="notice"></div>
   <div id="hitmarker"></div>
 </div>
 

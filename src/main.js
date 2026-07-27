@@ -34,7 +34,9 @@ import { createShrines } from './systems/shrines.js';
 import { createAltar } from './systems/altar.js';
 import { createPromptBus } from './ui/prompt.js';
 import { createInteracts } from './ui/interact.js';
-import { createBoonStrip } from './ui/hud.js';
+import { createBoonStrip, createReadouts } from './ui/hud.js';
+import { createMinimap } from './ui/minimap.js';
+import { createObjectives, createObjectivePanel } from './ui/objective.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
@@ -54,7 +56,11 @@ function boot() {
   const hud = document.getElementById('hud');
   const beginBtn = document.getElementById('begin');
   const notice = document.getElementById('notice');
-  const fpsEl = document.getElementById('fps');
+
+  // Every DOM write the frame loop used to do itself now goes through here.
+  // See ui/hud.js: the loop had acquired a dozen element handles and a bar
+  // width calculation, none of which is anything a frame loop is about.
+  const readouts = createReadouts(document);
 
   // -------------------------------------------------------------------------
   // stage
@@ -127,10 +133,8 @@ function boot() {
 
   // --- economy, doors, and the fixtures -------------------------------------
 
-  const goldEl = document.querySelector('[data-gold]');
-
   const economy = createEconomy({ popups: document.getElementById('gold-pops') });
-  economy.subscribe((gold) => { goldEl.textContent = gold; });
+  economy.subscribe((gold) => readouts.gold(gold));
 
   // One line of prompt text, two systems that want it. doors.js is handed a
   // channel that answers to textContent and classList.toggle exactly as the
@@ -246,6 +250,44 @@ function boot() {
   });
 
   combat.attach({ director });
+
+  // -------------------------------------------------------------------------
+  // where am I, and what next
+  // -------------------------------------------------------------------------
+  //
+  // Both of these READ the systems above and write nothing back to any of them.
+  // That is the whole of their contract: they are handed the live objects rather
+  // than copies of their state, so nothing has to be pushed at them and they
+  // cannot fall out of step; and because they only ever return values, a HUD
+  // element in this game cannot break the game it is describing.
+  //
+  // Built HERE, after the director, rather than up with the rest of the UI,
+  // because both want the live actor list and neither is worth a late-binding
+  // attach() when moving three lines down the file does the same job.
+
+  // Wall buys and the mystery box are deliberately NOT handed over. The tracker
+  // reaches those two through the fixture records the interaction layer already
+  // holds, so passing the systems as well would be a second route to the same
+  // facts - and the day the two disagreed, the HUD would be the thing that was
+  // wrong. One source per fact.
+  const objectives = createObjectives({
+    spaces, interior: spaces.interior, doors, economy, power, shrines,
+    altar, weapons, interacts, director, player,
+  });
+
+  const objectivePanel = createObjectivePanel(
+    document.getElementById('objective'), objectives);
+
+  const minimap = createMinimap({
+    canvas: document.getElementById('map-canvas'),
+    roomLabel: document.getElementById('map-room'),
+    spaces, interior: spaces.interior, doors, interacts, shrines,
+    mysterybox, power, economy, director, rig, player,
+  });
+
+  // The map asks the armoury one question - do you own this - and is given a
+  // predicate rather than the module, so it cannot reach for anything else.
+  minimap.attach({ owns: (id) => weapons.owns(id) });
 
   // -------------------------------------------------------------------------
   // assets
@@ -482,18 +524,6 @@ function boot() {
   // FPS readout, averaged over a window so it is readable rather than jittery.
   let frames = 0, fpsAccum = 0;
 
-  const healthEl = document.querySelector('[data-health]');
-  const ammoEl = document.getElementById('r-ammo');
-  const magEl = document.querySelector('[data-mag]');
-  const reserveEl = document.querySelector('[data-reserve]');
-  const weaponEl = document.querySelector('[data-weapon]');
-  const hitmarkerEl = document.getElementById('hitmarker');
-  const waveEl = document.querySelector('[data-wave]');
-  const bossEl = document.getElementById('boss');
-  const bossNameEl = document.getElementById('boss-name');
-  const bossBarEl = document.getElementById('boss-bar');
-  let bossShown = null;
-
   /**
    * Pay the player for a burst of hits.
    *
@@ -526,18 +556,6 @@ function boot() {
   // The last value of combat.state.downs the loop has acted on. See the note
   // in the frame loop: a monotonic counter is the event source for going down.
   let downsSeen = combat.state.downs;
-
-  let hitmarkerTimer = 0;
-  function showHitmarker(crit) {
-    hitmarkerEl.classList.toggle('crit', !!crit);
-    hitmarkerEl.classList.remove('fade');
-    hitmarkerEl.classList.add('on');
-    clearTimeout(hitmarkerTimer);
-    hitmarkerTimer = setTimeout(() => {
-      hitmarkerEl.classList.remove('on');
-      hitmarkerEl.classList.add('fade');
-    }, 60);
-  }
 
   function frame() {
     requestAnimationFrame(frame);
@@ -590,7 +608,7 @@ function boot() {
         // Damage first: the payout needs to know whether the round finished
         // what it hit, and only the damage system can answer that.
         combat.applyHits(hits);
-        showHitmarker(hits.some((h) => h.enemy && h.region === 'head'));
+        readouts.hitmarker(hits.some((h) => h.enemy && h.region === 'head'));
         payout(hits);
       }
 
@@ -681,45 +699,36 @@ function boot() {
     frames++;
     fpsAccum += raw;
     if (fpsAccum >= 0.5) {
-      fpsEl.textContent = `${Math.round(frames / fpsAccum)} fps`;
+      readouts.fps(Math.round(frames / fpsAccum));
       frames = 0;
       fpsAccum = 0;
     }
-    healthEl.textContent = Math.round(player.state.health);
-    waveEl.textContent = director.state.wave;
 
-    // The boss bar is the only HUD element that appears and disappears. It is
-    // driven off the director's live boss rather than off a flag, so it cannot
-    // survive the thing it is measuring.
-    //
-    // The name is rewritten on a CHANGE OF BOSS, not on the bar becoming
-    // visible. Keying it to visibility left the previous god's name over the
-    // next one's health whenever two arrived without the bar clearing in
-    // between, which is exactly what a summoned second boss would do.
-    const boss = director.boss;
-    if (boss) {
-      if (bossShown !== boss) {
-        bossEl.hidden = false;
-        bossNameEl.textContent = boss.name;
-        bossShown = boss;
-      }
-      bossBarEl.style.width = `${Math.max(0, (boss.health / boss.maxHealth) * 100)}%`;
-    } else if (bossShown) {
-      bossEl.hidden = true;
-      bossShown = null;
-    }
+    readouts.update({
+      health: player.state.health,
+      maxHealth: player.state.maxHealth,
+      wave: director.state.wave,
+      magazine: weapons.magazine,
+      reserve: weapons.reserve,
+      // The weapon's NAME, and the upgraded one once it has been through the
+      // Altar. The whole point of an upgrade being an event is that the thing
+      // comes back with a title, and a HUD still reading "CARBINE" would be the
+      // one place in the game insisting nothing happened.
+      weapon: weapons.STATS[weapons.state.current]
+        ? weapons.displayName(weapons.state.current).toUpperCase()
+        : '',
+      empty: weapons.magazine === 0,
+      reloading: weapons.isReloading,
+      boss: director.boss,
+    });
 
-    magEl.textContent = weapons.magazine;
-    reserveEl.textContent = weapons.reserve;
-    // The weapon's NAME, and the upgraded one once it has been through the
-    // Altar. The whole point of an upgrade being an event is that the thing
-    // comes back with a title, and a HUD still reading "CARBINE" would be the
-    // one place in the game insisting nothing happened.
-    weaponEl.textContent = weapons.STATS[weapons.state.current]
-      ? weapons.displayName(weapons.state.current).toUpperCase()
-      : '';
-    ammoEl.classList.toggle('empty', weapons.magazine === 0);
-    ammoEl.classList.toggle('reloading', weapons.isReloading);
+    // The map and the tracker, last, because both describe the frame that has
+    // just been resolved. The tracker runs every frame and is cheap - a walk
+    // over ten rooms and a dozen fixtures, guarded by a compare before any DOM
+    // is touched - while the map throttles itself off the CLAMPED delta, so it
+    // repaints at the same rate relative to the simulation on any machine.
+    objectivePanel.update(dt);
+    minimap.update(dt);
   }
 
   frame();
@@ -731,6 +740,7 @@ function boot() {
     spaces, economy, doors, courtyard, interior: spaces.interior,
     director, combat,
     power, wallbuys, shrines, altar, mysterybox, interacts, promptBus,
+    readouts, objectives, objectivePanel, minimap,
     setFidelity, start,
     get elapsed() { return elapsed; },
   };
