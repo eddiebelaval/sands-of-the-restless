@@ -13,6 +13,15 @@
  * property of a gun and not of a bookkeeping layer. This file multiplies them
  * by the region and hands the result over.
  *
+ * A BLAST ARRIVES THE OTHER WAY ROUND and gets its own entry point. Explosive
+ * damage is not a property of a weapon, it is a function of a distance, and the
+ * thing that owns the distance is the thing that owns the geometry of the
+ * explosion. So applyBlast() takes the number already computed and does only
+ * what this file can do - apply it, mark the kill, make the noise - while
+ * applyHits() keeps looking damage up in STATS. Two doors, one room, because
+ * one door would have meant one of the two callers lying about where its number
+ * came from. See the note above applyBlast.
+ *
  * INCOMING damage has three jobs and all three are feel, not simulation: the
  * camera lurches, the frame washes red, and the player has to be told which
  * direction it came from. The wash is driven from post.setDamage, which already
@@ -42,6 +51,9 @@ const REGEN_RATE = 14;
  * the one a health bar in the corner is bad at communicating.
  */
 const CRITICAL = 0.35;
+
+/** How many body-hit cues one blast may play. See the note in applyBlast. */
+const BLAST_VOICES = 3;
 
 export function createCombat({ player, rig, post, audio, impacts, notice, director }) {
   const state = {
@@ -94,6 +106,78 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       const opts = { pitch: h.enemy.spec.voicePitch || 1 };
       if (head) audio?.headshotHit?.(opts);
       else audio?.bodyHit?.(opts);
+    }
+
+    return connected;
+  }
+
+  /**
+   * Resolve a blast.
+   *
+   * The same contract as applyHits and deliberately a SEPARATE function, because
+   * the two answer "how much damage" from opposite directions and merging them
+   * would mean one of the two lying about where its number came from.
+   *
+   * A bullet's damage is a property of the gun: applyHits looks the weapon up in
+   * STATS and multiplies by the region, and it is right to, because a headshot
+   * with a bolt rifle is a fact about the bolt rifle. A blast has no weapon and
+   * no region - it has a distance, and the falloff curve that turns a distance
+   * into a number lives with the thing that owns the geometry of the explosion.
+   * So the caller arrives with the damage already computed and this does the
+   * three things only this file can do: apply it, mark whether it finished the
+   * target, and make the right noise.
+   *
+   * `killed` is written back onto each record exactly as applyHits writes it,
+   * which is the single fact the payout table needs, so a grenade kill pays a
+   * kill through the same path a bullet kill does.
+   *
+   * @param {Array<{enemy:object, damage:number, region?:string,
+   *                dirX?:number, dirZ?:number, killed:boolean}>} records
+   * @param {number} [count]  how many leading entries are live, so a pooled
+   *                          array can be passed without being trimmed
+   * @returns {number} how many connected with something living
+   */
+  function applyBlast(records, count = records ? records.length : 0) {
+    if (!records || count <= 0) return 0;
+
+    let connected = 0;
+    let voiced = 0;
+
+    for (let i = 0; i < count; i++) {
+      const h = records[i];
+      if (!h) continue;
+
+      h.killed = false;
+      if (!h.enemy || !h.enemy.live || h.enemy.dying) continue;
+      if (!(h.damage > 0)) continue;
+
+      // Topple AWAY from the blast, not away from the shooter. The direction
+      // travels on the record because the explosion knows where it was and this
+      // file does not; a corpse thrown toward the crater is the single most
+      // obvious tell that an explosion was faked.
+      const dx = h.dirX ?? (h.enemy.position.x - player.position.x);
+      const dz = h.dirZ ?? (h.enemy.position.z - player.position.z);
+
+      h.region = h.region || 'body';
+      h.killed = h.enemy.hurt(h.damage, h.region, dx, dz);
+      state.dealt += h.damage;
+      connected++;
+
+      // The body sound, never the headshot sound. A blast cannot land a
+      // headshot, and the two cues exist to tell the player which payout they
+      // just earned - so playing the crit cue here would teach a lie.
+      //
+      // AND ONLY THE FIRST FEW. A frag in a crowd connects with a dozen bodies
+      // in one frame; twelve simultaneous thuds is not "a dozen hits", it is one
+      // mush that arrives on top of the explosion's own report and buries it.
+      // The voice cap in core/audio.js would drop most of them anyway - this
+      // decides WHICH ones get dropped rather than leaving it to allocation
+      // order, and leaves the cap free for the horde the player still has to
+      // hear.
+      if (voiced < BLAST_VOICES) {
+        voiced++;
+        audio?.bodyHit?.({ pitch: h.enemy.spec?.voicePitch || 1 });
+      }
     }
 
     return connected;
@@ -160,6 +244,7 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
   return {
     state,
     applyHits,
+    applyBlast,
     damagePlayer,
     update,
 

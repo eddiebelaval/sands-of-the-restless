@@ -25,6 +25,12 @@ export function createInput(canvas) {
     ads: false,
     interact: false,
 
+    // HELD, not pressed. The grenade is the one action in the game whose input
+    // has a duration: the fuse runs while the key is down, and releasing it is
+    // the throw. A one-shot `pressed('KeyG')` would give the player a timer they
+    // cannot see and cannot stop, which is the mechanic with the wager removed.
+    grenade: false,
+
     // Accumulated mouse delta, drained once per frame by the camera.
     dx: 0,
     dy: 0,
@@ -60,6 +66,7 @@ export function createInput(canvas) {
     state.sprint  = keys.has('ShiftLeft') || keys.has('ShiftRight');
     state.jump    = keys.has('Space');
     state.interact = keys.has('KeyF');
+    state.grenade = keys.has('KeyG');
   }
 
   // -------------------------------------------------------------------------
