@@ -116,6 +116,19 @@ const coneGeo = (r, h, seg) =>
 const tubeGeo = (r, len, seg) =>
   cached(`u${r},${len},${seg}`, () => new THREE.CylinderGeometry(r, r, len, seg, 1, true));
 
+// Open-ended CONE, for the eyepiece shade. Same reasoning as tubeGeo: it is a
+// surface, not a solid, and the player is looking down the inside of it.
+const flareGeo = (rBack, rFront, len, seg) =>
+  cached(`f${rBack},${rFront},${len},${seg}`,
+    () => new THREE.CylinderGeometry(rBack, rFront, len, seg, 1, true));
+
+// Flat annulus in the XY plane, facing +Z. This is the shape of a sight
+// picture: a hole with an opaque surround, seen square-on by an eye sitting on
+// the optic axis. A torus cannot do this job - a torus is a rim, and a rim
+// leaves the whole frame outside it visible.
+const annulusGeo = (ri, ro, seg) =>
+  cached(`a${ri},${ro},${seg}`, () => new THREE.RingGeometry(ri, ro, seg, 1));
+
 /** Axis-aligned block. The workhorse. */
 function box(mat, w, h, d, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(boxGeo(w, h, d), mat);
@@ -146,6 +159,25 @@ function tube(mat, r, len, x, y, z, seg = 18) {
 /** Ring facing down the bore. Rear apertures, barrel bands, scope bells. */
 function ring(mat, r, t, x, y, z, seg = 16) {
   const m = new THREE.Mesh(torusGeo(r, t, seg), mat);
+  m.position.set(x, y, z);
+  return m;
+}
+
+/**
+ * Flat annulus facing the eye. The occluding half of every sight picture in
+ * this file: the hole is what you aim through and the surround is what stops
+ * the rest of the optic competing with it.
+ */
+function annulus(mat, ri, ro, x, y, z, seg = 40) {
+  const m = new THREE.Mesh(annulusGeo(ri, ro, seg), mat);
+  m.position.set(x, y, z);
+  return m;
+}
+
+/** Open cone flaring back toward the eye. The eyepiece shade. */
+function flare(mat, rBack, rFront, len, x, y, z, seg = 28) {
+  const m = new THREE.Mesh(flareGeo(rBack, rFront, len, seg), mat);
+  m.rotation.x = Math.PI / 2;      // +Y (the rBack end) swings round to +Z
   m.position.set(x, y, z);
   return m;
 }
@@ -747,11 +779,12 @@ function palette(M) {
       transparent: true, opacity: 0.20, depthWrite: false,
     }),
 
-    // Optic housing. Double sided, because it is applied to open-ended tubes
-    // and the player is looking down the inside of one of them.
+    // Optic housing. FRONT side only, and the change from DoubleSide is the
+    // single largest thing in this pass. See P.bore above: the inside of the
+    // tube is now a black sleeve rather than a mirror, and the housing's own
+    // faces stop being drawn the moment the eye lands on the optic axis.
     housing: new THREE.MeshStandardMaterial({
       color: 0x24262b, roughness: 0.62, metalness: 0.86,
-      side: THREE.DoubleSide,
       map: T.metalAlbedo, normalMap: T.metalNormal, roughnessMap: T.metalRough,
       normalScale: new THREE.Vector2(0.5, 0.5),
       envMapIntensity: 0.20,
@@ -762,6 +795,65 @@ function palette(M) {
     // and a red dot has no business browning out when an energy cell is
     // swapped on a different weapon.
     dot: new THREE.MeshBasicMaterial({ color: 0xff5236 }),
+
+    // --- the sight picture ---------------------------------------------------
+    //
+    // Five materials that exist for one reason: what the player sees when the
+    // eye goes behind the sight is a different picture from what it sees when
+    // the weapon is at the hip, and almost none of it can be lit. A reticle
+    // that dims when the sun goes behind a pylon is not a reticle, it is a
+    // decal, and the same goes for a night sight and for the inside of a tube.
+    // Everything here is MeshBasic on purpose.
+
+    // Etched reticle line. Near-black, and NOT P.seam: seam is a lit standard
+    // material at metalness 0.70, so a 0.4mm crosshair made of it takes the
+    // colour of whatever is behind the optic and disappears against sand at
+    // exactly the moment somebody is trying to aim at something standing on it.
+    etch: new THREE.MeshBasicMaterial({ color: 0x0a0b0f }),
+
+    // Tritium. The three dots on the pistol and the tip of every front post.
+    // Unlit for the same reason a real one is radioluminescent: a night sight
+    // that only works when the key light happens to catch it is a painted dot.
+    //
+    // Saturated hard, at 0x3f, because the viewmodel is drawn INSIDE the post
+    // chain: tone mapping plus the grade's 1.10 saturation lift take a pale
+    // mint to something indistinguishable from white by the time it reaches
+    // the frame, and three white dots on a black sight is not a night sight,
+    // it is a smudge.
+    tritium: new THREE.MeshBasicMaterial({ color: 0x3fd89a }),
+
+    // Fibre optic: the front bead on the shotgun and the LMG's post tip. Warm
+    // where the tritium is cool, so the two never read as the same part.
+    fibre: new THREE.MeshBasicMaterial({ color: 0xff8f34 }),
+
+    // Flat black bore. Every tube optic gets an inner sleeve of this and its
+    // housing switches to FrontSide, which is two fixes in one line. The
+    // housing was DoubleSide, so the inside of the tube was a polished metal
+    // surface pointed at a desert sun: in the aimed frame the carbine and the
+    // bolt rifle both looked down a glowing gold pipe. And a FrontSide housing
+    // is invisible from an eye sitting on its own axis, because every face of
+    // it is then a backface - which is what lets the sight line be genuinely
+    // clear instead of being a peephole down 230mm of pipe.
+    bore: new THREE.MeshBasicMaterial({ color: 0x0a0b0e, side: THREE.BackSide }),
+
+    // The eyepiece shadow. Cloned per optic in tubeOptic() because its opacity
+    // is animated against that weapon's ADS blend, and one shared material
+    // would mean scoping the bolt rifle also blacked out the carbine sitting
+    // built and idle in the cache.
+    //
+    // DoubleSide because it is applied to two shapes with opposite handedness:
+    // an annulus facing back at the eye, and a cone the eye is looking down
+    // the inside of. One flag is cheaper than two materials that then have to
+    // be kept in step through the fade.
+    shade: new THREE.MeshBasicMaterial({
+      color: 0x04050a, side: THREE.DoubleSide,
+      transparent: true, opacity: 0, depthWrite: false,
+    }),
+
+    // The bright lip on the inside edge of an aperture. Unlit, and NOT P.edge:
+    // see the note in tubeOptic about five concentric mirrors reflecting the
+    // sun disc back down the sight line. A fixed mid grey cannot flare.
+    rim: new THREE.MeshBasicMaterial({ color: 0x71767f }),
 
     // Muzzle flash. Unlit and additive: it is light, not a surface.
     flash: new THREE.MeshBasicMaterial({
@@ -1440,13 +1532,13 @@ function guardHand(P, x, y, z, roll = 0) {
  * its fingers lying across the firing hand's and the heel of its palm filling
  * the frame's left side - which is exactly what a real two-handed hold does.
  */
-function pistolSupportHand(P, x, y, z, rake = 0) {
+function pistolSupportHand(P, x, y, z, rake = 0, hold = null) {
   const g = new THREE.Group();
   g.name = 'vm:supportHand';
   g.position.set(x, y, z);
   g.rotation.x = rake;
 
-  const h = wrappedHand(P, {
+  const h = wrappedHand(P, Object.assign({
     rx: 0.028, ry: 0.032,          // wrapping a hand, not a grip: fatter
     a0: 3.62, dir: -1, wrap: 2.30,
     z0: 0.014, zDir: -1,
@@ -1454,7 +1546,7 @@ function pistolSupportHand(P, x, y, z, rake = 0) {
     back: 0.98,
     thumbA: 2.55, thumbTilt: 0.96,
     wristA: -0.50, wristZ: -1.15,
-  });
+  }, hold));
   h.rotation.x = -Math.PI / 2;
   g.add(h);
 
@@ -1682,23 +1774,136 @@ function ironSights(P, sightY, railTop, frontZ, rearZ, detail, hooded = true, pa
 }
 
 /**
- * Tube optic: red dot or magnified scope, depending on the radii you hand it.
+ * Reticle: the marks that sit on the aim point.
  *
- * The reason this exists at all is silhouette. Without an optic the top line
+ * Built at a plane a known distance from the eye and sized as fractions of the
+ * aperture radius `R`, so one set of numbers works for a 10 degree red dot and
+ * for a 16 degree scope without either of them being retuned by eye. Angular
+ * size is the only size a reticle has.
+ *
+ * Everything here is P.etch or P.dot - unlit - and every element is authored
+ * OFF the exact centre except the aiming dot itself. That is not a style
+ * choice. Solving the ADS pose puts the optic axis exactly on the camera axis,
+ * and the camera axis is where the hitscan ray comes from, so a 1mm bar laid
+ * across the middle of this plane does not sit NEAR the impact point, it sits
+ * ON it, and the player is aiming at the back of their own crosshair.
+ */
+function reticleParts(P, R, x, y, z, kind) {
+  const out = [];
+  const at = (mat, w, h, dx, dy) =>
+    out.push(box(mat, w, h, 0.0006, x + dx, y + dy, z));
+
+  if (kind === 'duplex') {
+    // Four heavy posts stopping well short of centre, four fine lines carrying
+    // on in to it. The step between them is the whole read of a duplex: it
+    // draws the eye down the thick bar to a point it cannot quite see.
+    //
+    // The widths are set in PIXELS and then converted, because that is the
+    // only unit a reticle has. On the bolt rifle the aperture plane is 124mm
+    // from the eye, which is 6660 pixels per metre at this frame height, so
+    // the heavy post is 7.5px and the fine line is 2.1px. The first draft ran
+    // these at 0.055R and 0.016R - 14px and 4px - and the aimed frame came
+    // back with two black planks across it.
+    const thick = R * 0.030;
+    const fine = R * 0.0085;
+    const postIn = R * 0.42, postOut = R * 0.99;
+    const postLen = postOut - postIn, postMid = (postOut + postIn) / 2;
+
+    at(P.etch, postLen, thick, -postMid, 0);
+    at(P.etch, postLen, thick, postMid, 0);
+    at(P.etch, thick, postLen, 0, -postMid);
+    at(P.etch, thick, postLen, 0, postMid);
+
+    at(P.etch, postIn * 2, fine, 0, 0);
+    at(P.etch, fine, postIn * 2, 0, 0);
+
+    // Mildots down the lower post and out along the left, which is where a
+    // shooter reads holdover and wind. Three each, so it is a scale rather
+    // than decoration.
+    for (let i = 1; i <= 3; i++) {
+      at(P.etch, fine * 2.4, fine * 2.4, 0, -postIn * i / 3.4);
+      at(P.etch, fine * 2.4, fine * 2.4, -postIn * i / 3.4, 0);
+    }
+    // Illuminated centre, and it sits half a millimetre nearer the eye than
+    // the etched lines. Coplanar with them it z-fights the crosshair it is
+    // supposed to sit in the middle of, and the aim point flickers.
+    out.push(box(P.dot, R * 0.026, R * 0.026, 0.0006, x, y, z + 0.0008));
+    return out;
+  }
+
+  // 'dot': the circle-dot every red dot in the world uses. The ring is what
+  // lets the eye centre itself when the dot is over something the same colour
+  // as the dot, which in a desert is most things.
+  //
+  // 0.22 of the aperture, not 0.62. A red dot's ring is about 68 minutes of
+  // angle inside a field of about 900, which is under a tenth of the radius;
+  // 0.62 put a dashed orange hoop round two thirds of the window and read as a
+  // targeting overlay rather than as a sight. 0.22 is still four times a real
+  // one, which is the concession this makes to a 1440 pixel frame.
+  const seg = 36;
+  const rr = R * 0.22;
+  const t = R * 0.016;
+  for (let i = 0; i < seg; i++) {
+    const a = (i / seg) * Math.PI * 2;
+    const m = box(P.dot, t * 2.4, t, 0.0006,
+      x + Math.cos(a) * rr, y + Math.sin(a) * rr, z);
+    m.rotation.z = a + Math.PI / 2;
+    out.push(m);
+  }
+  out.push(box(P.dot, R * 0.042, R * 0.042, 0.0006, x, y, z + 0.0008));
+  return out;
+}
+
+/**
+ * Tube optic, and the sight picture you get when your eye goes behind it.
+ *
+ * The reason the optic exists at all is silhouette. Without one the top line
  * of every one of these weapons is a single flat horizontal edge from receiver
  * to muzzle, which is the one shape that reads as "grey box" rather than as a
  * weapon. An optic is the only part of a rifle that breaks that line
  * vertically, and it is the first thing the eye uses to tell one gun from
  * another at a glance.
  *
- * Built around an OPEN tube with a double-sided housing so the sight line is
- * genuinely clear: the viewmodel draws into the already-composited colour
- * buffer, so a translucent lens with the world behind it is a scope you can
- * actually see through. That costs one material flag and is the difference
- * between an optic and a black disc parked over the crosshair.
+ * THE SIGHT PICTURE IS A SECOND, SEPARATE MODEL, and that is the load-bearing
+ * idea in this function.
+ *
+ * The previous version tried to make one piece of geometry do both jobs: an
+ * open tube you could genuinely look down. Measured, that cannot work, and the
+ * arithmetic is worth writing down because it is not obvious and it cost this
+ * pass an hour. The clear field through a plain tube is set by its NARROWEST
+ * annulus, seen from the eye. On the carbine the ocular rim sits 224mm from
+ * the eye at a radius of 19mm, which is a half-angle of 4.8 degrees against a
+ * 27.5 degree half-frame: a hole a tenth of the screen across. Widening the
+ * objective does not help, because the objective is further away again - to
+ * open the carbine to 10 degrees the front bell would have to be 77mm in
+ * radius. A long tube is a peephole. That is what the aimed screenshots showed
+ * and it is what the owner meant by "there is no sight picture".
+ *
+ * What a scope actually presents to an eye at the correct relief is a field of
+ * view, not a tube. So at full ADS the tube, the objective, the bell and the
+ * lens all stop drawing, and an APERTURE takes their place: a flat annulus
+ * sized from the eye distance and the field angle you want, with the reticle
+ * on the axis behind it. Outside that annulus the red dots leave the frame
+ * clear - you can see round a 1x optic, and pretending otherwise is worse than
+ * useless in a horde game - while the magnified scope carries a flared
+ * eyepiece shade that takes the rest of the frame out entirely. That last part
+ * is the "scope body that occludes the frame".
+ *
+ * Returns the group plus two lists the animation layer crossfades: `hide` is
+ * the optic as an object, `show` is the optic as a sight.
  */
 function tubeOptic(P, axisY, mountTop, z, detail, opt = {}) {
   const g = new THREE.Group();
+  const show = [];
+  // Everything that is not part of the sight picture is part of the object,
+  // and the whole object goes away when the eye gets behind it. That is not a
+  // shortcut: a red dot's own mount sits four to eight degrees below its axis,
+  // which is INSIDE a ten degree window, so leaving the optic standing while
+  // the aperture opens puts a grey block and two turret knobs inside the
+  // sight picture. Collected by traversal at the end rather than by hand,
+  // because a part added later and forgotten is exactly that grey block.
+  const H = (m) => { g.add(m); return m; };
+  const S = (m) => { g.add(m); show.push(m); return m; };
 
   const rTube = opt.rTube ?? 0.019;
   const rBell = opt.rBell ?? rTube;
@@ -1720,6 +1925,15 @@ function tubeOptic(P, axisY, mountTop, z, detail, opt = {}) {
     const cap = box(P.dark, 0.040, 0.010, 0.018, 0, axisY + rTube * 0.72, zz);
     g.add(cap);
     detail.push(cap);
+    // Four cap screws per ring, two a side. A scope ring with no fasteners in
+    // it is a bracelet.
+    for (const sx of [-1, 1]) {
+      for (const dz of [-0.0055, 0.0055]) {
+        const scr = rod(P.edge, 0.0021, 0.0021, 0.0030,
+          sx * 0.0175, axisY + rTube * 0.60, zz + dz, 'y', 6);
+        g.add(scr); detail.push(scr);
+      }
+    }
   }
 
   // --- body ----------------------------------------------------------------
@@ -1727,37 +1941,47 @@ function tubeOptic(P, axisY, mountTop, z, detail, opt = {}) {
   // the world HDRI it reflected the sun disc straight back down the sight
   // line: five concentric mirror rings turned the whole optic into one blown
   // white blob sitting over the crosshair.
-  g.add(tube(P.housing, rTube, len, 0, axisY, z));
+  H(tube(P.housing, rTube, len, 0, axisY, z));
+  // The inner sleeve, 0.3mm inside the housing. Flat black and BackSide, so
+  // this is the ONLY thing the inside of the tube ever shows.
+  H(tube(P.bore, rTube - 0.0004, len * 0.998, 0, axisY, z));
+
   if (rBell > rTube) {
-    g.add(tube(P.housing, rBell, len * 0.30, 0, axisY, front + len * 0.15));
-    g.add(ring(P.metal, rBell, 0.0026, 0, axisY, front, 18));
+    H(tube(P.housing, rBell, len * 0.30, 0, axisY, front + len * 0.15));
+    H(tube(P.bore, rBell - 0.0004, len * 0.30 * 0.99, 0, axisY, front + len * 0.15));
+    H(ring(P.metal, rBell, 0.0026, 0, axisY, front, 18));
   } else {
-    g.add(ring(P.metal, rTube, 0.0026, 0, axisY, front, 18));
+    H(ring(P.metal, rTube, 0.0026, 0, axisY, front, 18));
   }
-  g.add(ring(P.metal, rTube, 0.0026, 0, axisY, back, 18));
+  H(ring(P.metal, rTube, 0.0026, 0, axisY, back, 18));
+
+  // Knurled focus collar and a magnification band, both on the ocular half.
+  // A scope tube with nothing on it between the rings is a length of pipe.
+  H(rod(P.dark, rTube + 0.0022, rTube + 0.0022, 0.014, 0, axisY, back - 0.020, 'z', 20));
+  for (let i = 0; i < 18; i++) {
+    const a = (i / 18) * Math.PI * 2;
+    const k = box(P.metal, 0.0016, 0.0016, 0.012,
+      Math.cos(a) * (rTube + 0.0032), axisY + Math.sin(a) * (rTube + 0.0032), back - 0.020);
+    k.rotation.z = a;
+    g.add(k);
+  }
 
   // Sunshade: two rings on the objective, not a solid hood. Rings read as a
   // shade from every angle and never close the aperture.
-  g.add(ring(P.metal, rBell + 0.002, 0.0022, 0, axisY, front - 0.012, 16));
-  g.add(ring(P.metal, rBell + 0.002, 0.0022, 0, axisY, front - 0.026, 16));
+  H(ring(P.metal, rBell + 0.002, 0.0022, 0, axisY, front - 0.012, 16));
+  H(ring(P.metal, rBell + 0.002, 0.0022, 0, axisY, front - 0.026, 16));
 
-  // --- glass and reticle ---------------------------------------------------
+  // --- glass, and the hip reticle ------------------------------------------
   const glass = new THREE.Mesh(cylGeo(rBell - 0.002, rBell - 0.002, 0.0015, 18), P.lens);
   glass.rotation.x = Math.PI / 2;
   glass.position.set(0, axisY, front + 0.002);
-  g.add(glass);
+  H(glass);
 
-  const dot = new THREE.Mesh(boxGeo(0.0030, 0.0030, 0.0015), P.dot);
-  dot.position.set(0, axisY, z - len * 0.18);
-  g.add(dot);
-
-  if (opt.crosshair) {
-    // A magnified optic gets a real reticle. Thin enough to read as etched
-    // glass rather than as two sticks glued inside the tube.
-    const rz = z - len * 0.18;
-    g.add(box(P.seam, rTube * 1.7, 0.0016, 0.0010, 0, axisY, rz));
-    g.add(box(P.seam, 0.0016, rTube * 1.7, 0.0010, 0, axisY, rz));
-  }
+  // Seen from the hip this is the whole reticle, and it has to stay small: at
+  // the hip the optic is 40mm across on screen and anything bigger than this
+  // is a red smear rather than a dot sitting in a window.
+  H(new THREE.Mesh(boxGeo(0.0030, 0.0030, 0.0015), P.dot))
+    .position.set(0, axisY, z - len * 0.18);
 
   // --- turrets -------------------------------------------------------------
   const tz = z + len * 0.06;
@@ -1765,9 +1989,63 @@ function tubeOptic(P, axisY, mountTop, z, detail, opt = {}) {
   const tCap = rod(P.dark, 0.009, 0.009, 0.005, 0, axisY + rTube + 0.017, tz, 'y', 10);
   g.add(tCap);
   detail.push(tCap);
+  // Click index marks round the turret cap.
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const tk = box(P.dark, 0.0012, 0.004, 0.0012,
+      Math.cos(a) * 0.0092, axisY + rTube + 0.010, tz + Math.sin(a) * 0.0092);
+    g.add(tk); detail.push(tk);
+  }
   g.add(rod(P.metal, 0.010, 0.011, 0.017, rTube + 0.007, axisY, tz, 'x', 10));
 
-  return g;
+  // -------------------------------------------------------------------------
+  // the sight picture
+  // -------------------------------------------------------------------------
+  //
+  // The sight node for a tube optic is its own axis at its own centre, so the
+  // eye lands at local z = relief + sight.z = relief + z, and the ocular plane
+  // is len/2 forward of that. `field` is the half-angle of clear view we want.
+  // The aperture radius falls straight out of the two and is the only number
+  // here that is not a consequence of something else.
+  const az = back + 0.002;                       // aperture plane, at the ocular
+  const eyeDist = (opt.relief ?? 0.24) - len / 2 - 0.002;
+  const field = opt.field ?? 0.185;
+  const R = eyeDist * Math.tan(field);
+
+  const shadeMat = P.shade.clone();
+  shadeMat.name = 'shade';
+
+  if (opt.tunnel) {
+    // Magnified optic. The surround goes all the way out: an open cone flaring
+    // back toward the eye, whose narrowest point is its front rim, so the
+    // clear circle is exactly R and everything outside it is the inside of the
+    // eyepiece. The back rim lands 30mm short of the eye at a radius of 4R,
+    // which subtends far more than the frame does - the cone leaves the
+    // picture rather than ending inside it.
+    const gap = eyeDist - 0.030;
+    S(annulus(shadeMat, R, R * 1.35, 0, axisY, az, 48));
+    S(flare(shadeMat, R * 4.0, R * 1.02, gap, 0, axisY, az + gap / 2, 32));
+  } else {
+    // 1x optic. The surround is the housing and stops there, because you can
+    // see around a red dot with both eyes open and blacking out the frame on a
+    // close-quarters weapon would be a downgrade dressed as a feature.
+    S(annulus(shadeMat, R, R * 1.22, 0, axisY, az, 48));
+  }
+
+  // A thin bright bevel on the inside edge of the aperture. Without it the
+  // hole has no edge and the black surround reads as a hole in the render
+  // rather than as the back of an optic.
+  S(ring(P.rim, R * 1.01, R * 0.020, 0, axisY, az - 0.0008, 40));
+
+  const rz = az - 0.004;
+  for (const m of reticleParts(P, R, 0, axisY, rz, opt.tunnel ? 'duplex' : 'dot')) S(m);
+
+  const showSet = new Set(show);
+  const hide = [];
+  g.traverse((o) => { if (o.isMesh && !showSet.has(o)) hide.push(o); });
+  for (const m of show) m.visible = false;
+
+  return { root: g, hide, show, reticle: new THREE.Vector3(0, axisY, rz) };
 }
 
 /** Curved box magazine: stacked segments, each rotated a little further. */
@@ -1788,6 +2066,155 @@ function curvedMag(P, x, y, z, segs = 4, w = 0.028, d = 0.052, curve = 0.10) {
   g.add(box(P.dark, w + 0.004, 0.008, d * 0.7,
     0, -segH * segs * 0.97, -Math.sin(curve * segs) * segH * segs * 0.55));
   return g;
+}
+
+// ---------------------------------------------------------------------------
+// hardware
+//
+// Six things a real firearm has that a modelled one usually does not, written
+// once because the MK9 got them by hand in the last pass and the other six did
+// not. All of them are two to six parts and all of them go into `detail`, so
+// the low-fidelity path drops the lot.
+//
+// The reason to spend triangles here rather than anywhere else is that this
+// viewmodel is drawn through its own 55 degree lens in its own scene and
+// carries a few hundred triangles against the world's twenty-odd thousand. A
+// screw head is four hundred microns across in weapon space and eight pixels
+// across on screen, which is a better return than any prop in the game.
+//
+// Every helper takes a surface NORMAL rather than a rotation, because the
+// thing that goes wrong when these are placed by hand is not the position, it
+// is a fastener lying flat in the surface it is supposed to be standing on.
+// ---------------------------------------------------------------------------
+
+/** Turn a face normal into the rotation that stands local +Y along it. */
+function faceRot(g, normal) {
+  if (normal === 'x') g.rotation.z = -Math.PI / 2;
+  else if (normal === '-x') g.rotation.z = Math.PI / 2;
+  else if (normal === 'z') g.rotation.x = Math.PI / 2;
+  else if (normal === '-z') g.rotation.x = -Math.PI / 2;
+  else if (normal === '-y') g.rotation.x = Math.PI;
+  return g;
+}
+
+/**
+ * A fastener: slotted pan head, polished lip, dark slot.
+ *
+ * Three parts and it is the single cheapest thing in this file that says
+ * "assembled" rather than "moulded". A receiver with no visible fasteners is a
+ * shape; a receiver with six is a machine somebody put together.
+ */
+function screw(P, x, y, z, normal = 'x', r = 0.0024) {
+  const g = faceRot(new THREE.Group(), normal);
+  g.position.set(x, y, z);
+  g.add(new THREE.Mesh(cylGeo(r, r * 1.06, 0.0018, 8), P.metal));
+  const lip = new THREE.Mesh(cylGeo(r * 0.96, r * 0.96, 0.0004, 8), P.edge);
+  lip.position.y = 0.0010;
+  g.add(lip);
+  g.add(box(P.seam, r * 1.9, 0.0007, r * 0.44, 0, 0.0013, 0));
+  return g;
+}
+
+/** A run of them along one axis. */
+function screwRun(P, g, detail, n, x, y, z, step, axis, normal, r) {
+  for (let i = 0; i < n; i++) {
+    const s = screw(P,
+      x + (axis === 'x' ? i * step : 0),
+      y + (axis === 'y' ? i * step : 0),
+      z + (axis === 'z' ? i * step : 0), normal, r);
+    g.add(s); detail.push(s);
+  }
+}
+
+/**
+ * Stamped markings: a shallow raised plate with rows of fine dark bars on it.
+ *
+ * Deliberately NOT legible. Real proof marks and serials are 2mm high and at
+ * 55 degrees through a viewmodel lens they are texture, not text - the eye
+ * reads "there is writing there" from the rhythm of a short row over a long
+ * row and never resolves a glyph. Anything that DID resolve would have to say
+ * something, and a weapon with invented lettering on it is a worse object than
+ * one with none.
+ */
+function stamp(P, detail, w, h, x, y, z, normal = 'x', seed = 1) {
+  const g = faceRot(new THREE.Group(), normal);
+  g.position.set(x, y, z);
+  g.add(box(P.dark, w, 0.0006, h, 0, 0.0004, 0));
+
+  const rows = 3;
+  for (let r = 0; r < rows; r++) {
+    const zz = -h / 2 + h * (r + 0.7) / (rows + 0.4);
+    // Two or three words per row, lengths off a deterministic hash so the
+    // rhythm differs weapon to weapon without anybody choosing it.
+    let cursor = -w * 0.42;
+    let k = 0;
+    while (cursor < w * 0.30 && k < 4) {
+      const wl = w * (0.10 + hash2(r * 3.1 + k, seed, seed) * 0.20);
+      const bar = box(P.seam, wl, 0.0006, h * 0.13, cursor + wl / 2, 0.0009, zz);
+      g.add(bar); detail.push(bar);
+      cursor += wl + w * 0.055;
+      k++;
+    }
+  }
+  detail.push(g);
+  return g;
+}
+
+/**
+ * Sling loop: a strap with daylight under it. The gap is the point - a solid
+ * bar on the side of a stock is a lug, and the thing that reads as a sling
+ * mount at any distance is the hole.
+ */
+function slingLoop(P, w, t, gap, x, y, z, normal = '-y') {
+  const g = faceRot(new THREE.Group(), normal);
+  g.position.set(x, y, z);
+  g.add(box(P.metal, w, t, 0.007, 0, 0, -(gap / 2 + 0.0035)));
+  g.add(box(P.metal, w, t, 0.007, 0, 0, gap / 2 + 0.0035));
+  g.add(box(P.metal, w, t, gap + 0.014, 0, t + 0.0018, 0));
+  return g;
+}
+
+/**
+ * Selector switch: a lever on a boss, with its two or three detent marks
+ * stamped round it. The marks are what make it a control rather than a tab.
+ */
+function selector(P, detail, x, y, z, angle = -0.5, side = -1, marks = 3) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  g.add(rod(P.metal, 0.0062, 0.0062, 0.004, 0, 0, 0, 'x', 10));
+  const lever = box(P.dark, 0.005, 0.0075, 0.024, side * 0.0035, 0, -0.008);
+  lever.rotation.x = angle;
+  g.add(lever); detail.push(lever);
+  const tip = box(P.edge, 0.0052, 0.0022, 0.008, side * 0.0035, 0.0030, -0.017);
+  tip.rotation.x = angle;
+  g.add(tip); detail.push(tip);
+  for (let i = 0; i < marks; i++) {
+    const a = -0.9 + i * 0.9;
+    const m = box(P.seam, 0.0016, 0.0016, 0.005,
+      side * 0.0026, Math.cos(a) * 0.0092, -Math.sin(a) * 0.0092);
+    m.rotation.x = a;
+    g.add(m); detail.push(m);
+  }
+  return g;
+}
+
+/** A row of dome rivets. The one detail that says "stamped sheet steel". */
+function rivets(P, g, detail, n, x, y, z, step, axis, normal = 'x', r = 0.0022) {
+  for (let i = 0; i < n; i++) {
+    const d = faceRot(new THREE.Group(), normal);
+    d.position.set(
+      x + (axis === 'x' ? i * step : 0),
+      y + (axis === 'y' ? i * step : 0),
+      z + (axis === 'z' ? i * step : 0));
+    const dome = new THREE.Mesh(unitBall(8), P.metal);
+    dome.scale.set(r * 2, r * 1.1, r * 2);
+    d.add(dome);
+    const hi = new THREE.Mesh(unitBall(6), P.edge);
+    hi.scale.set(r * 1.0, r * 0.5, r * 1.0);
+    hi.position.y = r * 0.42;
+    d.add(hi);
+    g.add(d); detail.push(d);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1925,34 +2352,92 @@ function buildPistol(P) {
   // which is where the sight base already sits, and the only bright parts left
   // at SIGHT_Y are the two blade crowns - which are what the front post is
   // supposed to be levelled against.
-  slide.add(box(P.dark, 0.026, 0.007, 0.016, 0, 0.0305, -0.012));       // sight base
+  // THE STACK-UP IN FRONT OF THE BLADES, which is the bug this block is really
+  // about and which no screenshot was ever going to name.
+  //
+  // The three dots have been in this file for two passes and have never drawn a
+  // single pixel. They sit on the rear faces of the blades at z = -0.0046, and
+  // the racking hook - 24mm wide, spanning y 0.0253 to 0.0343 at z = -0.0005 -
+  // stands directly between them and the eye, with the sight base filling
+  // whatever the hook misses up to y = 0.034. From an eye on the sight line the
+  // entire rear face of this sight was covered by two parts in front of it.
+  // Isolating the viewmodel against a flat background and zooming the aimed
+  // crop to eight times is what found it; the lit frame just looked "dark".
+  //
+  // So the base drops 1mm and the hook drops 5.8mm, which leaves 5.9mm of blade
+  // face standing in clear air where a dot can be seen. The hook survives as a
+  // ledge - 2.3mm proud of the slide flat instead of 4 - because its job is to
+  // break the top line at the nearest point in frame and it still does that.
+  // The sight picture outranks it.
+  //
+  // Base also narrowed 26mm -> 21mm. It is not a sight, it is what a sight is
+  // bolted to, and at this range every millimetre of it is two more pixels of
+  // black either side of a notch that was already losing the contest.
+  slide.add(box(P.dark, 0.021, 0.006, 0.016, 0, 0.0290, -0.012));       // sight base
 
-  // The notch floor, in the darkest material in the palette and recessed 1.5mm
-  // behind the blade faces, so the gap between the blades reads as a HOLE
-  // rather than as a shadow. A notch you cannot see through is a bump.
-  slide.add(box(P.seam, 0.0092, 0.010, 0.012, 0, SIGHT_Y - 0.009, -0.0125));
+  // The notch floor, in the flat unlit black and dropped a further millimetre,
+  // so the gap between the blades reads as a HOLE rather than as a shadow. A
+  // notch you cannot see through is a bump.
+  //
+  // P.etch and not P.seam: seam is a lit metal at metalness 0.70 and in the
+  // avenue it takes the colour of the sky, which put a pale grey floor 4mm
+  // under the aim point on the only weapon everybody starts with.
+  slide.add(box(P.etch, 0.0110, 0.010, 0.012, 0, SIGHT_Y - 0.0100, -0.0125));
 
+  // Blades narrowed and moved out. The notch goes 9.2mm -> 10.8mm and the
+  // front post 5.2mm -> 4.8mm, which takes the post from 44 percent of the
+  // notch to 31: light bars a third of the notch wide on each side, which is
+  // the ratio a shooter is actually centring on. Below about a quarter the
+  // bars close up and the picture becomes a black square with a black lump in
+  // it, which is what the aimed screenshot showed.
   for (const side of [-1, 1]) {
-    slide.add(box(P.dark, 0.0084, 0.012, 0.014, side * 0.0088, SIGHT_Y - 0.0055, -0.012));
+    slide.add(box(P.dark, 0.0072, 0.012, 0.014, side * 0.0090, SIGHT_Y - 0.0055, -0.012));
     // Crown of each blade. It stops at the notch edge rather than running the
     // full width, so it frames the aperture instead of flooring it.
-    S(box(P.edge, 0.0088, 0.0016, 0.014, side * 0.0088, SIGHT_Y - 0.0003, -0.012));
-    S(box(P.edge, 0.0034, 0.0034, 0.0022, side * 0.0088, SIGHT_Y - 0.006, -0.0046));
+    S(box(P.edge, 0.0076, 0.0016, 0.014, side * 0.0090, SIGHT_Y - 0.0003, -0.012));
+    // A bright sliver down the inner wall of the notch. The crowns give the
+    // notch a top edge and nothing gave it sides, so the hole had no corners.
+    // 12 pixels off the axis at this range - nowhere near the aim point.
+    S(box(P.edge, 0.0010, 0.0085, 0.014, side * 0.0059, SIGHT_Y - 0.0056, -0.012));
+  }
+
+  // The three dots, and with the stack-up above out of the way this is the
+  // change that makes the pistol sight picture legible rather than merely
+  // correct.
+  //
+  // They were P.edge - a polished near-mirror at metalness 0.96 - so a dot was
+  // bright when the key happened to catch it and gone the rest of the time.
+  // Tritium is unlit by construction, in both senses: the material is
+  // MeshBasic, so these are the one part of this weapon whose value does not
+  // depend on where the sun is standing. That is also what a real one is for.
+  //
+  // The rear pair sit 3.7mm under the sight line and the front one 5.2mm, and
+  // the difference between those two numbers is the whole trick: the front
+  // blade is 552mm from the eye and the rear is 394mm, so an offset 1.4 times
+  // larger subtends the same angle and the three dots come out LEVEL on
+  // screen. Authored at one offset they stack diagonally and the sight reads
+  // as broken by an amount nobody can name.
+  for (const side of [-1, 1]) {
+    S(box(P.tritium, 0.0028, 0.0028, 0.0018, side * 0.0090, SIGHT_Y - 0.0037, -0.0044));
   }
 
   // The hook, overhanging the breech face. Capped in plain gunmetal rather than
   // the polished material for the reason above: at ADS this is the nearest part
   // of the weapon to the eye and a mirror here would sit under the notch and
   // flare.
-  slide.add(box(P.dark, 0.024, 0.009, 0.008, 0, 0.0298, 0.0035));
-  S(box(P.metal, 0.0244, 0.0013, 0.008, 0, 0.0340, 0.0035));
+  slide.add(box(P.dark, 0.024, 0.008, 0.008, 0, 0.0275, 0.0035));
+  S(box(P.metal, 0.0244, 0.0013, 0.008, 0, 0.0320, 0.0035));
 
   // Front: a narrow blade on a low ramp, dot matched to the rear pair so the
-  // three read as one set rather than as three unrelated specks.
+  // three read as one set rather than as three unrelated specks. The dot's
+  // lower edge clears the top of the notch floor as seen from the eye, which
+  // is 0.0316 at this range - a millimetre under it and the bottom half of the
+  // front dot is behind the rear sight and the set reads as two dots and a
+  // sliver.
   slide.add(box(P.dark, 0.008, 0.005, 0.015, 0, 0.0305, -0.164));
-  slide.add(box(P.dark, 0.0052, 0.012, 0.008, 0, SIGHT_Y - 0.0055, -0.164));
-  S(box(P.edge, 0.0056, 0.0015, 0.008, 0, SIGHT_Y - 0.0003, -0.164));
-  S(box(P.edge, 0.0034, 0.0034, 0.0022, 0, SIGHT_Y - 0.006, -0.1602));
+  slide.add(box(P.dark, 0.0048, 0.012, 0.008, 0, SIGHT_Y - 0.0055, -0.164));
+  S(box(P.edge, 0.0052, 0.0015, 0.008, 0, SIGHT_Y - 0.0003, -0.164));
+  S(box(P.tritium, 0.0036, 0.0034, 0.0018, 0, SIGHT_Y - 0.0052, -0.1598));
 
   g.add(slide);
 
@@ -2061,8 +2546,61 @@ function buildPistol(P) {
   g.add(pistolGuard(P, 0, -0.004, -0.052, detail));
 
   // --- hands: a two-handed hold, support fingers laid over the firing hand --
-  g.add(gripHand(P, 0.000, -0.062, 0.008, -0.33));
-  g.add(pistolSupportHand(P, -0.013, -0.056, 0.002, -0.33));
+  //
+  // THE HOLDS ARE ROTATED, and this is the open item the last agent left the
+  // `hold` hook for and never used.
+  //
+  // The defect: on this weapon and no other, the camera looks straight down at
+  // two hand BACKS - two smooth vaults - while every phalanx, joint and
+  // fingertip three passes of this file went into sits on the far side of the
+  // grip where nothing can see it.
+  //
+  // SOLVE FOR THE VISIBLE SECTOR RATHER THAN GUESSING. In the canonical grip
+  // frame arc angle 0 is the right flank, 90 the front strap, 180 the left
+  // flank and 270 the backstrap. The hand's local frame reaches weapon space
+  // through Rx(-PI/2) inside wrappedHand and Rx(rake) on the group, which is
+  // one rotation of -1.90 radians, so an outward normal at angle `a` lands in
+  // weapon space at (cos a, -0.324 sin a, -0.946 sin a). The eye sits at
+  // (-0.094, 0.152, 0.417) from this hand, so a surface faces it when
+  //
+  //     -0.203 cos a - 0.961 sin a  >  0
+  //
+  // which is true for a between 168 and 348 degrees. THAT is the sector this
+  // camera has: 180 degrees of the wrap, centred on 258 - equivalently -102 -
+  // and everything outside it is modelled for nobody.
+  //
+  // Against that, the shipped hold put the knuckle line at -45 and 68 degrees
+  // of metacarpal behind it, so the vault covered -113 to -45 and the fingers
+  // ran from -45 straight out of the sector at -12. A third of one phalanx
+  // visible, and a vault sitting near the middle of the shot.
+  //
+  // A first attempt moved the knuckle line to -76 and made it WORSE, which is
+  // the useful half of this note. It centred the vault on -102 - the exact
+  // middle of the sector - where a smooth dome presents its maximum apparent
+  // area, and it left one 65 degree phalanx spanning the whole window with no
+  // joint anywhere in it. Two bigger, smoother domes. Rendering it is what
+  // caught that; the arithmetic said it was an improvement.
+  //
+  // So: -112. The vault runs -158 to -112, out at the oblique far edge where
+  // it is foreshortened; the knuckle line lands 10 degrees off the sector
+  // centre where its lit crest is square to the eye; the proximal phalanx
+  // spans -112 to -55; and the first interphalangeal joint sits at -55, in
+  // frame, on the near side of the grip, for the first time. Two rows of
+  // articulation where there were none. `thumbA` and `wristA` are re-based by
+  // the same rotation so the thumb and the wrist do not move at all.
+  g.add(gripHand(P, 0.000, -0.062, 0.008, -0.33, false, {
+    back: 0.86,
+  }));
+
+  // Same solve on the support hand, which runs the other way round (dir = -1).
+  // Its knuckle line goes from 207 degrees - the left flank, edge-on to this
+  // camera and therefore a line rather than a form - to 261, a hair off the
+  // sector centre, with the vault pushed out to 261-304 and the fingers
+  // running down across the near side of the frame. Thumb and wrist re-based
+  // as above.
+  g.add(pistolSupportHand(P, -0.013, -0.056, 0.002, -0.33, {
+    back: 0.74,
+  }));
 
   return {
     root: g, detail, mag,
@@ -2084,7 +2622,32 @@ function buildSmg(P) {
   // --- tubular receiver ---------------------------------------------------
   g.add(rod(P.metal, 0.024, 0.024, 0.230, 0, 0.004, -0.120, 'z', 18));
   D(rod(P.edge, 0.0245, 0.0245, 0.010, 0, 0.004, -0.014, 'z', 18));   // rear band
-  D(box(P.seam, 0.004, 0.016, 0.048, 0.023, 0.010, -0.080));          // ejection port
+
+  // Ejection port, with the lip and the extractor that tell the eye which way
+  // the receiver faces. A rectangular dark patch on a tube is a decal; a
+  // rectangular dark patch with a bright lip over it and a claw behind it is a
+  // port. Same three parts the MK9 slide got last pass.
+  D(box(P.seam, 0.004, 0.016, 0.048, 0.023, 0.010, -0.080));
+  D(box(P.edge, 0.0036, 0.0020, 0.050, 0.0236, 0.0186, -0.080));      // port lip
+  D(box(P.dark, 0.005, 0.010, 0.016, 0.0228, 0.010, -0.058));         // extractor
+  D(box(P.metal, 0.007, 0.013, 0.022, 0.0230, 0.006, -0.104));        // deflector
+
+  // Pressed seam down each flank and a weld bead at the rear. This receiver is
+  // a rolled tube, and a rolled tube has a joint.
+  for (const side of [-1, 1]) {
+    D(box(P.seam, 0.0026, 0.004, 0.210, side * 0.0235, -0.010, -0.120));
+  }
+  rivets(P, g, detail, 4, 0.0195, 0.017, -0.030, -0.024, 'z', 'x', 0.0020);
+
+  // Stamped proof panel on the left flank, where nothing else is competing.
+  g.add(stamp(P, detail, 0.036, 0.014, -0.0238, 0.002, -0.062, '-x', 3.0));
+
+  // Selector, above the trigger on the left. Three positions, so it is a
+  // fire-control group rather than a safety catch.
+  g.add(selector(P, detail, -0.0155, -0.014, -0.050, -0.45, -1, 3));
+
+  // Sling loop off the rear band, and another under the handguard collar.
+  D(slingLoop(P, 0.014, 0.0028, 0.010, -0.0210, 0.012, -0.020, '-x'));
 
   // Cocking tube along the left, with the handle that the reload pulls.
   g.add(rod(P.metal, 0.010, 0.010, 0.180, -0.026, 0.020, -0.150, 'z', 12));
@@ -2092,6 +2655,14 @@ function buildSmg(P) {
   bolt.position.set(-0.030, 0.020, -0.100);
   bolt.add(box(P.dark, 0.018, 0.014, 0.030, 0, 0, 0));
   bolt.add(rod(P.metal, 0.006, 0.006, 0.020, -0.012, 0, 0, 'x', 8));
+  // Knurl on the handle, and a polished wear patch on the face a thumb hits
+  // ten thousand times.
+  for (let i = 0; i < 5; i++) {
+    const k = box(P.dark, 0.019, 0.0022, 0.0026, 0, -0.005 + i * 0.0038, -0.012);
+    bolt.add(k); detail.push(k);
+  }
+  const hWear = box(P.edge, 0.0186, 0.0136, 0.0016, 0, 0, -0.0158);
+  bolt.add(hWear); detail.push(hWear);
   g.add(bolt);
 
   // --- lower: grip, trigger group, magazine well --------------------------
@@ -2137,13 +2708,55 @@ function buildSmg(P) {
   g.add(box(P.dark, 0.052, 0.044, 0.012, 0, -0.004, 0.124));           // butt plate
   D(box(P.poly, 0.046, 0.020, 0.048, 0, 0.006, 0.086));                // cheek pad
 
-  // --- sights: drum rear, hooded post front -------------------------------
-  const SIGHT_Y = 0.052;
-  g.add(rod(P.metal, 0.015, 0.015, 0.014, 0, 0.040, -0.022, 'z', 12));  // drum body
-  g.add(ring(P.dark, 0.0055, 0.0020, 0, SIGHT_Y, -0.028, 12));
-  g.add(box(P.metal, 0.012, 0.022, 0.014, 0, 0.038, -0.360));           // front base
-  g.add(ring(P.metal, 0.011, 0.0028, 0, SIGHT_Y, -0.362, 12));          // hood
-  g.add(rod(P.dark, 0.0022, 0.0022, 0.012, 0, SIGHT_Y - 0.005, -0.362, 'y', 8));
+  // --- sights: a fast red dot, over folded backup irons --------------------
+  //
+  // THE DRUM WAS A SOLID CYLINDER SITTING ON THE SIGHT LINE. Its aperture ring
+  // was authored at y = 0.052 and its body ran from y = 0.025 to 0.055 across
+  // z = -0.029 to -0.015, which is to say the ring was drawn on the face of a
+  // solid plug. The aimed frame for this weapon was the back of that plug
+  // filling the lower middle of the screen with the crosshair painted on it.
+  // There was no sight picture here at all, in the most literal sense
+  // available: no hole.
+  //
+  // A drum is also the wrong sight for the weapon. This is the 900rpm gun you
+  // are firing at things eight metres away in a corridor, and what that wants
+  // is a big window and one dot. So the drum becomes a low backup iron that
+  // co-witnesses in the bottom of the window, and the sight line moves 10mm up
+  // to the optic axis.
+  // The optic axis went to 70mm rather than 62 after the aimed frame came
+  // back: the receiver is a 48mm tube and at 62 its crown sat 6.4 degrees
+  // below the axis, which is halfway up an 11.5 degree window. Eight
+  // millimetres of riser pushes it to 8.2, out at seven tenths of the radius,
+  // and the middle of the sight picture goes back to being world.
+  const IRON_Y = 0.046;
+  const SIGHT_Y = 0.070;
+
+  // Backup drum, now entirely below the optic axis: at 207mm from the eye its
+  // crown sits 4.1 degrees down, in the lower third of an 11.5 degree window,
+  // which is where a folded iron belongs.
+  g.add(rod(P.metal, 0.014, 0.014, 0.013, 0, 0.034, -0.022, 'z', 12));
+  D(ring(P.dark, 0.0052, 0.0018, 0, IRON_Y, -0.028, 12));
+  for (let i = 0; i < 8; i++) {                                        // drum clicks
+    const a = (i / 8) * Math.PI * 2;
+    D(box(P.seam, 0.0014, 0.0014, 0.014,
+      Math.cos(a) * 0.0128, 0.034 + Math.sin(a) * 0.0128, -0.022));
+  }
+
+  // Optic rail across the top of the tube, so the mount has something to clamp.
+  g.add(rail(P, 0.086, 0, 0.030, -0.060, detail));
+
+  const optic = tubeOptic(P, SIGHT_Y, 0.038, -0.060, detail, {
+    rTube: 0.017, rBell: 0.018, len: 0.048,
+    relief: 0.245, field: 0.200,
+  });
+  g.add(optic.root);
+
+  // Front iron: hood and post, kept because the hooded muzzle end is half of
+  // what makes this shape read as an SMG rather than as a pipe.
+  g.add(box(P.metal, 0.012, 0.022, 0.014, 0, 0.036, -0.360));          // front base
+  g.add(ring(P.metal, 0.011, 0.0028, 0, IRON_Y, -0.362, 12));          // hood
+  g.add(rod(P.dark, 0.0026, 0.0030, 0.012, 0, IRON_Y - 0.005, -0.362, 'y', 8));
+  D(box(P.fibre, 0.0028, 0.0026, 0.0026, 0, IRON_Y - 0.0018, -0.3596));
 
   g.add(gripHand(P, 0.000, -0.082, -0.006, -0.20));
   // Support hand on the foregrip. Its arm crosses to the left, not back to the
@@ -2152,9 +2765,10 @@ function buildSmg(P) {
   g.add(gripHand(P, -0.010, -0.056, -0.296, 0.10, true));
 
   return {
-    root: g, detail, mag,
+    root: g, detail, mag, optic,
     bolt, boltLift: 0, boltTravel: 0.045,
-    sight: new THREE.Vector3(0, SIGHT_Y, -0.028),   // rear drum aperture
+    sight: new THREE.Vector3(0, SIGHT_Y, -0.060),   // optic axis, tube centre
+    reticle: optic.reticle,
     muzzle: new THREE.Vector3(0, 0.004, -0.414),
     eject: new THREE.Vector3(0.026, 0.010, -0.080),
   };
@@ -2169,14 +2783,40 @@ function buildShotgun(P) {
   g.add(box(P.metal, 0.044, 0.052, 0.200, 0, 0.002, -0.110));
   D(box(P.edge, 0.045, 0.0025, 0.200, 0, 0.028, -0.110));
   D(box(P.seam, 0.004, 0.020, 0.070, 0.022, 0.000, -0.090));      // ejection port
+  D(box(P.edge, 0.0036, 0.0022, 0.072, 0.0226, 0.0112, -0.090));  // port lip
+  D(box(P.dark, 0.006, 0.014, 0.020, 0.0218, -0.002, -0.062));    // shell carrier
   D(box(P.seam, 0.026, 0.004, 0.062, 0, -0.025, -0.090));         // loading gate
+  D(box(P.edge, 0.0240, 0.0016, 0.064, 0, -0.0272, -0.090));      // gate lip, thumb-worn
+
+  // Cross-bolt safety through the rear of the trigger group, a red band on the
+  // side that shows when it is off. It is the one control on this weapon and
+  // it is 6mm, and it is worth every triangle: a receiver with no controls on
+  // it is a billet, and this one is 44mm wide and always in frame.
+  D(rod(P.dark, 0.0042, 0.0042, 0.048, 0, -0.018, -0.038, 'x', 10));
+  D(rod(P.core, 0.0044, 0.0044, 0.005, -0.0225, -0.018, -0.038, 'x', 10));
+
+  // Takedown pins, receiver screws, and a proof panel on the left flank.
+  screwRun(P, g, detail, 2, 0.0222, 0.014, -0.052, -0.062, 'z', 'x', 0.0026);
+  screwRun(P, g, detail, 2, -0.0222, 0.014, -0.052, -0.062, 'z', '-x', 0.0026);
+  g.add(stamp(P, detail, 0.042, 0.016, -0.0226, 0.004, -0.140, '-x', 7.0));
+
+  // Sling swivels: one under the magazine tube cap, one under the butt. A
+  // fighting shotgun without a sling is a prop, and the loop is the part of a
+  // sling that survives at this scale.
+  D(slingLoop(P, 0.013, 0.0026, 0.009, 0, -0.032, -0.548, '-y'));
 
   // --- barrel over magazine tube -----------------------------------------
   g.add(rod(P.dark, 0.017, 0.018, 0.420, 0, 0.008, -0.420, 'z', 16));
   g.add(rod(P.metal, 0.012, 0.012, 0.360, 0, -0.020, -0.390, 'z', 14));
   g.add(box(P.metal, 0.014, 0.030, 0.016, 0, -0.006, -0.560));    // barrel/tube band
+  D(screw(P, 0, -0.021, -0.560, '-x', 0.0026));                   // band clamp screw
   D(ring(P.edge, 0.018, 0.0022, 0, 0.008, -0.626, 16));           // muzzle crown
   g.add(rod(P.metal, 0.011, 0.011, 0.026, 0, -0.020, -0.560, 'z', 10)); // tube cap
+  for (let i = 0; i < 6; i++) {                                   // cap knurl
+    const a = (i / 6) * Math.PI * 2;
+    D(box(P.dark, 0.0018, 0.0018, 0.022,
+      Math.cos(a) * 0.0114, -0.020 + Math.sin(a) * 0.0114, -0.560));
+  }
 
   // --- pump forend, which the reload cycles -------------------------------
   const bolt = new THREE.Group();
@@ -2215,7 +2855,8 @@ function buildShotgun(P) {
   g.add(grip);
   g.add(triggerGroup(P, 0, -0.026, -0.052, 0.030));
 
-  // --- sights: bead on a ramp, shallow rear notch on a riser ---------------
+  // --- sights: GHOST RING and bead, which is what this weapon should always
+  // have carried -----------------------------------------------------------
   //
   // The sight line sits 12mm higher than the first pass, on purpose. At the
   // old height the eye was only 12mm above the top of a 44mm-wide receiver, so
@@ -2223,15 +2864,49 @@ function buildShotgun(P) {
   // nothing behind it. Lifting the line puts the receiver top well down the
   // frame and gives the bead sky and world to read against, which is the whole
   // reason a shotgun has a raised rib in the first place.
+  //
+  // What it carried was a "shallow rear notch": two 6mm blocks on a riser
+  // whose top stood 6mm ABOVE the sight line, so the notch was a slot in a
+  // wall rather than anything you could look through, and the front bead was
+  // 3.5mm of polished mirror that went the colour of the sky.
+  //
+  // A ghost ring is the right answer and it is also the one aperture sight
+  // that works at this eye relief. The arithmetic that kills a scope tube -
+  // clear field is set by the narrowest annulus - is what MAKES this: there is
+  // exactly one annulus, it is 30mm across and 265mm from the eye, and it
+  // subtends 3.2 degrees, which is a 92 pixel window. Nothing behind it can
+  // close it because there is nothing behind it.
   const SIGHT_Y = 0.052;
-  g.add(box(P.metal, 0.010, 0.030, 0.020, 0, 0.035, -0.600));       // front ramp
-  const bead = new THREE.Mesh(cylGeo(0.0035, 0.0035, 0.005, 8), P.edge);
-  bead.position.set(0, SIGHT_Y - 0.002, -0.600);
-  g.add(bead);
-  g.add(box(P.metal, 0.020, 0.028, 0.014, 0, 0.034, -0.030));       // rear riser
+
+  // Rear: aperture on a stub whose crown stops exactly at the bottom of the
+  // ring, flanked by protective ears set outside the hole.
+  g.add(box(P.metal, 0.018, 0.020, 0.012, 0, 0.027, -0.030));       // riser
+  D(screw(P, 0, 0.0345, -0.0245, 'z', 0.0024));                     // elevation screw
+  // The ring is P.dark, not P.metal, and this is the same lesson the optic
+  // rims taught: a polished torus 265mm from the eye on the sight line catches
+  // the sun disc and turns the aperture into a bright hoop that outweighs
+  // everything inside it. An aperture has to be the DARKEST thing in the
+  // picture or the eye centres on the rim instead of on the target.
+  g.add(ring(P.dark, 0.015, 0.0020, 0, SIGHT_Y, -0.030, 24));       // the ring
+  D(ring(P.etch, 0.0150, 0.0009, 0, SIGHT_Y, -0.0276, 24));         // matte eye face
+  // Ears, slimmed to 3.2mm and pulled in. At 5mm x 30mm they were two black
+  // posts flanking the aperture, taller than the sight and reading as part of
+  // the picture rather than as protection for it.
   for (const side of [-1, 1]) {
-    D(box(P.dark, 0.006, 0.010, 0.010, side * 0.007, SIGHT_Y - 0.006, -0.030));
+    D(box(P.dark, 0.0032, 0.021, 0.010, side * 0.0202, SIGHT_Y - 0.001, -0.030));
   }
+
+  // Front: a bead on a ramp, and NO HOOD. The bead is the aim point on a
+  // shotgun - you put it ON the target rather than under it - so it sits dead
+  // on the sight line and is kept to 5mm, which is 4.9 pixels at 835mm. Any
+  // bigger and the thing covering the impact point is the sight.
+  //
+  // The hood came off after the aimed frame: its ears were 9 pixels either
+  // side of the bead and its roof 8 above, which is a cage 4 pixels clear of
+  // the thing it is protecting. Through a 92 pixel aperture that is a dark
+  // blob at the aim point, not a front sight. A bead wants clear air round it.
+  g.add(box(P.metal, 0.010, 0.030, 0.020, 0, 0.035, -0.600));       // front ramp
+  g.add(ball(P.fibre, 0.0050, 0.0050, 0.0050, 0, SIGHT_Y, -0.600, 10));
 
   // A loose shell held at the loading gate. The reload pulses it in and out.
   const mag = new THREE.Group();
@@ -2264,19 +2939,50 @@ function buildCarbine(P) {
   D(box(P.metal, 0.008, 0.014, 0.030, 0.024, 0.010, -0.080));      // brass deflector
   D(rod(P.metal, 0.007, 0.007, 0.016, 0.024, 0.004, -0.050, 'x', 8)); // forward assist
 
+  // Dust cover over the port, hinged along the bottom. The one AR feature
+  // everybody can name and the reason the port reads as a door rather than a
+  // hole cut in a wall.
+  D(box(P.metal, 0.0032, 0.020, 0.058, 0.0228, 0.014, -0.105));
+  D(rod(P.dark, 0.0016, 0.0016, 0.062, 0.0234, 0.0036, -0.105, 'z', 6));
+  D(box(P.edge, 0.0026, 0.0016, 0.058, 0.0238, 0.0236, -0.105));
+
   // Charging handle, rear of the upper. The reload pulls this.
   const bolt = new THREE.Group();
   bolt.position.set(0, 0.032, -0.020);
   bolt.add(box(P.metal, 0.046, 0.010, 0.026, 0, 0, 0));
   bolt.add(box(P.dark, 0.016, 0.012, 0.014, -0.020, -0.002, 0.008));  // latch
+  // Ribbed latch face and the polished patch two fingers pull on. This is the
+  // part of an AR a hand touches most and it should be the brightest metal on
+  // the weapon.
+  for (let i = 0; i < 3; i++) {
+    const r = box(P.seam, 0.0150, 0.0022, 0.0024, -0.020, -0.004 + i * 0.0044, 0.014);
+    bolt.add(r); detail.push(r);
+  }
+  const chWear = box(P.edge, 0.0448, 0.0016, 0.0250, 0, 0.0052, 0);
+  bolt.add(chWear); detail.push(chWear);
   g.add(bolt);
 
   // --- lower receiver ------------------------------------------------------
   g.add(box(P.poly, 0.038, 0.042, 0.140, 0, -0.022, -0.090));
   D(rod(P.metal, 0.005, 0.005, 0.044, 0, -0.014, -0.038, 'x', 8));  // takedown pin
   D(rod(P.metal, 0.005, 0.005, 0.044, 0, -0.014, -0.148, 'x', 8));
+  D(rod(P.edge, 0.0034, 0.0034, 0.0016, 0.0222, -0.014, -0.038, 'x', 8));
+  D(rod(P.edge, 0.0034, 0.0034, 0.0016, 0.0222, -0.014, -0.148, 'x', 8));
+
+  // Selector on the left, bolt catch below it, and the proof panel behind the
+  // magazine well. Three controls and a marking is the difference between a
+  // lower receiver and a block of grey polymer with a hole in it.
+  g.add(selector(P, detail, -0.0196, -0.010, -0.036, -0.55, -1, 3));
+  D(box(P.dark, 0.008, 0.016, 0.024, -0.0208, -0.020, -0.098));     // bolt catch
+  D(box(P.edge, 0.0028, 0.0034, 0.0140, -0.0250, -0.0168, -0.104)); // its paddle
+  g.add(stamp(P, detail, 0.038, 0.014, -0.0198, -0.026, -0.078, '-x', 11.0));
+
   g.add(box(P.poly, 0.042, 0.052, 0.070, 0, -0.030, -0.150));       // magazine well
   D(box(P.dark, 0.010, 0.014, 0.010, -0.022, -0.020, -0.150));      // mag release
+  D(box(P.metal, 0.014, 0.010, 0.010, 0.022, -0.020, -0.150));      // its fence
+  // The mouth of a magwell is struck by a magazine every reload and it is the
+  // one corner on an AR that always goes bright.
+  D(box(P.edge, 0.0428, 0.0016, 0.0712, 0, -0.0556, -0.150));
 
   const mag = curvedMag(P, 0, -0.052, -0.150, 5, 0.028, 0.056, 0.075);
   g.add(mag);
@@ -2316,26 +3022,48 @@ function buildCarbine(P) {
   const IRON_Y = 0.064;
   const SIGHT_Y = 0.081;
   g.add(ironSights(P, IRON_Y, 0.044, -0.432, -0.048, detail, true, 'front'));
-  g.add(tubeOptic(P, SIGHT_Y, 0.044, -0.062, detail, {
-    rTube: 0.019, rBell: 0.022, len: 0.092,
-  }));
+  const optic = tubeOptic(P, SIGHT_Y, 0.044, -0.062, detail, {
+    rTube: 0.021, rBell: 0.024, len: 0.092,
+    relief: 0.270, field: 0.185,
+  });
+  g.add(optic.root);
 
   // --- stock ---------------------------------------------------------------
   g.add(rod(P.metal, 0.015, 0.015, 0.150, 0, 0.000, 0.070, 'z', 14));  // buffer tube
+  // Castle nut with staking notches, at the back of the receiver. It is 3mm of
+  // weapon and it is the thing that says the stock was fitted rather than
+  // moulded on.
+  D(rod(P.metal, 0.019, 0.019, 0.008, 0, 0.000, 0.005, 'z', 12));
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    D(box(P.seam, 0.0024, 0.0024, 0.009,
+      Math.cos(a) * 0.0182, Math.sin(a) * 0.0182, 0.005));
+  }
+  // Stock detent positions down the underside of the buffer tube: the row of
+  // holes a collapsing stock indexes into.
+  for (let i = 0; i < 5; i++) {
+    D(box(P.seam, 0.007, 0.004, 0.005, 0, -0.0146, 0.030 + i * 0.020));
+  }
   g.add(box(P.poly, 0.036, 0.058, 0.110, 0, -0.006, 0.108));
   D(box(P.poly, 0.040, 0.016, 0.070, 0, 0.026, 0.100));                // cheek weld
+  D(box(P.dark, 0.0086, 0.020, 0.058, 0, -0.030, 0.104));              // release lever
   const pad = box(P.seam, 0.040, 0.076, 0.014, 0, -0.008, 0.166);
   pad.rotation.x = 0.08;
   g.add(pad);
+  for (let i = 0; i < 4; i++) {                                        // pad ribs
+    D(box(P.dark, 0.0384, 0.0060, 0.0028, 0, -0.036 + i * 0.019, 0.1738));
+  }
+  D(slingLoop(P, 0.014, 0.0028, 0.010, 0.0186, -0.006, 0.096, 'x'));
   D(box(P.metal, 0.026, 0.010, 0.010, 0, -0.030, 0.150));              // sling loop
 
   g.add(gripHand(P, 0.000, -0.072, -0.014, -0.28));
   g.add(guardHand(P, 0.000, 0.018, -0.330));
 
   return {
-    root: g, detail, mag,
+    root: g, detail, mag, optic,
     bolt, boltLift: 0, boltTravel: 0.052,
     sight: new THREE.Vector3(0, SIGHT_Y, -0.062),   // optic axis, tube centre
+    reticle: optic.reticle,
     muzzle: new THREE.Vector3(0, 0.014, -0.586),
     eject: new THREE.Vector3(0.026, 0.014, -0.105),
   };
@@ -2355,16 +3083,52 @@ function buildLmg(P) {
     D(rod(P.dark, 0.006, 0.006, 0.052, 0, 0.050, -0.080 - i * 0.048, 'x', 8));
   }
   D(box(P.seam, 0.004, 0.026, 0.090, 0.028, 0.000, -0.150));       // ejection port
+  D(box(P.edge, 0.0036, 0.0024, 0.092, 0.0286, 0.0142, -0.150));   // port lip
+  D(box(P.dark, 0.006, 0.020, 0.026, 0.0278, 0.000, -0.104));      // dust flap
+
+  // RIVETS. A belt-fed receiver is a folded steel box and this is the one
+  // detail that says so: two rows of eight down the flank, plus four holding
+  // the feed-tray hinge. Nothing else on this weapon distinguishes it from a
+  // milled billet at a glance, and the LMG is the largest thing the viewmodel
+  // ever puts on screen.
+  rivets(P, g, detail, 8, 0.0284, -0.020, -0.055, -0.030, 'z', 'x', 0.0022);
+  rivets(P, g, detail, 8, -0.0284, -0.020, -0.055, -0.030, 'z', '-x', 0.0022);
+  rivets(P, g, detail, 4, -0.0284, 0.034, -0.090, -0.040, 'z', '-x', 0.0020);
+
+  // Feed-tray latch and the top-cover catch it drops into.
+  D(box(P.dark, 0.024, 0.014, 0.018, 0, 0.055, -0.056));
+  D(box(P.edge, 0.0206, 0.0018, 0.0164, 0, 0.0622, -0.056));
+  D(box(P.metal, 0.012, 0.020, 0.010, 0, 0.048, -0.044));
+
+  // Gas regulator under the barrel, with its three settings scored round it.
+  D(rod(P.metal, 0.011, 0.012, 0.020, 0, -0.008, -0.352, 'z', 12));
+  for (let i = 0; i < 3; i++) {
+    const a = -0.7 + i * 0.7;
+    D(box(P.seam, 0.0016, 0.0016, 0.021,
+      Math.sin(a) * 0.0122, -0.008 - Math.cos(a) * 0.0122, -0.352));
+  }
+
+  g.add(stamp(P, detail, 0.052, 0.020, -0.0284, 0.010, -0.220, '-x', 17.0));
+  g.add(selector(P, detail, -0.0248, -0.006, -0.058, -0.50, -1, 2));
 
   // Carry handle: a three-piece arch, folded to the side.
   g.add(box(P.dark, 0.014, 0.010, 0.090, -0.016, 0.076, -0.230));
   g.add(box(P.dark, 0.014, 0.032, 0.012, -0.016, 0.062, -0.190));
   g.add(box(P.dark, 0.014, 0.032, 0.012, -0.016, 0.062, -0.270));
+  D(box(P.edge, 0.0144, 0.0016, 0.090, -0.016, 0.0812, -0.230));   // handle, hand-worn
+  D(rod(P.metal, 0.0032, 0.0032, 0.017, -0.016, 0.062, -0.190, 'x', 8));  // pivot pins
+  D(rod(P.metal, 0.0032, 0.0032, 0.017, -0.016, 0.062, -0.270, 'x', 8));
 
   const bolt = new THREE.Group();                                  // charging handle
   bolt.position.set(0.032, 0.006, -0.100);
   bolt.add(box(P.dark, 0.020, 0.016, 0.034, 0, 0, 0));
   bolt.add(rod(P.metal, 0.005, 0.005, 0.026, 0.014, 0, 0, 'x', 8));
+  for (let i = 0; i < 4; i++) {
+    const r = box(P.seam, 0.021, 0.0022, 0.0028, 0, -0.005 + i * 0.0034, 0.013);
+    bolt.add(r); detail.push(r);
+  }
+  const lWear = box(P.edge, 0.0204, 0.0016, 0.0344, 0, 0.0082, 0);
+  bolt.add(lWear); detail.push(lWear);
   g.add(bolt);
 
   // --- heavy barrel with cooling rings -------------------------------------
@@ -2428,14 +3192,33 @@ function buildLmg(P) {
   D(box(P.metal, 0.030, 0.012, 0.010, 0, -0.036, 0.140));          // sling loop
 
   // --- sights: ladder rear, winged post front ------------------------------
+  //
+  // The aperture was drawn on the face of its own riser. The ladder block ran
+  // to y = 0.089 and the ring is an 8mm torus centred at 0.092, so the bottom
+  // three quarters of the hole was solid metal and the aimed frame showed a
+  // gold horseshoe with a black plug in it. Same defect as the SMG drum, one
+  // millimetre at a time instead of all at once.
+  //
+  // The riser now stops at the bottom of the ring, and the ring goes from 16mm
+  // across to 34mm: at 290mm from the eye that is 3.35 degrees, a 96 pixel
+  // window, with the front post standing 4.6 pixels wide inside it. A belt-fed
+  // gun keeps its irons - a ladder sight is half of what the silhouette says
+  // about what this weapon is - but they have to be irons you can see through.
   const SIGHT_Y = 0.092;
-  g.add(box(P.metal, 0.020, 0.032, 0.012, 0, 0.073, -0.062));
-  g.add(ring(P.metal, 0.0080, 0.0024, 0, SIGHT_Y, -0.066, 14));
+  g.add(box(P.metal, 0.020, 0.026, 0.012, 0, 0.062, -0.062));      // riser, cut down
+  g.add(ring(P.dark, 0.017, 0.0022, 0, SIGHT_Y, -0.066, 24));      // see the shotgun
+  D(ring(P.etch, 0.0170, 0.0010, 0, SIGHT_Y, -0.0626, 24));        // matte eye face
   for (let i = 0; i < 4; i++) {                                    // ladder rungs
-    D(box(P.dark, 0.024, 0.003, 0.008, 0, 0.062 + i * 0.008, -0.062));
+    D(box(P.dark, 0.024, 0.003, 0.008, 0, 0.052 + i * 0.006, -0.062));
   }
+  D(screw(P, 0.0104, 0.062, -0.062, 'x', 0.0028));                 // windage drum
+  for (const side of [-1, 1]) {                                    // aperture ears
+    D(box(P.dark, 0.0034, 0.024, 0.010, side * 0.0224, SIGHT_Y - 0.001, -0.066));
+  }
+
   g.add(box(P.metal, 0.016, 0.044, 0.020, 0, 0.058, -0.380));
-  g.add(rod(P.dark, 0.0024, 0.0028, 0.016, 0, SIGHT_Y - 0.006, -0.380, 'y', 8));
+  g.add(rod(P.dark, 0.0034, 0.0038, 0.016, 0, SIGHT_Y - 0.006, -0.380, 'y', 8));
+  D(box(P.fibre, 0.0032, 0.0032, 0.0030, 0, SIGHT_Y - 0.0022, -0.3778));
   for (const side of [-1, 1]) {
     D(box(P.metal, 0.005, 0.024, 0.012, side * 0.012, SIGHT_Y - 0.008, -0.380));
   }
@@ -2470,7 +3253,28 @@ function buildBolt(P) {
   knob.rotation.z = Math.PI / 2;
   knob.position.set(0.052, 0.000, 0);
   bolt.add(knob);
+  // A bolt knob is the single most handled 20mm on a rifle. Checkered, and
+  // polished bright on the cap where a thumb and forefinger land every shot.
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const k = box(P.seam, 0.0130, 0.0018, 0.0018,
+      0.052, Math.cos(a) * 0.0096, Math.sin(a) * 0.0096);
+    k.rotation.x = a;
+    bolt.add(k); detail.push(k);
+  }
+  const kCap = new THREE.Mesh(cylGeo(0.0092, 0.0092, 0.0016, 12), P.edge);
+  kCap.rotation.z = Math.PI / 2;
+  kCap.position.set(0.0598, 0, 0);
+  bolt.add(kCap); detail.push(kCap);
+
   bolt.add(box(P.dark, 0.026, 0.020, 0.040, 0.000, 0.010, 0.010));   // shroud
+  // Cocking indicator and the safety flag on the shroud: the two things a
+  // shooter checks by eye before the rifle goes to the shoulder.
+  const cock = box(P.core, 0.0060, 0.0060, 0.0075, 0.000, 0.010, 0.032);
+  bolt.add(cock); detail.push(cock);
+  const flag = box(P.dark, 0.0150, 0.0090, 0.0100, 0.008, 0.0195, 0.020);
+  flag.rotation.z = 0.28;
+  bolt.add(flag); detail.push(flag);
   g.add(bolt);
 
   // --- barrel: long, tapered, banded ---------------------------------------
@@ -2485,7 +3289,32 @@ function buildBolt(P) {
   for (let i = 0; i < 4; i++) {                                     // checkering
     D(box(P.dark, 0.043, 0.004, 0.006, 0, -0.048, -0.180 - i * 0.026));
   }
+  // Checkering PANELS on both flanks of the forend, cut as a recessed dark
+  // field with raised diamonds standing in it. Same two-material trick the MK9
+  // grip uses, and the reason is the same: the forend is the biggest single
+  // face on this weapon and it was carrying one flat brown value across
+  // 300mm of it.
+  for (const side of [-1, 1]) {
+    D(box(P.dark, 0.0030, 0.030, 0.150, side * 0.0206, -0.030, -0.170));
+    for (let i = 0; i < 6; i++) {
+      D(box(P.wood, 0.0038, 0.0060, 0.0180, side * 0.0214, -0.030, -0.234 + i * 0.026));
+    }
+  }
+  // Barrel band, sling swivel stud, and the screw that holds them on.
+  D(box(P.metal, 0.044, 0.012, 0.014, 0, -0.052, -0.268));
+  D(slingLoop(P, 0.012, 0.0026, 0.009, 0, -0.060, -0.268, '-y'));
+  D(screw(P, 0.0224, -0.052, -0.268, 'x', 0.0026));
+
   g.add(box(P.wood, 0.042, 0.060, 0.130, 0, -0.020, 0.050));        // wrist
+  // Wrist checkering, where the firing hand actually sits, plus the polished
+  // patch a palm leaves on walnut after a season.
+  for (const side of [-1, 1]) {
+    D(box(P.dark, 0.0030, 0.036, 0.070, side * 0.0206, -0.024, 0.050));
+    for (let i = 0; i < 4; i++) {
+      D(box(P.wood, 0.0038, 0.0070, 0.0130, side * 0.0214, -0.024, 0.026 + i * 0.017));
+    }
+  }
+  D(screw(P, 0, -0.0505, 0.058, '-y', 0.0030));                     // grip cap screw
   const comb = box(P.wood, 0.044, 0.062, 0.150, 0, 0.008, 0.140);
   comb.rotation.x = 0.06;
   g.add(comb);
@@ -2493,6 +3322,10 @@ function buildBolt(P) {
   const pad = box(P.seam, 0.048, 0.092, 0.016, 0, -0.004, 0.212);
   pad.rotation.x = 0.11;
   g.add(pad);
+  D(screw(P, 0, 0.0330, 0.2140, 'z', 0.0032));                      // buttplate screws
+  D(screw(P, 0, -0.0414, 0.2180, 'z', 0.0032));
+  D(slingLoop(P, 0.012, 0.0026, 0.009, 0, -0.0480, 0.160, '-y'));   // rear swivel
+  D(box(P.dark, 0.0492, 0.0022, 0.0164, 0, -0.0448, 0.2116));       // pad heel line
 
   const grip = new THREE.Group();
   grip.position.set(0, -0.030, 0.006);
@@ -2524,10 +3357,17 @@ function buildBolt(P) {
   // Rebuilt on the open-tube helper as well: the old version used capped
   // cylinders for the ocular and objective, which meant the "scope" had an
   // opaque disc across the sight line and could never be looked through.
+  //
+  // `tunnel` is what makes this a scope rather than a large red dot: it is the
+  // only optic in the armoury whose eyepiece takes the whole frame, which is
+  // the thing a magnified sight actually does to a shooter's vision and the
+  // reason a bolt rifle feels different to carry.
   const SIGHT_Y = 0.086;
-  g.add(tubeOptic(P, SIGHT_Y, 0.032, -0.140, detail, {
-    rTube: 0.017, rBell: 0.026, len: 0.230, crosshair: true,
-  }));
+  const optic = tubeOptic(P, SIGHT_Y, 0.032, -0.140, detail, {
+    rTube: 0.018, rBell: 0.027, len: 0.230,
+    tunnel: true, relief: 0.245, field: 0.285,
+  });
+  g.add(optic.root);
 
   // Cheek riser to match the mount height. A scope this tall over a stock the
   // shooter's face cannot reach is the classic modelled-by-eye tell.
@@ -2537,9 +3377,10 @@ function buildBolt(P) {
   g.add(guardHand(P, 0.000, -0.032, -0.235));
 
   return {
-    root: g, detail, mag,
+    root: g, detail, mag, optic,
     bolt, boltLift: 1.15, boltTravel: 0.070,
     sight: new THREE.Vector3(0, SIGHT_Y, -0.140),   // scope axis, tube centre
+    reticle: optic.reticle,
     muzzle: new THREE.Vector3(0, 0.008, -0.744),
     eject: new THREE.Vector3(0.024, 0.010, -0.120),
   };
@@ -2579,6 +3420,26 @@ function buildSunspear(P) {
   // --- emitter: three prongs around the core, not a barrel -----------------
   g.add(rod(P.metal, 0.022, 0.028, 0.080, 0, 0.006, -0.300, 'z', 16));
   g.add(ring(P.metal, 0.028, 0.005, 0, 0.006, -0.340, 18));
+  // Coolant loom down the left flank, clamped twice. The Sunspear is the one
+  // weapon here that is not a firearm and it should have plumbing where the
+  // others have a gas tube.
+  D(rod(P.dark, 0.0052, 0.0052, 0.150, -0.030, -0.008, -0.250, 'z', 8));
+  D(rod(P.dark, 0.0052, 0.0052, 0.150, -0.030, -0.018, -0.250, 'z', 8));
+  for (const zz of [-0.190, -0.310]) {
+    D(box(P.metal, 0.008, 0.024, 0.008, -0.030, -0.013, zz));
+    D(screw(P, -0.0344, -0.013, zz, '-x', 0.0022));
+  }
+  // Vent louvres and a hazard chevron block on the right flank, where the
+  // stamped panel goes on every other weapon in the armoury.
+  for (let i = 0; i < 5; i++) {
+    D(box(P.seam, 0.004, 0.005, 0.030, 0.0300, 0.024 - i * 0.009, -0.120));
+  }
+  for (let i = 0; i < 4; i++) {
+    const c = box(P.core, 0.0034, 0.0060, 0.0180, 0.0296, -0.014, -0.196 + i * 0.014);
+    c.rotation.x = 0.6;
+    g.add(c); detail.push(c);
+  }
+  screwRun(P, g, detail, 3, 0.0296, 0.036, -0.070, -0.048, 'z', 'x', 0.0026);
 
   // Parallel prongs, each toed in a few degrees so they converge on the core
   // line without meeting. Aiming them at a single point turns the emitter into
@@ -2635,31 +3496,65 @@ function buildSunspear(P) {
   bolt.add(box(P.core, 0.020, 0.006, 0.006, 0, 0.012, 0));
   g.add(bolt);
 
-  // --- holographic sight: a frame with a floating dot ----------------------
+  // --- holographic sight ---------------------------------------------------
+  //
+  // The one weapon whose sight can be pure light, and the reason it gets a
+  // holographic window rather than a tube: this is the only optic in the
+  // armoury where the reticle is genuinely floating in front of the shooter
+  // rather than etched on glass, and it should be the one that reads as
+  // technology.
+  //
+  // Two measured changes. The window is 48mm wide instead of 36 and the hood
+  // and mount have moved apart, which at 205mm from the eye takes the clear
+  // opening from 10 x 10 degrees to 13.4 x 13.2 - a 190 pixel square you can
+  // fight through. And the reticle is a real circle-dot instead of a 3.5mm
+  // cube: a cube on the aim point is a block covering the thing you are
+  // shooting, while a ring with a small dot in it surrounds the target and
+  // still tells you where the round goes.
   const SIGHT_Y = 0.078;
-  g.add(box(P.metal, 0.038, 0.008, 0.014, 0, 0.056, -0.052));      // mount
+  g.add(box(P.metal, 0.052, 0.008, 0.014, 0, 0.054, -0.052));      // mount
   for (const side of [-1, 1]) {
-    g.add(box(P.metal, 0.005, 0.034, 0.010, side * 0.018, 0.076, -0.052));
+    g.add(box(P.metal, 0.005, 0.048, 0.010, side * 0.0245, 0.078, -0.052));
+    D(box(P.edge, 0.0016, 0.048, 0.0022, side * 0.0272, 0.078, -0.052));
   }
-  g.add(box(P.metal, 0.041, 0.006, 0.010, 0, 0.094, -0.052));      // hood
-  const pane = new THREE.Mesh(boxGeo(0.030, 0.030, 0.0015), P.lens);
+  g.add(box(P.metal, 0.055, 0.006, 0.010, 0, 0.102, -0.052));      // hood
+  D(box(P.core, 0.030, 0.0022, 0.004, 0, 0.1042, -0.0500));        // emitter strip
+  screwRun(P, g, detail, 2, 0, 0.0505, -0.058, 0.012, 'z', '-y', 0.0026);
+
+  const pane = new THREE.Mesh(boxGeo(0.044, 0.042, 0.0015), P.lens);
   pane.position.set(0, SIGHT_Y, -0.052);
   g.add(pane);
-  const dot = new THREE.Mesh(boxGeo(0.0035, 0.0035, 0.0035), P.core);
-  dot.position.set(0, SIGHT_Y, -0.056);
+
+  // The reticle: eight arc segments and a centre pip, sized in angle. The ring
+  // is 1.7 degrees, which is 25 pixels of radius - big enough to find in a
+  // rush and small enough to sit round a mummy's head at ten metres rather
+  // than round the whole mummy.
+  const dot = new THREE.Mesh(boxGeo(0.0020, 0.0020, 0.0030), P.core);
+  dot.position.set(0, SIGHT_Y, -0.0505);
   g.add(dot);
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const seg = box(P.core, 0.0022, 0.0009, 0.0022,
+      Math.cos(a) * 0.0060, SIGHT_Y + Math.sin(a) * 0.0060, -0.0505);
+    seg.rotation.z = a + Math.PI / 2;
+    g.add(seg); detail.push(seg);
+  }
 
   // Rear ghost ring, so the eye still has two elements to line up on. Carried
   // on two side legs rather than a centre post: a post under the ring reaches
   // up to within a millimetre of the sight line, and at 170mm from the eye
   // that millimetre is a grey slab filling the bottom half of the aperture.
-  // Legs at the ring's own width frame it instead of blocking it. The ring is
-  // also smaller and set further out, because a ghost ring at arm's reach of
-  // the eye stops being a ring and becomes a tunnel.
+  //
+  // The ring is 32mm across now rather than 17. At 183mm from the eye the old
+  // one subtended 2.7 degrees, which made it - not the holographic window
+  // behind it - the narrowest thing on the sight line, so the 10 degree window
+  // this weapon carries was being looked at through a 2.7 degree hole. A ring
+  // that is WIDER than the window frames it; a ring that is narrower replaces
+  // it.
   for (const side of [-1, 1]) {
-    g.add(box(P.metal, 0.004, 0.030, 0.010, side * 0.011, 0.061, -0.030));
+    g.add(box(P.dark, 0.0034, 0.028, 0.009, side * 0.0186, 0.058, -0.030));
   }
-  g.add(ring(P.metal, 0.0085, 0.0018, 0, SIGHT_Y, -0.030, 14));
+  g.add(ring(P.dark, 0.016, 0.0016, 0, SIGHT_Y, -0.030, 24));
 
   g.add(gripHand(P, 0.000, -0.070, -0.020, -0.24));
   g.add(guardHand(P, 0.000, 0.014, -0.300));
@@ -2668,6 +3563,7 @@ function buildSunspear(P) {
     root: g, detail, mag,
     bolt, boltLift: 0, boltTravel: 0.036,
     sight: new THREE.Vector3(0, SIGHT_Y, -0.052),   // holographic pane / dot
+    reticle: new THREE.Vector3(0, SIGHT_Y, -0.0505),
     muzzle: new THREE.Vector3(0, 0.006, -0.540),
     eject: null,                       // energy weapons drop no brass
     glowParts: [core, coreGlowA, coreGlowB, dot],
@@ -3159,7 +4055,10 @@ export function createViewmodel(host, materials) {
   }
 
   function applyDetailVisibility(m) {
-    for (const d of m.detail) d.visible = highFidelity;
+    // The flag is for the optic crossfade below, which drives `visible` on the
+    // same meshes every frame and would otherwise put the scope ring nuts back
+    // on screen the moment fidelity was dropped.
+    for (const d of m.detail) { d.userData.detailPart = true; d.visible = highFidelity; }
   }
 
   // -------------------------------------------------------------------------
@@ -3678,6 +4577,36 @@ export function createViewmodel(host, materials) {
       // Idle pulse plus whatever the reload track is doing to the cell.
       const pulse = 0.85 + Math.sin(t * 2.7) * 0.10 + Math.sin(t * 6.1) * 0.05;
       P.core.emissiveIntensity = CORE_EMISSIVE * pulse * glow;
+    }
+
+    // --- the sight picture ---------------------------------------------------
+    //
+    // An optic is one object at the hip and a different one at the eye, and
+    // this is where the two are crossfaded. See tubeOptic for why they cannot
+    // be the same geometry: the clear field through a real tube at this eye
+    // relief is four degrees, which is a peephole, so the aimed picture is a
+    // flat aperture sized from the field angle instead.
+    //
+    // The window is late and narrow on purpose. 0.62 to 0.95 of the blend is
+    // the last third of the weapon's travel to the eye, where it is moving
+    // fastest and covering the most screen per frame, so the swap happens
+    // under motion. Doing it early - at 0.3, say - would show the swap
+    // happening on a nearly stationary weapon, which is the one place the eye
+    // would catch it.
+    if (model.optic) {
+      const a = smooth(clamp01((adsBlend - 0.62) / 0.33));
+      const solid = a > 0.5;
+      for (const m of model.optic.hide) {
+        m.visible = !solid && (highFidelity || !m.userData.detailPart);
+      }
+      for (const m of model.optic.show) {
+        m.visible = a > 0.02;
+        // Opacity only where the material owns one. The shade is cloned per
+        // optic precisely so this line cannot reach across weapons; the rim
+        // and the reticle are opaque and shared, and writing an opacity onto
+        // them would fade every reticle in the armoury at once.
+        if (m.material.transparent) m.material.opacity = a;
+      }
     }
 
     state.adsBlend = adsBlend;
