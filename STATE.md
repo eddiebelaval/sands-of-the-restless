@@ -1,6 +1,6 @@
 # STATE - where this build actually is
 
-Last updated 2026-07-27. Read this before continuing; it is the handoff note,
+Last updated 2026-07-28. Read this before continuing; it is the handoff note,
 not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
@@ -16,14 +16,21 @@ python3 -m http.server 4177
 Suites:
 
 ```bash
-node test/shot.mjs         # renders; fails on console errors, warnings, OR a black frame
-node test/gun.mjs          # combat
-node test/interior.mjs     # interior and buy-doors
-node test/economy.mjs      # wall buys, shrines, power, the Altar
-node test/enemies.mjs      # horde and bosses    <- CURRENTLY 1 FAILING, see below
-node test/mysterybox.mjs   # the chest           <- UNVERIFIED, see below
-node test/ao-ab.mjs        # measures whether the AO pass contributes
+npm install     # playwright and sharp, for the harness only
+npm start       # serve on 4177
+npm test        # all eight suites: shot gun interior economy enemies
+                # mysterybox grenades powerups
 ```
+
+All eight are green as of 2026-07-28, verified on an ISOLATED tree rather than
+the working tree. That distinction matters and is not pedantry: three separate
+times this session, failures on the working tree turned out to be another
+agent's uncommitted work, and once I committed a lane as "verified" when the
+verification had been contaminated the same way. Extract with `git archive HEAD`
+into a temp dir, copy in only the files under test, serve that, and run against
+it.
+
+`node test/ao-ab.mjs` separately measures whether the AO pass contributes.
 
 ## Done and working
 
@@ -125,38 +132,81 @@ to read:
   a 40m pyramid step. The winding fix means the bevels finally DRAW; they are
   still too small to catch a highlight, so stone reads as painted cardboard.
 
+## Blind comparison round 2, 2026-07-27 evening
+
+Same protocol, both games hardware-rendered, sides randomized per pair, judge
+told nothing. Camera poses are now EXTERNAL DATA (`scratchpad/shot-poses.json`)
+replayed against any build via `poses/capture.mjs`, which fixed round 1's worst
+flaw - their authored framings against our accidental ones.
+
+  round 1: lost 2-5, us 2.5/10 against their 4/10
+  round 2: WON 4 pairs of 7, us 3/10 against their 4/10
+
+We won atmosphere, the close material read, the interior ("the best-lit frame in
+all 14"), and combat staging. We lost spawn, ADS and muzzle flash - which the
+judge correctly weighted higher, because those are what a player looks at second
+to second. Its verdict: "Mediocre finished assets beat beautiful lighting
+wrapped around placeholders."
+
+A SECOND judge compared yesterday's build against ours on identical poses and
+scored the day "substantial, not transformative", 2.5 -> 3.5. It found four
+regressions the head-to-head could not see, all since fixed, and proved pair 5
+was a genuine TIE with arithmetic - mean absolute difference 5.86 of 255, the
+delta being dither and wind on three grass tufts. "A day of work did zero to the
+surface you spend the most pixels on."
+
+Everything after that judgement (pyramid, arms, powerups, fog) is UNJUDGED.
+Round 3 has not been run.
+
 ## Open items, in priority order
 
-1. **The pistol pose.** The MK9 camera looks straight down at two hand-BACKS,
-   which are legitimately smooth vaults, while every piece of finger
-   articulation sits on the far side of the grip where nothing can see it. An
-   agent added an unused `hold` parameter to `gripHand` before it died; the hook
-   exists, the pose change does not. `wrap` and `a0` on the two-handed hold.
-   Judge it BY EYE at playing size and judge it early - two rounds here improved
+1. **The unpowered Great Gallery emits almost no light of its own** - 16.1 luma
+   with the fog pass disabled. It looked lit for weeks only because an outdoor
+   sky-haze pass was leaking into it. The real fix is either gating that pass
+   when `spaces` reports an interior (needs a caller in `main.js`) or giving the
+   room real fill light (the level's job). Until then the interior is darker
+   than it was designed to be and three suites' gates sit close to their floors.
+2. **The weapon RECEIVERS still read as stacked boxes.** `chamferFor()` scales
+   bevels with member size, but it lives in `world/geometry.js` and the
+   viewmodel builds its own boxes, so no weapon ever got the fix. They need
+   bevels wide enough to catch a highlight at 300mm, not more small parts.
+3. **The hand is better, not finished.** Four rounds in. The forearm is fixed -
+   bracer, straps, buckle, wrap - but on a two-handed pistol hold the camera
+   sees mostly hand-backs and fingertips read as smooth lozenges. The honest
+   finding from round 4: this camera can only ever see the back of the hand on
+   that grip, which is true of every FPS. The remaining target is the LONG GUNS'
+   support hand on the handguard, where the camera gets a side view of fingers.
+   Judge BY EYE at playing size and judge early - three rounds here improved
    every metric and looked worse.
-2. **`test/interior.mjs` and `test/shot.mjs` still carry the blind reader.**
+4. **Scope MAGNIFICATION is not implemented.** ADS_FOV is one global 55 in
+   `player/camera.js` (1.36x for every weapon). True per-weapon zoom needs that
+   made per-weapon, or a render-target pass - and `createViewmodel` receives the
+   rig, which exposes no camera and no scene, so the viewmodel cannot reach the
+   world to render a zoomed view. The occlusion half (a flared eyepiece that
+   takes the frame) is done.
+5. **`test/interior.mjs` and `test/shot.mjs` still carry the blind reader.**
    Both measure via `drawImage(renderer.domElement)` with
    `preserveDrawingBuffer: false`, so they sample a stale or cleared buffer, and
    `interior.mjs` still gates at `meanLuma < 6 || percentLit < 25` - a threshold
    calibrated AGAINST the broken reader, so it cannot fire. `enemies.mjs` and
    `mysterybox.mjs` have both been converted to `page.screenshot()` decoded in
    node; copy that. Real frames measure 99-124 luma, black measures 0.14.
-3. **Spawn distances are short.** With the walkable rectangle at x +/-23.2 and
+6. **Spawn distances are short.** With the walkable rectangle at x +/-23.2 and
    z -33 to 38.4, every out-of-view point is 6-10m behind the player, so the -45
    view penalty makes the director prefer the player's lap over the 22m band it
    asks for. One run spawned a boss at 5.9m. That is a tuning call on
    `SPAWN_NEAR`/`VIEW_COS` with real gameplay blast radius, deliberately not
    made alongside the stall fix.
-4. **One thin threshold.** `mysterybox.mjs` findability at spawn B sits at
+7. **One thin threshold.** `mysterybox.mjs` findability at spawn B sits at
    1.28-1.29 against a 1.25 gate, +/-0.02 noise. That metric measures the ROOM
    as much as the fixture and the Great Gallery is a lit hall; it previously
    scored 2.0 only because the chest was clipping to white. If it flakes, retire
    that ratio in favour of the per-pixel A/B beside it (`changedPct`, `lift`),
    which has 10x the margin. Do NOT re-inflate the fixture to pass it.
-5. The canopic-jar puzzle chain is unbuilt. Shrine cap is already data
+8. The canopic-jar puzzle chain is unbuilt. Shrine cap is already data
    (`{base: 4, ceiling: 6}` with `raise()`), so it can lift the cap without
    touching shrines.js.
-6. ~20% of near-surface meshes sit >0.25m above local ground, almost all of it
+9. ~20% of near-surface meshes sit >0.25m above local ground, almost all of it
    the avenue's own architecture at y=0 over a dune floor that swells. Fixing
    means re-seating the finished avenue; judged a worse risk than the defect.
 
@@ -200,6 +250,29 @@ to read:
 - **The nightly EOD bot commits whatever is in the tree at 02:00.** When agents
   die mid-write, their partial work gets committed unverified. Check
   `git show --stat` on any `chore(eod)` commit before trusting the tree.
+- **THE BIGGEST ONE: things that were written were never being RENDERED. Five
+  separate times.** This is the defining bug class of this project and every
+  instance was found the same way - by rendering the thing in isolation and
+  looking, never by reading the code.
+    1. `chamferedBox` wound 28 of 44 triangles inside out, so the chamfer that
+       the module exists to draw was culled. Two days.
+    2. Hand creases were modelled INSIDE a solid plate. Three passes of "add
+       grooves" had drawn zero pixels.
+    3. The MK9's three-dot sight sat behind the racking hook and the sight base.
+       Two separate passes of "three-dot sight" were a claim in a comment.
+    4. The finger crease cord was built 4.9mm wide inside a 1.9mm gap, 3mm below
+       the crowns.
+    5. The SMG's rear aperture ring was painted on the face of a SOLID drum.
+       Aiming showed you the back of a plug.
+  A flat-colour MASK RENDER is the tool that found most of these. If a feature
+  is supposed to be visible and the frame does not look different, do not add
+  more of it - prove it draws a pixel first.
+- **AN OUTDOOR PASS WAS LIGHTING THE INTERIOR, and three suites passed on it.**
+  The height-fog pass supplied ~70% of the unpowered Great Gallery's light:
+  the room reads 66.2 with it and 16.1 without, and it emits sixteen. The
+  enemies readability gate, the grenades smoke gate and the powerups spread gate
+  had all been calibrated against weather leaking indoors. When a gate that has
+  always passed suddenly fails after an unrelated change, suspect the gate.
 - **A metric can REWARD the defect.** The mystery box fixture was clipping to
   white, which made it unreadable, and the findability check scored it on mean
   luminance - so blowing out the highlights made the number go UP. Fixing the
