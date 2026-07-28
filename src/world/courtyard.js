@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { buildMaterials } from './materials.js';
 import { box, plane, cylinderUV } from './uv.js';
 import { chamferedBox, chamferFor, erode, duneField } from './geometry.js';
+import { buildTemple } from './temple.js';
 import { buildScatter } from './scatter.js';
 import { dressAvenue } from './dressing.js';
 
@@ -93,25 +94,6 @@ const WALL = 52;
  * another file.
  */
 const PLAY = { minX: -23.2, maxX: 23.2, minZ: -33.0, maxZ: 38.4 };
-
-/**
- * Disc UVs in world units.
- *
- * CircleGeometry maps its bounding square to 0..1, so an untouched disc gets
- * exactly one tile no matter how big it is. Same failure mode as an untouched
- * box, and the reason the sun-disc measured 0.294 tiles/unit against the 0.5
- * of the gilded cornice directly above it.
- */
-function discUV(geo, radius, tilesPerUnit) {
-  const uv = geo.attributes.uv;
-  if (!uv) return geo;
-
-  const s = radius * 2 * tilesPerUnit;
-  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * s, uv.getY(i) * s);
-
-  uv.needsUpdate = true;
-  return geo;
-}
 
 /** Deterministic PRNG so the courtyard is identical every run. */
 function rng(seed) {
@@ -244,131 +226,58 @@ export function buildCourtyard(scene) {
   };
 
   // -------------------------------------------------------------------------
-  // the pyramid: the destination, visible from spawn
+  // the pyramid and its gate: the destination, visible from spawn
   // -------------------------------------------------------------------------
-
-  const pyramid = new THREE.Group();
-  pyramid.position.set(0, 0, -62);
-  group.add(pyramid);
-
-  const STEPS = 11;
+  //
+  // Both are built by world/temple.js now. This used to be eleven extruded
+  // boxes and a slab with a decal on it, and two blind judges independently
+  // picked it out of a seven-shot comparison as the weakest object in the game:
+  // "one flat pink texture and a single red disc", "a texturally dead stepped
+  // block", "a flat grey door slab with a painted circle standing in for
+  // architecture". It is the focal point of half the frames and the thing the
+  // player walks toward for the whole session, so it earns a file.
+  //
+  // WHAT STAYS HERE, AND WHY IT STAYS HERE. The three colliders below are read
+  // back by doors.js BY SHAPE, not by name: it finds the slab's disc with
+  // (|x|<0.2, |z+30.2|<0.2, 2.5<r<4) and the mass's with (|x|<0.2, |z+62|<0.5,
+  // r>25), and it edits both when the player pays. Collision has exactly one
+  // representation in this codebase and it is the array in this function, so
+  // they are registered here beside every other collider rather than inside the
+  // module that draws the geometry.
+  const temple = buildTemple({ M, groundY, seed: 40711 });
+  group.add(temple.group);
 
   /**
-   * How far each course reaches DOWN past the top of the one below it.
+   * BURN THE DRAWS THE OLD PYRAMID USED TO TAKE.
    *
-   * Not cosmetic, and not a tolerance. Stacked face to face - course i topping
-   * out at exactly the height course i+1 starts - the two boxes share a plane,
-   * and then `erode` displaces each of them by up to a tenth of a unit using a
-   * DIFFERENT seed, because the seed is derived from the box's dimensions and
-   * every course is a different size. The shared plane stops being shared and a
-   * horizontal slot opens between the courses.
+   * The eleven-course loop that used to stand here pulled three numbers off
+   * `rand` per course - two for the nudge off centre, one for the yaw - and
+   * every placement downstream of it takes its numbers from the same stream.
+   * The temple has its own stream, exactly as the boundary pass and the far
+   * skyline do, so removing those thirty-three draws shifted the whole sequence
+   * behind them: the first capture after the rewrite came back with a different
+   * set of ruined bays, different architrave spans, and an architrave across
+   * the spawn frame that had never been there. THE AVENUE IS FINISHED WORK AND
+   * IS THE QUALITY BAR FOR THIS PROJECT; nothing in this pass is allowed to
+   * move it by so much as a bay.
    *
-   * That slot runs the full depth of the pyramid, and the inside of a course is
-   * back faces, which are culled. So the slot is not a dark line: it is a
-   * see-through gap, and what you see through it is the sky BEHIND the temple.
-   * Measured on the shipped build, from the middle of the avenue: two bands of
-   * open sky flanking the doorway, at y=3.8 - the joint between the first and
-   * second courses, at eye level, at the end of the avenue, in the exact spot
-   * the player walks toward for the whole game. Under the old flat noon key
-   * they were pale. Under the new one they were the brightest thing in frame.
-   *
-   * The chamfer also widens the mouth of that slot, once at each lip, and the
-   * lap has to be wider than BOTH of those plus the erosion or the joint opens
-   * again. It used to be a hand-picked 0.7 against a hand-picked 0.24 chamfer.
-   * Now the chamfer comes from the scale rule and the base course takes about
-   * 0.72, so 0.7 would no longer cover it - the exact regression that put two
-   * bands of open sky at eye level either side of the doorway. So the lap is
-   * DERIVED from the widest bevel any course will take rather than authored
-   * beside it, and cannot drift out of agreement with it if the rule is
-   * retuned. It costs nothing either way: the lapped band is inset 2.6 m behind
-   * the course below, so it is buried in solid stone and the stepped profile
-   * the player sees is unchanged.
+   * So the draws are taken and thrown away. It is three lines of waste in
+   * exchange for the finished half of the map being bit-identical to what it
+   * was, which is the trade this file has already made twice - once for the
+   * boundary pass and once for the skyline.
    */
-  const COURSE_H = 3.8;
+  for (let i = 0; i < 33; i++) rand();
 
-  // Probed with a deliberately generous height, so the lap is computed against
-  // a chamfer at least as wide as the one the courses will actually get.
-  let widestBevel = 0;
-  for (let i = 0; i < STEPS; i++) {
-    const w = 62 - i * 5.2;
-    widestBevel = Math.max(widestBevel, chamferFor(w, COURSE_H + 1.5, w));
-  }
-  const COURSE_LAP = widestBevel + 0.25;
-
-  for (let i = 0; i < STEPS; i++) {
-    const w = 62 - i * 5.2;
-    const h = COURSE_H;
-
-    // Each course is nudged off true and eroded. Eleven perfectly aligned
-    // identical boxes is the other half of the "voxel game" read: real
-    // masonry has settled, and settled courses are never flush.
-    //
-    // No chamfer floor here any more. The rule gives the 62 m base course about
-    // 0.72 and the 10 m top course about 0.20, which is the right shape: the
-    // courses nearest the eye and largest on screen get the widest arris, and
-    // the taper up the pyramid is itself a depth cue.
-    const step = stone(w, h + COURSE_LAP, w, M.limestone, DENSITY.limestone,
-      { eroded: 0.10 });
-    step.position.set(
-      (rand() - 0.5) * 0.5,
-      h * 0.5 + i * h - COURSE_LAP * 0.5,
-      (rand() - 0.5) * 0.5
-    );
-    step.rotation.y = (rand() - 0.5) * 0.012;
-    pyramid.add(step);
-  }
   addCollider(0, -62, 32, 44);
 
-  // -------------------------------------------------------------------------
-  // the sealed doorway: the 1000g gate into the interior (M2)
-  // -------------------------------------------------------------------------
-
-  const portal = new THREE.Group();
-  portal.position.set(0, 0, -30.2);
-  group.add(portal);
-
-  // Battered (sloped) jambs, which is what actually reads as Egyptian rather
-  // than merely rectangular.
-  for (const side of [-1, 1]) {
-    // Open-ended. cylinderUV scales the CAP uvs by the SIDE's factors - u by
-    // circumference, v by height - which is meaningless on a disc and is what
-    // inflated the measured whole-mesh density of every cylinder in the scene.
-    // These jambs meet the ground below and the lintel above, so the caps were
-    // never visible; dropping them makes the measured density exactly the side
-    // density, which is the number that has to match the boxes.
-    const jamb = new THREE.Mesh(
-      cylinderUV(new THREE.CylinderGeometry(1.0, 1.5, 9.5, 4, 1, true), 1.5, 9.5, DENSITY.carved),
-      M.carved
-    );
-    jamb.position.set(side * 3.6, 4.75, 0);
-    jamb.rotation.y = Math.PI / 4;
-    jamb.castShadow = true;
-    jamb.receiveShadow = true;
-    portal.add(jamb);
-    addCollider(side * 3.6, -30.2, 1.4, 9.5);
-  }
-
-  const lintel = stone(11, 2.2, 3.0, M.carved, DENSITY.carved, { eroded: 0.03 });
-  lintel.position.set(0, 10.6, 0);
-  portal.add(lintel);
-
-  // A winged sun-disc over the door: the one piece of real gold at ground
-  // level, so the eye lands on the entrance from across the yard.
-  const cornice = stone(11.6, 1.1, 3.4, M.gold, DENSITY.gold, { chamfer: 0.07 });
-  cornice.position.set(0, 12.1, 0);
-  portal.add(cornice);
-
-  const slab = stone(6.0, 8.6, 1.0, M.granite, DENSITY.granite, { chamfer: 0.09 });
-  slab.position.set(0, 4.3, 0.4);
-  slab.name = 'sealed-doorway';
-  portal.add(slab);
-
-  const disc = new THREE.Mesh(
-    discUV(new THREE.CircleGeometry(1.7, 32), 1.7, DENSITY.gold), M.gold);
-  disc.position.set(0, 5.6, 0.92);
-  portal.add(disc);
-
+  // The two door jambs and the slab, at the positions doors.js expects.
+  for (const side of [-1, 1]) addCollider(side * 3.6, -30.2, 1.4, 9.5);
   addCollider(0, -30.2, 3.2, 9);
+
+  // The pier feet, which stand a little outboard of the old jambs. Asked for by
+  // the gate rather than authored here, so the geometry and the collision that
+  // seals it cannot drift apart.
+  for (const c of temple.colliders) addCollider(c.x, c.z, c.r, c.h);
 
   // -------------------------------------------------------------------------
   // colonnade framing the approach
