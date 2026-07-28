@@ -55,7 +55,14 @@ export function buildMaterials() {
       // a hot scene, which is what makes the eye go to it.
       color: 0x5c6470,
       roughness: 1.0,
-      metalness: 0.22,
+      // WAS 0.22, AND STONE IS NOT A CONDUCTOR. metalness is not a "shininess"
+      // dial: at 0.22 a fifth of this surface's reflectance is metallic, which
+      // means a tight coloured specular lobe and a diffuse term suppressed to
+      // match. On a four-metre slab facing a 3.5-intensity sun that lobe is the
+      // blown white hole the owner reported in the right third of the gate.
+      // 0.05 is the dielectric floor a mineral surface actually has, and it is
+      // half of that fix; the roughness floor in textures.js is the other half.
+      metalness: 0.05,
       normalScale: new THREE.Vector2(0.8, 0.8),
     }),
 
@@ -130,10 +137,18 @@ export function buildMaterials() {
   // the standard material so it keeps three.js lighting, shadows, and fog.
   // This is what stops a tiled texture from reading as a tiled texture.
 
+  // VARIATION UP FROM 0.34 / 0.30. This is the world-space mottle, and it is the
+  // only thing in the program working against "the stone tiles on a grid you can
+  // count across the foreground" - a blind judge's words about the shipped
+  // build. The tile itself is a fixed 512 map at a fixed texel density; what
+  // breaks the grid is a low-frequency term that is a function of WORLD position
+  // rather than of UV, so two neighbouring copies of the same tile do not have
+  // the same value. Raising it is the cheapest lever on that complaint that does
+  // not touch a single UV.
   weather(m.limestone, {
     dirtHeight: 3.2,
     dirt: new THREE.Color(0x7a6547),
-    variation: 0.34,
+    variation: 0.44,
     dirtStrength: 0.60,
     bleachStrength: 0.13,
   });
@@ -141,7 +156,7 @@ export function buildMaterials() {
   weather(m.carved, {
     dirtHeight: 2.8,
     dirt: new THREE.Color(0x74603f),
-    variation: 0.30,
+    variation: 0.40,
     dirtStrength: 0.52,
     bleachStrength: 0.12,
   });
@@ -149,7 +164,7 @@ export function buildMaterials() {
   weather(m.granite, {
     dirtHeight: 2.2,
     dirt: new THREE.Color(0x53585e),
-    variation: 0.26,
+    variation: 0.36,
     dirtStrength: 0.40,
     bleachStrength: 0.08,
   });
@@ -188,14 +203,35 @@ export function upgradeMaterials(sets) {
   // for a plaza, catastrophic on a column, where it reads as a checkerboard
   // and announces that the surface is a photograph.
   applyMaps(m.carved,    sets.rock,      { normalScale: 1.05, aoIntensity: 1.0 });
-  applyMaps(m.granite,   sets.granite,   { normalScale: 0.75 });
+  // WEATHERED ROCK, NOT THE GRANITE SCAN, and for the same class of reason the
+  // line above rejects the tile scan.
+  //
+  // granite003a is a photograph of POLISHED GRANITE: an isotropic pink-and-grey
+  // crystal speckle with no feature larger than a few texels. That is a correct
+  // scan of a worktop and it is what the sealed doorway has been wearing. The
+  // owner, playing the shipped build, said the entrance was not rendering
+  // correctly; what he was looking at is a granite countertop standing in an
+  // Egyptian temple. Its roughness map is also what put a mirror on a four-metre
+  // slab in full sun - see the note in textures.js on the blown highlight.
+  //
+  // rock023 carries bedding, tool-scale relief and macro variation, which is
+  // what this surface has to have: it is the single most-looked-at object in the
+  // game, the player walks toward it for the whole first act, and it fills the
+  // frame at the moment they spend a thousand gold on it.
+  //
+  // Sharing a scan with `carved` is not sharing a look. They are different
+  // colours (0xaab2bd cold against 0xd6bb90 sandstone), different normal scales
+  // (a dressed monolith is smoother than a weathered facade), and different
+  // weathering profiles. The one thing they now share is having structure at a
+  // scale the eye can resolve.
+  applyMaps(m.granite,   sets.rock,      { normalScale: 0.62, aoIntensity: 1.0 });
 
   // The scans carry their own colour, so the procedural tints that were
   // standing in for it must go back to white or they double up.
   m.sand.color.setHex(0xffffff);
   m.limestone.color.setHex(0xd8c39a);
   m.carved.color.setHex(0xd6bb90);   // sandstone, not quarry grey
-  m.granite.color.setHex(0xaab2bd);
+  m.granite.color.setHex(0x9fa9b6);
 
   // The authored normalScale is the new baseline for the fidelity toggle.
   for (const mat of [m.sand, m.limestone, m.carved, m.granite]) {

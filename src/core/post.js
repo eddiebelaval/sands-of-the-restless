@@ -131,8 +131,56 @@ const GradeShader = {
     // grey floor and no white anywhere. These two reclaim the ends.
     // uWhitePoint below 1.0 is a gain, and the shoulder further down is what
     // makes that gain safe.
-    uBlackPoint:{ value: 0.026 },
-    uWhitePoint:{ value: 0.920 },
+    //
+    // BOTH MOVED, AND SO DID uPivot AND uGamma, AS ONE CHANGE. They are the only
+    // lever this file has on a defect whose real fix is somewhere else, and that
+    // is worth stating plainly rather than burying:
+    //
+    //   "In nearly every Temple exterior the ambient term is set so high that a
+    //    surface's shadow side is barely darker than its lit side. The column
+    //    shafts each have a lit and a shadow face within about 15% of each
+    //    other, so they read as flat cylinders painted with a gradient."
+    //
+    // Knocked out on a frozen pose 4, one light at a time, luma of the 6-12 m
+    // band, which is where the near colonnade lives:
+    //
+    //     shipped                              98
+    //     wrapA + wrapB off                    94
+    //     hemisphere off                       93
+    //     ambient off                          96
+    //     sand bounce off                      95
+    //     scene.environmentIntensity = 0       15     <- all of it
+    //     sun off                              92
+    //
+    // The five named lights together are five per cent of the fill. The IBL is
+    // eighty-five. And there is NO per-material route to it: three.js 0.185.1
+    // overwrites `material.envMapIntensity` with `scene.environmentIntensity`
+    // every frame for any standard material with no envMap of its own while the
+    // scene has an environment (WebGLRenderer.setProgram, line 18686 of the
+    // 0.185.1 module build). Verified by sweeping envMapIntensity 1.0 -> 0.25
+    // across all 88 stone materials and measuring exactly zero change in every
+    // band. The one real knob is `scene.environmentIntensity` in main.js.
+    //
+    // What a GRADE can do about it is separate the two faces by VALUE even
+    // though their irradiance is nearly the same: lift the pivot so the contrast
+    // stage pushes more of the frame down, take the gamma off its shadow-opening
+    // setting, and move the black point out to meet it. Swept together on the
+    // frozen pose - the 12-20 m band, which is column shaft:
+    //
+    //     pivot/gamma/black/white     luma   sat    contrast   frame p1
+    //      0.26 / 0.90 / .026 / .920    83   0.66      21         4.6
+    //      0.30 / 0.97 / .030 / .905    75   0.70      22         1.3   <- this
+    //      0.34 / 1.04 / .038 / .885    71   0.74      22         0.3
+    //      0.38 / 1.10 / .044 / .870    65   0.76      22         0.0
+    //
+    // Row three and four are stronger and both are rejected: this grade is
+    // GLOBAL, the interior is the darkest surface in the game and is separately
+    // under repair for crushing its rear wall, and a frame p1 of zero means the
+    // image has started throwing away its shadow end rather than deepening it.
+    // Row two buys six per cent of saturation and takes the first percentile from
+    // 4.6 to 1.3 for six per cent of mean, which the white point pays back.
+    uBlackPoint:{ value: 0.030 },
+    uWhitePoint:{ value: 0.905 },
 
     // Pivot for the contrast S-curve. NOT 0.5. Mid grey is the right pivot for
     // an image whose content straddles it; this frame's median sits near 0.39
@@ -141,7 +189,9 @@ const GradeShader = {
     // Pivoting BELOW the median means the same contrast number expands the
     // highlights much more than it deepens the shadows, which is the direction
     // this image actually needs.
-    uPivot:     { value: 0.26 },
+    // Raised with the black point above; see that note for the sweep and for why
+    // this file is grading a lighting problem in the first place.
+    uPivot:     { value: 0.30 },
 
     // Knee where the highlight shoulder takes over. See the shoulder in the
     // fragment shader: past this point values approach 1.0 asymptotically
@@ -203,7 +253,10 @@ const GradeShader = {
     // a quarter of the separation the same lights gave in the avenue.
     uToneRange: { value: new THREE.Vector2(0.04, 0.58) },
 
-    uGamma:     { value: 0.90 },
+    // Off its shadow-opening setting. Below 1.0 this OPENS the upper mids, which
+    // is what the frame wanted when it was starved; with the ambient term
+    // flattening every shadow face it is the last thing it needs.
+    uGamma:     { value: 0.97 },
     uSaturation:{ value: 1.14 },
     uContrast:  { value: 1.10 },
   },

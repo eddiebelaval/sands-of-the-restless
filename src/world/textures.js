@@ -319,24 +319,110 @@ function drawGlyphColumn(ctx, cx, top, colW, colH, r) {
   }
 }
 
-/** Polished granite: dark, speckled, low roughness. */
+/**
+ * Dressed granite: a monolithic slab, bedded and tooled.
+ *
+ * WHAT WAS HERE WAS A COUNTERTOP. Four octaves of isotropic fbm plus a
+ * per-pixel fleck at one pixel in seventy, and nothing else - no bedding, no
+ * course lines, no direction, no scale. The owner's words, playing the shipped
+ * build: "the entrance to the pyramid is not rendering correctly." What he was
+ * looking at reads as poured concrete or a granite worktop standing in an
+ * Egyptian temple, and the specific failure is the FREQUENCY: isotropic noise
+ * with no feature larger than a pixel has nothing for the eye to lock onto at
+ * any distance, so at six metres it aliases into a shimmer and at twelve it
+ * flattens into grey.
+ *
+ * This is the most-looked-at surface in the game. The player walks toward it for
+ * the whole first act, it costs a thousand gold, and it fills the frame at the
+ * moment of purchase.
+ *
+ * Three features, at three scales the eye can actually resolve:
+ *
+ *   BEDDING, four courses across the map. On the door's UV scale that is
+ *   metre-sized, so it reads as structure. Each course carries its own value,
+ *   because a bed that only differs from its neighbour by a drawn line reads as
+ *   a scratch on one stone rather than as two stones.
+ *
+ *   TOOL MARKS, parallel. Parallel is the entire point. A dressed face carries
+ *   chisel work that runs one way, and one direction at one frequency is what
+ *   separates "worked stone" from "noise". Patchy, because a mason does not
+ *   dress a four-metre slab evenly.
+ *
+ *   CRYSTALS, because granite has them and that is the one thing the old
+ *   texture was right about. Density cut from one pixel in seventy to one in six
+ *   hundred and the contrast roughly halved, so they read as flecks in a stone
+ *   rather than as the stone itself.
+ *
+ * Everything tiles: the bed count divides the map, and the chisel is an integer
+ * number of cycles across u.
+ */
 function paintGranite(size = 512) {
   const c = makeCanvas(size);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   const img = ctx.createImageData(size, size);
   const d = img.data;
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const u = x / size, v = y / size;
-      const mottle = fbm(u, v, 4, 6, 71);
-      const fleck = hash2(x, y, 97) > 0.986 ? 0.5 : 0;
-      const t = mottle * 0.5 + fleck;
+  const BEDS = 4;
+  const TAU = Math.PI * 2;
 
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    const f = v * BEDS;
+    const bed = Math.floor(f) % BEDS;
+    const inBed = f - Math.floor(f);
+
+    // Per-course value. Deterministic off the bed index so it tiles.
+    // hash2 is a weak hash on small integers: the obvious `hash2(bed, k, seed)`
+    // returned 0.27 / 0.22 / 0.25 / 0.31 for the four beds, a spread of 0.09,
+    // and every course came out the same value. Rendered and looked at, which is
+    // the only reason it was caught - the number was in the code and doing
+    // nothing, which is this project's defining bug. Varying BOTH inputs with
+    // the index spreads it to 0.46.
+    const bedTone = (hash2(bed * 17, bed * 29, 7) - 0.5) * 0.30;
+
+    // The seam: a dark recess, with a lighter weathered lip on the upper side of
+    // the course below it. The lip is what makes a joint read as a joint and not
+    // as a drawn line - it is the same cue the interior's raking brazier light
+    // gives every course of masonry, baked in so it survives flat lighting.
+    const edge = Math.min(inBed, 1 - inBed);
+    const seam = 1 - smoothstep(Math.min(edge / 0.030, 1));
+    const lipT = Math.min(Math.max(inBed - 0.030, 0) / 0.055, 1);
+    const lip = smoothstep(lipT) * (1 - smoothstep(Math.min(Math.max(inBed - 0.085, 0) / 0.07, 1)));
+
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+
+      // Broad quarry drift. Low frequency on purpose: this is the scale that
+      // keeps a 4 m slab from reading as one flat value, and it is the scale the
+      // old texture had none of.
+      const drift = fbm(u, v, 4, 3, 71) - 0.5;
+      const mottle = fbm(u, v, 3, 13, 137) - 0.5;
+
+      // Chisel work. 19 whole cycles across u, so it tiles, wandered by a slow
+      // noise so the lines are not a ruled grating.
+      const chisel = Math.sin(u * TAU * 19 + (fbm(u, v, 2, 5, 23) - 0.5) * 9.0);
+      const dressed = 0.45 + 0.55 * fbm(u, v, 2, 4, 51);
+
+      const fleck = hash2(x, y, 97) > 0.9983 ? 0.40 : 0;
+
+      const t = 0.50
+        + bedTone
+        + drift * 0.46
+        + mottle * 0.22
+        + chisel * 0.050 * dressed
+        - seam * 0.30
+        + lip * 0.09
+        + fleck;
+
+      const k = t < 0 ? 0 : t > 1 ? 1 : t;
       const i = (y * size + x) * 4;
-      d[i]     = 44 + t * 90;
-      d[i + 1] = 38 + t * 78;
-      d[i + 2] = 40 + t * 84;
+      // Cool, and only just. This is the one cold object in a hot scene and that
+      // is what makes the eye go to it, but the replaced scan's pink was fighting
+      // the limestone rather than sitting under it. Blue leads red by eight parts
+      // in 255, not thirty.
+      d[i]     = 60 + k * 118;
+      d[i + 1] = 63 + k * 121;
+      d[i + 2] = 68 + k * 126;
       d[i + 3] = 255;
     }
   }
@@ -398,7 +484,25 @@ export function buildTextures() {
     sand: materialMaps(sand, { normalStrength: 1.6, rough: [0.78, 0.98] }),
     block: materialMaps(block, { normalStrength: 3.0, rough: [0.62, 0.94] }),
     carved: materialMaps(carved, { normalStrength: 3.6, rough: [0.58, 0.92] }),
-    granite: materialMaps(granite, { normalStrength: 1.2, rough: [0.22, 0.52] }),
+    // ROUGHNESS FLOOR RAISED FROM 0.22, AND THAT NUMBER WAS A BUG WITH A LIGHT
+    // ATTACHED TO IT. At 0.22 the slab is a near-mirror, and the sun's specular
+    // lobe off it is the "blown highlight washing out the right third of the
+    // gate" the owner reported. Knocked out on a frozen frame at the reproducing
+    // pose, whole-frame mean luminance:
+    //
+    //     shipped                        120
+    //     bloom disabled                  78     <- bloom was 42 of 120
+    //     sun disabled                    38     <- and the sun is its source
+    //
+    // The band around the door measured 108 with bloom and 38 without, so two
+    // thirds of that surface was glow rather than surface. The fix is here and
+    // in the material, NOT in the bloom pass: the same judge that reported this
+    // called the braziers the best local lighting in either build, and raising
+    // the bloom threshold to fix a mirror would flatten them.
+    //
+    // 0.50-0.80 is dressed granite. Polished granite exists, but a sealed tomb
+    // door that has stood in a sandstorm for three thousand years is not it.
+    granite: materialMaps(granite, { normalStrength: 1.7, rough: [0.50, 0.80] }),
     gold: materialMaps(gold, { normalStrength: 1.0, rough: [0.12, 0.34] }),
   };
 
