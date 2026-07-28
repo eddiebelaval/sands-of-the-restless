@@ -1328,5 +1328,26 @@ function buildGate({ M, rand, between, stoneMat }) {
     { x: 4.3, z: -30.2, r: 1.6, h: PIER.h },
   ];
 
+  /**
+   * THE MOVING PARTS ARE NOT STATIC GEOMETRY, and the batcher has to be told.
+   *
+   * `batch.js` folds the courtyard's static meshes into a few dozen merged
+   * draws by baking each mesh's world matrix into its vertices. That is exactly
+   * the wrong thing to do to a mesh whose whole job is to MOVE: `doors.js`
+   * drives this set nine and a half metres down into the sand when the player
+   * pays, and a merged copy of it would be welded to the courtyard for ever
+   * with the real ones deleted out from under the animation. The door would
+   * cost 1000 gold, chime, and stay shut.
+   *
+   * The tag is applied to exactly the set doors.js drives - the direct mesh
+   * children of the portal standing proud of the jamb line - and it is derived
+   * from the same predicate rather than being a second hand-written list, so
+   * the two cannot drift apart. Everything static is nested inside `structure`,
+   * which is not in this list and is batched with the rest of the courtyard.
+   */
+  for (const o of portal.children) {
+    if (o.isMesh && o.position.z > 0.2) o.userData.noBatch = true;
+  }
+
   return { portal, colliders };
 }

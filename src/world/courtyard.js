@@ -17,6 +17,7 @@ import { chamferedBox, chamferFor, erode, duneField } from './geometry.js';
 import { buildTemple } from './temple.js';
 import { buildScatter } from './scatter.js';
 import { dressAvenue } from './dressing.js';
+import { batchStatics } from './batch.js';
 
 /** Tiles per world unit, per surface. Roughly one masonry course per metre. */
 const DENSITY = {
@@ -1772,10 +1773,38 @@ export function buildCourtyard(scene) {
     seed: 77003,
   });
 
+  // -------------------------------------------------------------------------
+  // batching
+  // -------------------------------------------------------------------------
+  //
+  // LAST, AND THAT IS THE POINT. The courtyard was 995 separate meshes and the
+  // frame was being spent issuing draw calls for them: 4.6 ms inside
+  // `composer.render` against 4.8 ms of total measured JS, with the shadow pass
+  // paying for the whole scene a second time. Nothing else in the game came to
+  // a tenth of a millisecond.
+  //
+  // Running as a post-pass over the finished graph rather than as something
+  // each construction loop calls is what makes this safe to land next to a
+  // finished avenue. Every rule above about not disturbing `rand` - the
+  // thirty-three burned draws, `brand`, `sky` - exists because a change in the
+  // NUMBER of draws taken moves geometry that was signed off. A pass that runs
+  // after the last random number has been drawn cannot move anything: it reads
+  // the graph, bakes each mesh's world matrix into its vertices, and puts the
+  // result back at the same world coordinates. Both the colliders and the
+  // walkable bound are untouched, because collision has never been derived from
+  // mesh structure in this codebase - it is the array above and nothing else.
+  //
+  // What it may not touch is tagged rather than listed here: the buy-door's
+  // twelve moving parts in temple.js, and the braziers, which carry a light and
+  // an animated material.
+  const batched = batchStatics(group);
+
   return {
     group,
     colliders,
     braziers,
+    /** What the merge actually did, for the harness and for the record. */
+    batched,
     dust,
     dressing,
     /**
@@ -1928,6 +1957,16 @@ function makeFrondGeometry(length, width) {
 function makeBrazier(x, z, y, M) {
   const g = new THREE.Group();
   g.position.set(x, y, z);
+
+  // NOT STATIC. `batchStatics` stops descending at this tag, which covers the
+  // stem, the bowl and the coals in one place. Two separate reasons it has to:
+  // this group owns a PointLight whose intensity is driven every frame, and the
+  // coals wear a CLONED ember material whose emissiveIntensity is driven with
+  // it - the courtyard's `braziers` array holds a reference to that exact mesh.
+  // Batching it would delete the mesh the flicker is written to and the fire
+  // would silently stop moving, which is the kind of defect that survives a
+  // green suite because nothing measures whether a light is still flickering.
+  g.userData.noBatch = true;
 
   // World-scale UVs, like everything else. Untouched, these two carried one
   // texture tile each: the probe measured the stem at 0.958 tiles/unit against
