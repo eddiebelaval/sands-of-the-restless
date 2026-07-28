@@ -97,7 +97,25 @@ export function createCameraRig(camera) {
   return {
     get yaw() { return yaw; },
     get pitch() { return pitch; },
-    get fovNormalized() { return (fov - ADS_FOV) / (BASE_FOV - ADS_FOV); },
+    /**
+     * 0 at full ADS, 1 at hip. CLAMPED, and the clamp is the whole point.
+     *
+     * main.js scales mouse sensitivity by this, and sprinting widens the FOV to
+     * 82 - PAST BASE_FOV - so unclamped this returned 1.35 and made the player
+     * 23% more sensitive while sprinting. Worse than a static offset: the FOV
+     * EASES at rate 9, so every sprint start and stop ramped the gain between
+     * 1.00 and 1.23 over roughly 400ms. The mouse changed sensitivity under the
+     * player's hand several times a minute, which reads as drift or lag rather
+     * than as a setting, because nothing on screen says it happened.
+     *
+     * Sensitivity should track ZOOM and nothing else. At 55 FOV the same
+     * angular movement covers more screen, so finer control is correct and
+     * physically motivated. A wider sprint FOV is a speed effect and has no
+     * business touching aim.
+     */
+    get fovNormalized() {
+      return Math.max(0, Math.min(1, (fov - ADS_FOV) / (BASE_FOV - ADS_FOV)));
+    },
 
     look,
     update,
