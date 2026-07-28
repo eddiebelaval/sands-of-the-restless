@@ -1037,6 +1037,25 @@ function buildGate({ M, rand, between, stoneMat }) {
 
   const D = 0.30;    // tiles per unit on the dressed stone of the gate
 
+  /**
+   * Tiles per unit on the DOOR SLAB, which is not the same number as the gate
+   * around it and must not be.
+   *
+   * 0.2326 is one tile per 4.3 m, half the slab's height, which is the scale
+   * `paintDoorstone` is authored at: 512 texels over 4.3 m is 119 texels per
+   * metre. The player reads this door from six metres, where one metre of it
+   * covers about 117 screen pixels, so that lands at roughly one texel per
+   * pixel.
+   *
+   * What it replaces was 0.30 against a 1024 scan - 307 texels per metre, or
+   * 2.6 texels averaged into every screen pixel. Detail at that rate cannot
+   * resolve. It goes into the mip chain and comes back as the high-frequency
+   * shimmer that has been reported on this object four separate ways, and no
+   * amount of choosing a better photograph was ever going to fix it, because
+   * the defect was the sampling rate rather than the picture.
+   */
+  const SLAB_D = 0.2326;
+
   const cut = (w, h, d, mat, at, { eroded = 0, chamfer = 0, rot = null } = {}) => {
     const geo = chamferedBox(w, h, d, chamferFor(w, h, d, chamfer), D);
     if (eroded > 0) erode(geo, eroded, 1.2, (rand() * 97) | 0);
@@ -1197,7 +1216,8 @@ function buildGate({ M, rand, between, stoneMat }) {
   // player pays. Nothing static may join it.
 
   const slab = new THREE.Mesh(
-    chamferedBox(6.0, 8.6, 0.9, chamferFor(6.0, 8.6, 0.9, 0.10), 0.30), M.granite);
+    chamferedBox(6.0, 8.6, 0.9, chamferFor(6.0, 8.6, 0.9, 0.10), SLAB_D),
+    M.doorstone);
   slab.position.set(0, 4.3, 0.35);
   slab.name = 'sealed-doorway';
   slab.castShadow = true;
@@ -1214,7 +1234,8 @@ function buildGate({ M, rand, between, stoneMat }) {
     [0.26, 7.8, -2.52, 0], [0.26, 7.8, 2.52, 0],
   ]) {
     const bar = new THREE.Mesh(
-      chamferedBox(bw, bh, 0.24, chamferFor(bw, bh, 0.24, 0.04), 0.30), M.granite);
+      chamferedBox(bw, bh, 0.24, chamferFor(bw, bh, 0.24, 0.04), SLAB_D),
+      M.doorstone);
     bar.position.set(bx, 4.3 + by, 0.86);
     bar.castShadow = true;
     bar.receiveShadow = true;
@@ -1307,7 +1328,8 @@ function buildGate({ M, rand, between, stoneMat }) {
   // cold object in a hot scene and that is why the eye goes to it, but a cold
   // rectangle is still a rectangle.
   const band = new THREE.Mesh(
-    chamferedBox(5.0, 0.36, 0.24, chamferFor(5.0, 0.36, 0.24, 0.05), 0.30), M.granite);
+    chamferedBox(5.0, 0.36, 0.24, chamferFor(5.0, 0.36, 0.24, 0.05), SLAB_D),
+    M.doorstone);
   band.position.set(0, 2.5, 0.86);
   band.castShadow = true;
   band.receiveShadow = true;

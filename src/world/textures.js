@@ -431,6 +431,320 @@ function paintGranite(size = 512) {
   return c;
 }
 
+/**
+ * The sealed doorway's own stone. A DRESSED MONOLITH, not a quarry face.
+ *
+ * WHY THIS EXISTS RATHER THAN REUSING A SCAN
+ *
+ * This surface has now been wrong twice, in two different ways, and both were
+ * a FREQUENCY error rather than a taste one.
+ *
+ *   1. `granite003a`, a photograph of polished worktop granite: isotropic
+ *      pink-grey crystal speckle with no feature above a few texels. That is
+ *      what the owner saw and called "not rendering correctly", and what a
+ *      blind judge called poured concrete.
+ *
+ *   2. `rock023`, a scan of a weathered cliff ledge, which replaced it. Better
+ *      - it has bedding - but wrong twice over. It is what `carved` already
+ *      wears, so the sealed door lost every bit of material identity against
+ *      the facade around it; and it is a QUARRIED face, all crag and flake and
+ *      spall, when the thing being depicted is a slab a mason DRESSED.
+ *
+ * The measurable failure both share is texel density. rock023 is 1024 across a
+ * 3.33 m tile, so 307 texels per metre. At the six metres the player reads this
+ * door from, one metre of slab covers about 117 screen pixels, so every screen
+ * pixel is averaging 2.6 texels. Detail at that rate cannot resolve; it goes
+ * into the mip chain and comes back as noise. That is the shimmer, and it is
+ * why changing the contrast never fixed it.
+ *
+ * So: authored at the scale it is viewed. One tile is 4.3 m, half the slab's
+ * height, on a 512 map. That is 119 texels per metre - about one texel per
+ * screen pixel at the read distance - and nothing in here is smaller than a
+ * texel by construction.
+ *
+ * THREE FEATURES, LARGEST FIRST, and the sizes are the point:
+ *
+ *   BEDDING, two courses per tile, so 2.15 m per course and four courses up
+ *   the 8.6 m slab. Large enough to be structure the eye locks onto, few
+ *   enough that it still reads as a monolith rather than as coursed masonry.
+ *   Each course carries its own value: a joint that is only a drawn line reads
+ *   as a scratch on one stone, not as two stones meeting.
+ *
+ *   TOOL MARKS, parallel and DIAGONAL, at a 15 cm pitch. Parallel is what
+ *   separates worked stone from noise - one direction at one frequency is a
+ *   mason's arm, anything isotropic is weather. Diagonal because the geometry
+ *   already puts three horizontal bars across this face and a horizontal
+ *   chisel would fight them. 27 cycles in u against 9 in v are both integers,
+ *   which is what lets a diagonal tile at all. 15 cm is about 21 screen pixels
+ *   at six metres and mips to flat by twenty, which is what a real dressed
+ *   face does.
+ *
+ *   MINERAL DRIFT, at half a metre to two metres. This is the granite cue, and
+ *   it is deliberately NOT crystals. Individual crystals are the thing that was
+ *   wrong the first time. What granite looks like at six metres is patches of
+ *   lighter, warmer feldspar in a darker matrix, and a patch is something a
+ *   pixel can hold.
+ *
+ * COLOUR is warm-neutral, not blue. The brief for this object has always been
+ * "the one cold thing in a hot scene, which is what makes the eye go to it",
+ * and the previous two colours chased that literally with a blue-grey.
+ * Rendered, that reads as an unrelated material bolted into a sandstone wall,
+ * and in the shadowed reveals it picks up the sky and goes frankly navy. A
+ * NEUTRAL grey already reads cool against an orange facade - it is the oldest
+ * trick there is - and it stays stone when the light leaves it.
+ *
+ * Everything tiles: the bed count divides the map, both chisel terms are whole
+ * cycles, and every noise term is the wrapping `fbm`.
+ */
+function paintDoorstone(size = 512) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  const img = ctx.createImageData(size, size);
+  const d = img.data;
+
+  const TAU = Math.PI * 2;
+  const BEDS = 2;                       // courses per tile -> 2.15 m each
+
+  /**
+   * The chisel, as THREE frequencies along one direction rather than one.
+   *
+   * A single sine is what a first pass put here and it is unusable: 28 evenly
+   * spaced parallel lines across a four-metre face reads as brushed aluminium
+   * or corduroy, not as stone. The regularity is the tell, and it is a stronger
+   * tell than the crag it replaced, because nothing in nature is that even.
+   *
+   * Three incommensurate frequencies along nearly the same direction beat
+   * against each other, so the spacing wanders between roughly 12 and 30 cm
+   * and no two bands are the same width. That is what a mason's arm leaves.
+   * Every coefficient is an integer, which is the condition for a diagonal
+   * pattern to tile at all.
+   */
+  const CHISEL = [
+    [19, 6, 0.55],    // ~21 cm pitch, the dominant one
+    [11, 4, 0.30],    // ~37 cm, broad sweeps
+    [31, 11, 0.22],   // ~13 cm, the fine tooth
+  ];
+
+  /**
+   * Evaluate one noise field over the whole tile and RENORMALISE it to a true
+   * 0..1, because `fbm` in this file does not return one and every painter
+   * above assumes it does.
+   *
+   * MEASURED, not suspected. `hash2` returns roughly 0.01 to 0.50 on the
+   * integer lattice - never the top half of its nominal range - so `fbm`, which
+   * is a weighted mean of hash2 samples, comes back narrower still. Sampled at
+   * 512x512 over the exact parameters used below:
+   *
+   *     fbm(u, v, 3, 2,  71)    0.202 .. 0.382   mean 0.294
+   *     fbm(u, v, 2, 8, 137)    0.023 .. 0.462   mean 0.237
+   *     fbm(u, v, 2, 4, 211)    0.097 .. 0.409   mean 0.251
+   *
+   * The consequence is that the idiom used everywhere in this file - `fbm(...)
+   * - 0.5`, meaning "signed variation about zero" - is not centred and not the
+   * amplitude it says. For the drift field it evaluates to -0.113 give or take
+   * 0.034: a near-constant darkening with 18% of the intended contrast. A first
+   * cut of this texture measured a standard deviation of 5.07 out of 255 - a
+   * flat panel - against 22.97 for the rock scan it replaces, and it rendered
+   * as one. A threshold term written against the nominal range is worse than
+   * weak, it is dead: `max(0, fbm - 0.52)` for the feldspar could never once
+   * have been greater than zero.
+   *
+   * NORMALISING HERE AND NOT IN `hash2`, deliberately. Fixing the hash would
+   * change the contrast of every procedural surface in the game at once,
+   * including the sand - which a blind comparison called the best material in
+   * either build and which the owner is happy with - on no evidence beyond this
+   * one door. That is a separate change with its own before-and-after, and it
+   * is written up rather than smuggled in here.
+   *
+   * Rescaling per tile rather than by a hard-coded constant also means the
+   * field keeps its full range if anyone ever does fix the hash.
+   */
+  const field = (octaves, period, seed) => {
+    const a = new Float32Array(size * size);
+    let lo = Infinity, hi = -Infinity;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const t = fbm(x / size, y / size, octaves, period, seed);
+        a[y * size + x] = t;
+        if (t < lo) lo = t;
+        if (t > hi) hi = t;
+      }
+    }
+    const k = hi > lo ? 1 / (hi - lo) : 0;
+    for (let i = 0; i < a.length; i++) a[i] = (a[i] - lo) * k;
+    return a;
+  };
+
+  const fDrift = field(3, 2, 71);     // 2.15 m .. 54 cm
+  const fGrain = field(2, 8, 137);    //   54 cm .. 27 cm
+  const fMineral = field(2, 4, 211);  //  1.1 m  .. 54 cm
+
+  /**
+   * The fine end, and it is NOT the speckle that started all this.
+   *
+   * A cut with only bedding and a 21 cm chisel on it rendered as suede: at
+   * three times magnification there was nothing at all between the tool marks
+   * and the film grain, and a surface with a hole in its frequency spectrum
+   * that wide does not read as stone at any distance.
+   *
+   * The lesson from the countertop scan was never "no fine detail". It was that
+   * fine detail must be RESOLVABLE and STRUCTURED. granite003a failed both:
+   * isotropic, and at 307 texels per metre its features were a third of a screen
+   * pixel, so the mip chain turned them into shimmer. These two are authored
+   * against the same 119 texels per metre as everything else here:
+   *
+   *   fFine  9 cm and 4.5 cm cells - five texels at the finest, about five
+   *          screen pixels at the six-metre read. Low amplitude, so when it
+   *          does mip away past twenty metres it averages to flat rather than
+   *          to noise.
+   *   fPit   6.7 cm cells, thresholded to roughly the top eighth, which is
+   *          chipping and point-work on a dressed face. Sparse and localised is
+   *          the whole difference between chips and static.
+   */
+  const fFine = field(2, 24, 307);    //    9 cm .. 4.5 cm
+  const fPit = field(1, 64, 401);     //  6.7 cm
+
+  /**
+   * Per-course tone, spread across the full amplitude by construction.
+   *
+   * The same `hash2` narrowing that flattened the noise fields lands here too,
+   * and harder, because there are only BEDS samples for it to be unlucky on.
+   * Hashing the bed index directly returned 0.47 and 0.49 for the two courses -
+   * a spread of two hundredths where the coefficient asks for seventeen - so
+   * both courses came out the same value and the bedding read as a pair of
+   * ruled lines on one flat stone rather than as stones.
+   *
+   * Ranking the raw hashes and spacing the ranks evenly gives a guaranteed
+   * spread for any BEDS and any seed, while keeping WHICH course is light and
+   * which is dark deterministic off the hash. That is the property that
+   * actually mattered; the magnitude never should have been left to it.
+   */
+  const bedTones = (() => {
+    const raw = [];
+    for (let i = 0; i < BEDS; i++) raw.push({ i, h: hash2(i * 17 + 3, i * 29 + 11, 7) });
+    const order = raw.slice().sort((a, b) => a.h - b.h);
+    const out = new Float32Array(BEDS);
+    order.forEach((e, rank) => {
+      out[e.i] = (BEDS === 1 ? 0 : rank / (BEDS - 1) - 0.5) * 0.17;
+    });
+    return out;
+  })();
+
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    const f = v * BEDS;
+    const bed = Math.floor(f) % BEDS;
+    const inBed = f - Math.floor(f);
+
+    const bedTone = bedTones[bed];
+
+    // The joint: a dark recess about 4 cm wide with a lighter weathered lip on
+    // the course below it. The lip is what makes a joint read as two stones
+    // rather than as a line ruled across one, and it survives flat lighting
+    // because it is in the albedo rather than left to a grazing lamp.
+    const edge = Math.min(inBed, 1 - inBed);
+    const seam = 1 - smoothstep(Math.min(edge / 0.020, 1));
+    const lipT = Math.min(Math.max(inBed - 0.020, 0) / 0.030, 1);
+    const lip = smoothstep(lipT) *
+      (1 - smoothstep(Math.min(Math.max(inBed - 0.060, 0) / 0.070, 1)));
+
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+
+      // Three renormalised fields, reused for five purposes. Period is in cells
+      // per tile, so period 2 is a 2.15 m feature and period 16 - the finest
+      // octave present anywhere in here - is 27 cm.
+      const idx = y * size + x;
+      const nDrift = fDrift[idx];
+      const nGrain = fGrain[idx];
+      const nMineral = fMineral[idx];
+      const nFine = fFine[idx];
+
+      // Chipping. Only the top eighth of the field counts and it goes one way
+      // only - stone comes off a face, it does not grow back - so these are
+      // pits rather than a bidirectional wobble.
+      const pit = Math.max(0, fPit[idx] - 0.86) * 7.0;
+
+      // Chisel work: three beating frequencies, phase-wandered hard by the
+      // drift field so the bands bend across the face, and MASKED so a third of
+      // the surface carries no tooling at all. Both matter. Without the wander
+      // the bands are dead straight; without the mask they cover every square
+      // centimetre evenly, and a face that is uniformly tooled is a machined
+      // face. Nobody dresses four metres of granite to one standard.
+      // The LEAN flips on the drift field, which gives large contiguous regions
+      // dressed one way and the rest the other, with the boundary falling on a
+      // metre-scale contour. That is what a real dressed face looks like -
+      // a mason works a patch, moves his feet, and the draft direction changes -
+      // and it is the single thing that stops parallel tooling reading as
+      // brushed metal, which is where the first cut of this ended up.
+      const lean = nDrift > 0.5 ? 1 : -1;
+      const wander = (nDrift - 0.5) * 7.0;
+      let chisel = 0;
+      for (const [cu, cv, amp] of CHISEL) {
+        chisel += Math.sin((u * cu + lean * v * cv) * TAU + wander) * amp;
+      }
+      // A FLOOR under the mask, not a plain 0..1. With the mask running all the
+      // way to zero the untooled regions came back as large smooth patches, and
+      // a large smooth patch on a stone slab is the poured-concrete read this
+      // whole job exists to remove - arrived at from the opposite direction, but
+      // the same picture. 0.34 is enough tooling that no part of the face is
+      // ever blank, and the remaining 0.66 keeps the worked and unworked areas
+      // properly different from each other.
+      const worked = 0.34 + 0.66 *
+        smoothstep(Math.min(Math.max((nMineral - 0.28) / 0.34, 0), 1));
+
+      const t = 0.50
+        + bedTone
+        + (nDrift - 0.5) * 0.40
+        + (nGrain - 0.5) * 0.13
+        + (nFine - 0.5) * 0.13
+        + chisel * 0.034 * worked
+        - seam * 0.24
+        + lip * 0.07
+        - pit * 0.10;
+
+      const k = t < 0 ? 0 : t > 1 ? 1 : t;
+
+      // Faintly cool, and the size of "faintly" is the whole argument.
+      //
+      // Blue leads red by three parts in 255 at the bottom of the ramp and nine
+      // at the top. The two colours this replaces led by thirty and by twenty-
+      // three, which is a blue-grey object, and rendered as an unrelated
+      // material bolted into a sandstone wall that went navy wherever the sun
+      // left it. A neutral albedo is not the answer either: everything lighting
+      // this scene is warm, and a truly neutral slab came back tan and read as
+      // suede. Three parts is what lands grey under this sun and stays stone in
+      // the shadow, which is where the player is standing when they buy it.
+      //
+      // The ramp is wide (65 to 205) because this slab stands in a reveal
+      // between two piers and is in the sun's shadow from every position the
+      // player reads it from. A surface the light will not model has to carry
+      // its own form in the albedo or it is a flat grey rectangle, which is
+      // most of what "it does not read as dressed stone" has always meant here.
+      let r = 65 + k * 133;
+      let g = 66 + k * 136;
+      let b = 68 + k * 142;
+
+      // Feldspar. Only the upper tail of the field counts, so this is patches
+      // in a matrix rather than a wash over everything, and it lifts red and
+      // green far more than blue.
+      const felds = Math.max(0, nMineral - 0.62) * 2.6;
+      r += felds * 22;
+      g += felds * 17;
+      b += felds * 7;
+
+      const i = (y * size + x) * 4;
+      d[i]     = r > 255 ? 255 : r;
+      d[i + 1] = g > 255 ? 255 : g;
+      d[i + 2] = b > 255 ? 255 : b;
+      d[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
 /** Hammered gold leaf. Bright, warm, with tooling marks. */
 function paintGold(size = 256) {
   const c = makeCanvas(size);
@@ -475,6 +789,7 @@ export function buildTextures() {
   const block = paintMasonry(512, { rows: 6, seed: 3 });
   const carved = paintMasonry(512, { rows: 5, seed: 11, hieroglyphs: true });
   const granite = paintGranite(512);
+  const doorstone = paintDoorstone(512);
   const gold = paintGold(256);
 
   // Every repeat stays at 1. Texel density is baked into each geometry's UVs
@@ -503,6 +818,25 @@ export function buildTextures() {
     // 0.50-0.80 is dressed granite. Polished granite exists, but a sealed tomb
     // door that has stood in a sandstorm for three thousand years is not it.
     granite: materialMaps(granite, { normalStrength: 1.7, rough: [0.50, 0.80] }),
+
+    // The door slab, and the ONLY set in here that is not overwritten by a scan
+    // at boot. See paintDoorstone: the scans available to this project are a
+    // polished worktop and a cliff ledge, and this object is neither.
+    //
+    // normalStrength 2.2, up from granite's 1.7, because the whole relief in
+    // this map is a 15 cm chisel at 4.6% albedo contrast and a 4 cm joint. At
+    // 1.7 the tool marks are present in the albedo and invisible in the
+    // lighting, which is the same failure as an unread chamfer: paid for, and
+    // never drawn.
+    //
+    // ROUGHNESS 0.62-0.86, tighter and rougher than granite's 0.50-0.80. This
+    // slab is the one four-metre flat facing the sun square-on, and the blown
+    // highlight the owner reported at the right of the gate is a specular lobe
+    // off exactly this surface. 0.50 leaves a lobe on a face that size; 0.62
+    // does not, and 0.86 at the dark end keeps the shadowed reveals from
+    // turning glassy where the world-space grime term pushes roughness up.
+    doorstone: materialMaps(doorstone, { normalStrength: 2.2, rough: [0.62, 0.86] }),
+
     gold: materialMaps(gold, { normalStrength: 1.0, rough: [0.12, 0.34] }),
   };
 

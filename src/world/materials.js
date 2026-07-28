@@ -66,6 +66,37 @@ export function buildMaterials() {
       normalScale: new THREE.Vector2(0.8, 0.8),
     }),
 
+    // The sealed doorway, and NOTHING ELSE.
+    //
+    // `granite` is worn by twenty-odd props - sarcophagi, plinths, statues,
+    // rubble, the brazier stems - where a weathered rock scan is exactly right.
+    // The door is not one of those. It is a dressed monolith, it is the most
+    // looked-at object in the game, the player walks toward it for the whole
+    // first act, and it fills the frame at the moment they spend a thousand
+    // gold on it. Every previous attempt at this surface tried to serve both
+    // uses from one material and lost the door each time.
+    //
+    // Splitting it costs nothing. `temple.js` already tags every portal child
+    // standing proud of the jamb as `noBatch`, because `doors.js` drives that
+    // exact set into the ground on purchase, so the six stone meshes here were
+    // already six separate draw calls and a second material does not add one.
+    doorstone: new THREE.MeshStandardMaterial({
+      ...tex.doorstone,
+      // Neutral, and that is a correction rather than a preference. The two
+      // previous colours were 0xaab2bd and 0x9fa9b6, both frankly blue, chasing
+      // the note that this should be "the one cold object in a hot scene". At
+      // six metres that reads as an unrelated material bolted into a sandstone
+      // wall, and in the shadowed reveals it takes the sky and goes navy. A
+      // neutral grey reads cool against an orange facade on its own, and it is
+      // still stone when the sun comes off it.
+      color: 0xb3b5b9,
+      roughness: 1.0,
+      // Stone is not a conductor. Matches the granite fix for the same reason:
+      // a metallic lobe on a four-metre flat in full sun is the blown highlight.
+      metalness: 0.04,
+      normalScale: new THREE.Vector2(0.95, 0.95),
+    }),
+
     // --- metals ----------------------------------------------------------
     gold: new THREE.MeshStandardMaterial({
       ...tex.gold,
@@ -169,6 +200,28 @@ export function buildMaterials() {
     bleachStrength: 0.08,
   });
 
+  // The door slab weathers differently from the props, in two ways that both
+  // matter at the distance it is read from.
+  //
+  // The grime is DUST, not the blue-grey 0x53585e the granite props use. This
+  // face stands in a sand courtyard; what accumulates on it is the same warm
+  // dust that is on everything else, and a cool grime term on a surface that
+  // has just been de-blued would put the blue straight back in the bottom two
+  // metres - which is exactly where the player stands when they buy it.
+  //
+  // The mottle is LOWER, 0.20 against 0.36. World-space variation exists to
+  // break tiling across a wall, and this object is one stone 6 m wide that
+  // carries about one and a half tiles: there is no tiling here to break, and
+  // at 0.36 the term was writing a 20 m blotch across a monolith that should
+  // read as one piece of rock.
+  weather(m.doorstone, {
+    dirtHeight: 2.6,
+    dirt: new THREE.Color(0x6c6152),
+    variation: 0.20,
+    dirtStrength: 0.34,
+    bleachStrength: 0.06,
+  });
+
   // Sand gets mottling only. Grime and bleach make no sense on a dune field,
   // but the large-scale variation is what breaks up the tiling across 420 units.
   weather(m.sand, {
@@ -225,6 +278,17 @@ export function upgradeMaterials(sets) {
   // weathering profiles. The one thing they now share is having structure at a
   // scale the eye can resolve.
   applyMaps(m.granite,   sets.rock,      { normalScale: 0.62, aoIntensity: 1.0 });
+
+  // `doorstone` IS NOT UPGRADED, ON PURPOSE, and this line exists so that reads
+  // as a decision rather than as an omission.
+  //
+  // Both scans in the set are wrong for a dressed slab in opposite directions -
+  // granite003a is a polished worktop and rock023 is a quarried cliff - and
+  // this project has now shipped each of them on this object and had the same
+  // complaint back both times. The procedural map is authored at 119 texels per
+  // metre against rock023's 307, which is the whole of the fix: at six metres
+  // that is one texel per screen pixel instead of 2.6, so what is drawn is what
+  // was authored rather than whatever the mip chain averaged it into.
 
   // The scans carry their own colour, so the procedural tints that were
   // standing in for it must go back to white or they double up.
