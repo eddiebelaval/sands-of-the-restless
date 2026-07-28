@@ -261,6 +261,32 @@ const lift = (a, b, rect) => diff(a, b, rect).lift;
 const ratio = (hi, lo) => +(((Math.max(hi, lo) + 0.05) / (Math.min(hi, lo) + 0.05)).toFixed(2));
 
 // ---------------------------------------------------------------------------
+// bearings
+// ---------------------------------------------------------------------------
+
+/** Screen-space angle of a vector, in degrees. Y runs DOWN, as it does on a canvas. */
+const angleOf = (dx, dy) => (Math.atan2(dy, dx) * 180) / Math.PI;
+
+/** Signed difference between two bearings, wrapped to +/-180. */
+function bearingDelta(a, b) {
+  let d = a - b;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+
+/**
+ * The player's own frame in the WORLD, on the ground plane.
+ *
+ * player/camera.js turns left on a rising yaw and forward is
+ * (-sin yaw, 0, -cos yaw); right is forward crossed with up, which at yaw 0
+ * comes out +X. Written once, here, so every bearing assertion below is
+ * measured against the same derivation rather than against six ad-hoc ones.
+ */
+const worldForward = (yaw) => [-Math.sin(yaw), -Math.cos(yaw)];
+const worldRight = (yaw) => [Math.cos(yaw), -Math.sin(yaw)];
+
+// ---------------------------------------------------------------------------
 // browser
 // ---------------------------------------------------------------------------
 
@@ -277,7 +303,24 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
 
-await page.goto('http://127.0.0.1:4177/index.html', { waitUntil: 'load' });
+/**
+ * WHICH TREE IS BEING TESTED, and this override is not a convenience.
+ *
+ * STATE.md's standing instruction is to verify on an ISOLATED tree - extract
+ * HEAD with `git archive`, copy in only the files under test, serve that - and
+ * a hardcoded port makes that instruction impossible to follow. This suite was
+ * run for four minutes against 4177 while an isolated tree sat unserved on
+ * another port, which is the exact contamination the instruction exists to
+ * prevent: three separate times on this project a failure on the working tree
+ * turned out to be another agent's uncommitted work, and once a lane was
+ * committed as verified when the verification had been contaminated that way.
+ *
+ * Defaults to 4177, so nothing that already worked changes.
+ */
+const BASE = process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+console.log(`testing ${BASE}`);
+
+await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
 await page.waitForTimeout(1400);
@@ -367,17 +410,24 @@ window.__H__ = {
       'r-health': '#r-health',
       'r-gold': '#r-gold',
       'r-ammo': '#r-ammo',
+      'r-frag': '#r-frag',
       'r-boons': '#r-boons',
+      'frag-hint': '#frag-hint',
       boss: '#boss',
       prompt: '#prompt',
       notice: '#notice',
       crosshair: '#crosshair',
+      cook: '#cook',
       'gold-pops': '#gold-pops',
     };
     const out = {};
     for (const key in want) {
       const el = document.querySelector(want[key]);
-      if (!el || el.hidden) continue;
+      // el.hidden is an HTMLElement property. #cook is an SVGElement, where
+      // assigning it sets an expando and hides nothing - which is exactly how
+      // the fuse ring shipped invisible while every state check on it passed.
+      // The computed display below is the check that holds for both.
+      if (!el || el.hidden === true) continue;
       const cs = getComputedStyle(el);
       if (cs.display === 'none' || Number(cs.opacity) < 0.05) continue;
       const r = el.getBoundingClientRect();
@@ -385,6 +435,162 @@ window.__H__ = {
       out[key] = { x: r.x, y: r.y, w: r.width, h: r.height };
     }
     return out;
+  },
+
+  /**
+   * Stand the player at a world pose, repaint the map, and report WHAT WAS
+   * DRAWN: the wedge's origin and its tip, in canvas pixels, straight off
+   * minimap.state.mark.
+   *
+   * The mark is a record of the coordinates handed to the rasteriser, not a
+   * re-derivation of the projection - which matters, because re-deriving the
+   * projection inside the test would only prove the test agrees with itself.
+   * Pixel confirmation that ink actually landed at the tip is a separate check
+   * below.
+   */
+  mark(x, z, yaw) {
+    const g = window.__SANDS__;
+    g.player.teleport({ x, y: 0, z });
+    g.rig.reset(yaw, -0.02);
+    g.rig.update(1 / 60, g.player, false);
+    g.world.update(1 / 60, 0);
+    g.minimap.paint();
+    const m = g.minimap.state.mark;
+    return {
+      x: m.x, y: m.y, tipX: m.tipX, tipY: m.tipY, yaw: m.yaw,
+      space: g.spaces.active, room: g.spaces.roomId,
+    };
+  },
+
+  /** The live projection, after a repaint so fit() has run for this space. */
+  project(x, z) {
+    window.__SANDS__.minimap.paint();
+    return window.__SANDS__.minimap.project(x, z);
+  },
+
+  /**
+   * Where a shrine's own flame colour actually landed on the panel.
+   *
+   * The six shrines are the only marks on this map drawn in a hue nothing else
+   * uses, which makes them the one fixture whose RASTERISED position can be
+   * measured rather than assumed. Reported in the same device-independent
+   * pixels minimap.project returns, so the two are directly comparable: the 2D
+   * context carries a devicePixelRatio transform, so the bitmap is dpr times
+   * larger than the coordinates drawn into it.
+   */
+  shrinePixels() {
+    const g = window.__SANDS__;
+    const el = document.getElementById('map-canvas');
+    const c = el.getContext('2d');
+    const { width, height } = el;
+    const px = c.getImageData(0, 0, width, height).data;
+    const dpr = width / el.getBoundingClientRect().width;
+
+    const want = {
+      sekhmet: [0xff, 0x3c, 0x14], ptah: [0x1f, 0xd9, 0x7a], set: [0x8a, 0x2f, 0xf0],
+      shu: [0x36, 0xc8, 0xff], anubis: [0x9f, 0xb4, 0xff], thoth: [0xff, 0xa0, 0x18],
+    };
+    const acc = {};
+    for (const k in want) acc[k] = { n: 0, sx: 0, sy: 0 };
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        for (const k in want) {
+          const [r, gg, b] = want[k];
+          if (Math.abs(px[i] - r) < 26 && Math.abs(px[i + 1] - gg) < 26
+            && Math.abs(px[i + 2] - b) < 26) {
+            acc[k].n++; acc[k].sx += x; acc[k].sy += y;
+          }
+        }
+      }
+    }
+
+    const out = {};
+    for (const rec of g.interacts.records) {
+      if (rec.type !== 'shrine') continue;
+      const id = rec.config && rec.config.boon;
+      const a = acc[id];
+      if (!a || a.n < 8) continue;
+      out[id] = {
+        // canvas bitmap -> the coordinate space minimap.project speaks
+        px: a.sx / a.n / dpr, py: a.sy / a.n / dpr, n: a.n,
+        worldX: rec.x, worldZ: rec.z,
+      };
+    }
+    return out;
+  },
+
+  /** Is there bone-coloured ink within r device pixels of a canvas point. */
+  inkNear(cssX, cssY, r = 3) {
+    const el = document.getElementById('map-canvas');
+    const c = el.getContext('2d');
+    /**
+     * CANVAS coordinates in. minimap.state.mark is already in this space -
+     * measured, after two wrong guesses: mark reads (134, 247.6) and the wedge's
+     * bone pixels centre on (134, 246). They agree.
+     *
+     * NOTE: this function is injected as a STRING, so no backticks in here.
+     * STATE.md warns that node --check passes on a backtick that terminates a
+     * template literal early; it caught this one, which is luckier than the
+     * GLSL case that shipped.
+     *
+     * Do NOT subtract the canvas bounding rect. That treats the input as page
+     * relative, shifts every probe by roughly (33, 51), and turns a working
+     * reader into one that returns zero everywhere. I did exactly that while
+     * chasing this and made it worse.
+     */
+    const dpr = el.width / el.getBoundingClientRect().width;
+    const x0 = Math.max(0, Math.round(cssX * dpr - r));
+    const y0 = Math.max(0, Math.round(cssY * dpr - r));
+    const w = Math.min(el.width - x0, r * 2 + 1);
+    const h = Math.min(el.height - y0, r * 2 + 1);
+    if (w <= 0 || h <= 0) return 0;
+    const px = c.getImageData(x0, y0, w, h).data;
+    let hits = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (Math.abs(px[i] - 232) < 30 && Math.abs(px[i + 1] - 220) < 30
+        && Math.abs(px[i + 2] - 196) < 30) hits++;
+    }
+    return hits;
+  },
+
+  /** What the ordnance readout is SHOWING, read off the DOM rather than the system. */
+  frag() {
+    const plate = document.getElementById('r-frag');
+    const ring = document.getElementById('cook');
+    const hint = document.getElementById('frag-hint');
+    const keys = [...document.querySelectorAll('#r-frag .key-cap')].map((k) => k.textContent.trim());
+    return {
+      count: (document.querySelector('[data-frag]') || {}).textContent,
+      pips: document.querySelectorAll('#r-frag .pips i').length,
+      lit: document.querySelectorAll('#r-frag .pips i.on').length,
+      keys,
+      cooking: !!plate && plate.classList.contains('cooking'),
+      out: !!plate && plate.classList.contains('out'),
+      ringShown: !!ring && getComputedStyle(ring).display !== 'none',
+      ringBand: !ring ? '' : (ring.classList.contains('danger') ? 'danger'
+        : ring.classList.contains('hot') ? 'hot' : 'cool'),
+      dashOffset: parseFloat((document.querySelector('[data-cook-burn]') || {}).style?.strokeDashoffset || '0'),
+      hintShown: !!hint && !hint.hidden && getComputedStyle(hint).display !== 'none',
+    };
+  },
+
+  /** What the ammunition plate is showing about the weapon in hand. */
+  arms() {
+    return {
+      weapon: (document.querySelector('[data-weapon]') || {}).textContent,
+      slot: (document.querySelector('[data-slot]') || {}).textContent,
+      reloadKeys: [...document.querySelectorAll('#r-ammo .key-cap')].map((k) => k.textContent.trim()),
+      canReload: document.getElementById('r-ammo').classList.contains('canreload'),
+    };
+  },
+
+  /** The crosshair's page rect, for measuring whether the fuse ring drew. */
+  centreRect(pad = 44) {
+    const r = document.getElementById('crosshair').getBoundingClientRect();
+    const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    return { x: cx - pad, y: cy - pad, w: pad * 2, h: pad * 2 };
   },
 
   /** The minimap's own rect, in page pixels, for cropping a screenshot. */
@@ -484,6 +690,7 @@ const CLUSTERS = [
   { id: 'r-health', ink: 0.97 },
   { id: 'r-gold', ink: 0.97 },
   { id: 'r-ammo', ink: 0.97 },
+  { id: 'r-frag', ink: 0.97 },
 ];
 
 const legibility = [];
@@ -875,6 +1082,500 @@ check(new Set(progression.map((p) => p.text)).size >= 8,
 }
 
 // ---------------------------------------------------------------------------
+// 2b. MAP ORIENTATION
+// ---------------------------------------------------------------------------
+//
+// THE CHECK THIS FILE DID NOT HAVE, and the omission cost the owner the whole
+// map: he played it and said "the minimap is inverted".
+//
+// It was inverted TWICE, on two independent axes, which is why one assertion
+// could not have found it and why this section is shaped the way it is. A
+// top-down map of a 3D scene has three separate conventions and each can be
+// wrong on its own:
+//
+//   world +X vs screen right   was correct
+//   world +Z vs screen down    was INVERTED. `py` read `-z * sy + oy`, putting
+//                              +Z at the top, so the pyramid - which stands at
+//                              the far -Z end of the avenue - was drawn BELOW
+//                              the player walking toward it, and the nine
+//                              interior rooms were mirrored end for end.
+//   yaw vs the wedge           was INVERTED separately, mirrored in X.
+//
+// A sign error and a transpose are indistinguishable from a single pose, so
+// everything below is measured at four yaws in the interior and two in the
+// courtyard. And the two halves are tested by two DIFFERENT means on purpose:
+//
+//   handedness   pins the projection ABSOLUTELY, against world coordinates
+//                nobody can argue with - the King's Chamber is the deepest room
+//                in the tomb and the Hall of Offerings is west of the Granary.
+//   the walk     pins the wedge RELATIVE to that projection, by stepping the
+//                player along their own facing and checking the mark travels in
+//                the direction the wedge is pointing.
+//
+// Handedness alone passes on a map with a backwards arrow. The walk alone
+// passes on a map that is consistently upside down. Both together do not.
+
+{
+  await page.evaluate(() => {
+    const g = window.__SANDS__;
+    g.combat.state.invulnerable = true;
+    g.director.reset();
+    g.spaces.enter('interior', { x: 0, z: -143.5, rot: 0 });
+    g.world.update(1 / 60, 0);
+  });
+
+  // --- handedness, interior --------------------------------------------------
+  //
+  // rooms.js authors these as axis-aligned rectangles, so the ground truth is
+  // not a matter of opinion: chamber-of-ascent sits at z -149 and is the room
+  // you walk into, kings-chamber at z -252 and is the far end of the tomb.
+  const deep = await page.evaluate(() => window.__H__.project(0, -252));
+  const near = await page.evaluate(() => window.__H__.project(0, -149));
+  check(deep.y < near.y - 20,
+    'map orientation: -Z is UP the panel, so the deepest room is at the top',
+    `king's chamber y ${deep.y.toFixed(1)} vs chamber of ascent y ${near.y.toFixed(1)}`);
+
+  const west = await page.evaluate(() => window.__H__.project(-31, -149));
+  const east = await page.evaluate(() => window.__H__.project(25, -149));
+  check(east.x > west.x + 20,
+    'map orientation: +X is RIGHT, so the Granary is east of the Hall',
+    `granary x ${east.x.toFixed(1)} vs hall x ${west.x.toFixed(1)}`);
+
+  // --- the projection is what actually got RASTERISED -----------------------
+  //
+  // Everything above reads minimap.project, which is the map's own closure -
+  // but a closure that agrees with itself proves nothing about pixels. The six
+  // shrines are each drawn in a hue no other mark on the panel uses, so their
+  // centroids can be measured off the bitmap and compared against where the
+  // projection says they went.
+  await page.evaluate(() => {
+    const g = window.__SANDS__;
+    // The progression walk above already threw it; this only covers a run of
+    // this section on its own.
+    if (!g.power.powered) g.power.throwSwitch();
+    window.__H__.goRoom('great-gallery');
+  });
+  {
+    const found = await page.evaluate(() => window.__H__.shrinePixels());
+    const ids = Object.keys(found);
+    check(ids.length >= 4, 'map orientation: shrines found on the panel to measure against',
+      `${ids.length} of 6 rasterised`);
+
+    let worst = 0, worstId = '';
+    for (const id of ids) {
+      const s = found[id];
+      const p = await page.evaluate(([x, z]) => window.__H__.project(x, z), [s.worldX, s.worldZ]);
+      const err = Math.hypot(p.x - s.px, p.y - s.py);
+      if (err > worst) { worst = err; worstId = id; }
+    }
+    check(worst < 4,
+      'map orientation: every shrine was drawn where the projection says it is',
+      `worst ${worstId} off by ${worst.toFixed(2)}px over ${ids.length} shrines`);
+  }
+
+  // --- a known fixture at a known bearing, in PIXELS -------------------------
+  //
+  // The owner's test, mechanised: stand somewhere, face a way, and check the
+  // thing that is on your left is drawn on your left. Run over every shrine at
+  // once, in the player's own frame, from the rasterised centroids - so it
+  // catches a mirror on either axis and a transpose between them.
+  {
+    for (const [label, yaw] of [['facing the far end', 0], ['facing east', Math.PI / 2]]) {
+      const at = { x: 0, z: -177 };
+      const m = await page.evaluate(([x, z, y]) => window.__H__.mark(x, z, y),
+        [at.x, at.z, yaw]);
+      const found = await page.evaluate(() => window.__H__.shrinePixels());
+
+      const [fwx, fwz] = worldForward(yaw);
+      const [rwx, rwz] = worldRight(yaw);
+
+      // The wedge's own axes on the panel. Screen y runs down, so the vector
+      // 90 degrees clockwise from (fx, fy) - the player's right - is (-fy, fx).
+      const len = Math.hypot(m.tipX - m.x, m.tipY - m.y) || 1;
+      const fx = (m.tipX - m.x) / len, fy = (m.tipY - m.y) / len;
+
+      let wrong = [];
+      let judged = 0;
+      for (const id of Object.keys(found)) {
+        const s = found[id];
+        const dx = s.worldX - at.x, dz = s.worldZ - at.z;
+        const wSide = dx * rwx + dz * rwz;
+        const wAhead = dx * fwx + dz * fwz;
+
+        const px = s.px - m.x, py = s.py - m.y;
+        const pSide = px * -fy + py * fx;
+        const pAhead = px * fx + py * fy;
+
+        // Only judge an axis the fixture is unambiguously off-centre on. A
+        // shrine two metres off the player's nose says nothing about left.
+        if (Math.abs(wSide) > 3) {
+          judged++;
+          if (Math.sign(wSide) !== Math.sign(pSide)) {
+            wrong.push(`${id} is ${wSide > 0 ? 'right' : 'left'} in the world and `
+              + `${pSide > 0 ? 'right' : 'left'} on the map`);
+          }
+        }
+        if (Math.abs(wAhead) > 3) {
+          judged++;
+          if (Math.sign(wAhead) !== Math.sign(pAhead)) {
+            wrong.push(`${id} is ${wAhead > 0 ? 'ahead' : 'behind'} in the world and `
+              + `${pAhead > 0 ? 'ahead' : 'behind'} on the map`);
+          }
+        }
+      }
+
+      check(judged >= 6 && wrong.length === 0,
+        `map orientation: fixtures are on the right side of the player, ${label}`,
+        wrong.length ? wrong.join('; ') : `${judged} bearings over ${Object.keys(found).length} shrines`);
+    }
+  }
+
+  // --- the wedge points where the player WALKS ------------------------------
+  //
+  // This is the assertion that would have caught the yaw half on its own. It
+  // needs no convention at all: put the player down, step them along their own
+  // facing, and the mark has to travel in the direction the wedge is pointing.
+  const STEP = 9;
+  const walk = [];
+
+  async function walkTest(space, label, x, z, yaw) {
+    const m0 = await page.evaluate(([a, b, c]) => window.__H__.mark(a, b, c), [x, z, yaw]);
+    const [fwx, fwz] = worldForward(yaw);
+    const m1 = await page.evaluate(([a, b, c]) => window.__H__.mark(a, b, c),
+      [x + fwx * STEP, z + fwz * STEP, yaw]);
+
+    const travelled = angleOf(m1.x - m0.x, m1.y - m0.y);
+    const pointing = angleOf(m0.tipX - m0.x, m0.tipY - m0.y);
+    const err = Math.abs(bearingDelta(travelled, pointing));
+
+    walk.push({ space, label, yaw: ((yaw * 180) / Math.PI).toFixed(0), travelled: travelled.toFixed(1), pointing: pointing.toFixed(1), err: err.toFixed(1) });
+
+    check(err < 6, `map orientation: the wedge points where the player walks, ${space} ${label}`,
+      `travels ${travelled.toFixed(1)}deg, points ${pointing.toFixed(1)}deg, off by ${err.toFixed(1)}deg`);
+
+    // And the mark is not a bookkeeping entry: bone ink has to be on the panel
+    // in the direction the tip was recorded. A mark object with no pixels under
+    // it is exactly the failure class this project keeps finding, and it is the
+    // one that let a fuse ring ship invisible earlier today.
+    //
+    // Sampled HALFWAY along origin-to-tip and not AT the tip. The wedge is a
+    // point at its nose: the apex is one sub-pixel of fill behind a 1.2px ink
+    // outline, and antialiasing there blends bone with near-black, so a probe
+    // on the tip itself scored zero at every yaw in both spaces while the wedge
+    // was drawing perfectly. That was the harness being wrong about where the
+    // pixels are, not the map - read the assertion before changing the code.
+    // Halfway along, the wedge is four units wide and solidly bone.
+    // SAMPLED ALONG THE WHOLE SPINE, not at one point on it. Halfway was the
+    // second guess and it is still a guess: the wedge is only a few pixels long
+    // on the interior plan, where the floorplan is scaled to fit nine rooms
+    // rather than one avenue, so "half the distance to the tip" can land inside
+    // the 1.2px ink outline and read zero while the wedge draws perfectly. That
+    // is the SAME failure the comment above describes, moved rather than fixed.
+    //
+    // A point probe on a small rotating object is the wrong instrument. Walk
+    // the spine from the mark to the tip and take the best sample: the wedge
+    // has bone somewhere along it at every scale and every yaw, which is the
+    // thing actually being asserted - that the mark is not a bookkeeping entry
+    // with no pixels under it.
+    const spine = [];
+    for (let t = 0.2; t <= 0.85; t += 0.05) {
+      spine.push([m0.x + (m0.tipX - m0.x) * t, m0.y + (m0.tipY - m0.y) * t]);
+    }
+    let ink = 0;
+    for (const [sx, sy] of spine) {
+      const hit = await page.evaluate(([a, b]) => window.__H__.inkNear(a, b, 3), [sx, sy]);
+      if (hit > ink) ink = hit;
+    }
+    check(ink > 0, `map orientation: the wedge is drawn toward its tip, ${space} ${label}`,
+      `best of ${spine.length} samples along the mark-to-tip spine was ${ink} bone pixels`);
+  }
+
+  for (const [label, yaw] of [
+    ['yaw 0', 0], ['yaw 90', Math.PI / 2], ['yaw 180', Math.PI], ['yaw -90', -Math.PI / 2],
+  ]) {
+    await walkTest('interior', label, 0, -177, yaw);
+  }
+
+  // --- and in the courtyard, which is a different projection call ------------
+  //
+  // BOTH SPACES, because `fit` is called with different bounds for each and a
+  // fix applied to one path is not a fix applied to the other.
+  await page.evaluate(() => {
+    const g = window.__SANDS__;
+    g.spaces.enter('exterior', { x: 0, z: 24, rot: 0 });
+    g.world.update(1 / 60, 0);
+  });
+
+  const doorEnd = await page.evaluate(() => window.__H__.project(0, -30));
+  const openEnd = await page.evaluate(() => window.__H__.project(0, 34));
+  check(doorEnd.y < openEnd.y - 20,
+    'map orientation: the pyramid end of the avenue is at the TOP of the panel',
+    `doorway y ${doorEnd.y.toFixed(1)} vs the open end y ${openEnd.y.toFixed(1)}`);
+
+  for (const [label, yaw] of [['yaw 0', 0], ['yaw 90', Math.PI / 2], ['yaw -90', -Math.PI / 2]]) {
+    await walkTest('courtyard', label, 0, 10, yaw);
+  }
+
+  console.log('\n=== MAP ORIENTATION (screen bearing of travel vs of the wedge) ===\n');
+  for (const w of walk) {
+    console.log(`  ${w.space.padEnd(11)}${w.label.padEnd(9)}travels ${w.travelled.padStart(7)}deg   `
+      + `points ${w.pointing.padStart(7)}deg   off ${w.err}deg`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2c. ORDNANCE: the count, the key, and the fuse
+// ---------------------------------------------------------------------------
+//
+// The other half of the owner's report, and the more expensive one: "the HUD
+// needs to show grenades" and "I don't know how to use a grenade".
+//
+// systems/grenades.js is a whole mechanic - a held key that pulls the pin, a
+// 3.4 second fuse that starts THEN and not on release, self-damage on the same
+// falloff curve every other body takes, bounce physics, a supply with a cap and
+// a per-wave dividend - and its own header says the HUD reads `count` and
+// `cook`. Nothing did. There was no grenade element on the HUD at all. The
+// binding lived in exactly one place, the title screen's control list, which is
+// gone the moment the player clicks Enter.
+//
+// So the four claims here are the four ways that failure can come back:
+// the count is on screen, it TRACKS the system, the key is printed beside it,
+// and the fuse is visible while it burns - visible in PIXELS, because the first
+// version of the ring set `.hidden` on an SVGElement, which is a property of
+// HTMLElement, so it read back false and hid nothing and drew nothing.
+
+{
+  await page.evaluate(() => {
+    const g = window.__SANDS__;
+    g.combat.state.invulnerable = true;
+    g.director.reset();
+    g.grenades.reset();
+    g.spaces.enter('exterior', { x: 0, z: 20, rot: 0 });
+    g.world.update(1 / 60, 0);
+    window.__H__.place(0, 20, 0);
+  });
+  await page.evaluate(() => window.__H__.frames(3));
+
+  // --- it is on the HUD at all ----------------------------------------------
+  {
+    const boxes = await page.evaluate(() => window.__H__.boxes());
+    check(!!boxes['r-frag'], 'ordnance: the plate is on the HUD',
+      boxes['r-frag'] ? `${Math.round(boxes['r-frag'].w)}x${Math.round(boxes['r-frag'].h)} at `
+        + `${Math.round(boxes['r-frag'].x)},${Math.round(boxes['r-frag'].y)}` : 'MISSING');
+
+    const f = await page.evaluate(() => window.__H__.frag());
+    check(f.keys.includes('G'), 'ordnance: the key is printed on the plate',
+      `key caps: ${f.keys.join(', ') || 'NONE'}`);
+    check(f.pips === 4, 'ordnance: a pip for every grenade the pouch can hold',
+      `${f.pips} pips`);
+  }
+
+  // --- the count TRACKS the system ------------------------------------------
+  //
+  // Driven by changing the SUPPLY and asking the DOM, at every value the pouch
+  // can hold including empty. A readout that is right at 2 and stuck at 2 is
+  // the failure a single-value check cannot see.
+  {
+    const seen = [];
+    let wrong = [];
+    for (const want of [0, 1, 4, 2]) {
+      const got = await page.evaluate(async (n) => {
+        const g = window.__SANDS__;
+        g.grenades.reset();
+        g.grenades.state.count = 0;
+        g.grenades.give(n);
+        await window.__H__.frames(2);
+        return window.__H__.frag();
+      }, want);
+      seen.push(`${want}->"${got.count}"/${got.lit}pips`);
+      if (String(got.count) !== String(want)) wrong.push(`count read "${got.count}" at ${want}`);
+      if (got.lit !== want) wrong.push(`${got.lit} pips lit at ${want}`);
+      if ((want === 0) !== got.out) wrong.push(`the empty state is ${got.out} at ${want}`);
+    }
+    check(wrong.length === 0, 'ordnance: the count and the pips track the supply',
+      wrong.length ? wrong.join('; ') : seen.join('  '));
+  }
+
+  // --- THE FUSE, driven by the real key -------------------------------------
+  //
+  // page.keyboard, not a call into the module, because the claim being tested
+  // is that the binding a player would press produces the readout a player
+  // would look at. Everything waits on the COOK FRACTION: under software
+  // rendering simulated time runs about six times slower than the wall, and a
+  // 3.4 second fuse waited out on a wall clock photographs the wrong instant.
+  {
+    await page.evaluate(async () => {
+      const g = window.__SANDS__;
+      g.grenades.reset();
+      await window.__H__.frames(2);
+    });
+
+    const before = await page.evaluate(() => window.__H__.frag());
+    check(!before.ringShown, 'ordnance: no fuse ring while nothing is cooking',
+      `ring shown ${before.ringShown}`);
+
+    const centre = await page.evaluate(() => window.__H__.centreRect(44));
+    const cold = decodePNG(await page.screenshot({ timeout: 90000 }));
+
+    await page.keyboard.down('g');
+
+    await page.waitForFunction(() => window.__SANDS__.grenades.cook > 0.20, null, { timeout: 90000 });
+    const early = await page.evaluate(() => window.__H__.frag());
+    check(early.cooking && early.ringShown,
+      'ordnance: the fuse ring comes up when the pin comes out',
+      `plate cooking ${early.cooking}, ring shown ${early.ringShown}, band ${early.ringBand}`);
+    check(early.ringBand === 'cool', 'ordnance: the fuse starts in gold, not in red',
+      `band ${early.ringBand} at cook ${early.dashOffset.toFixed(1)} of 106.81`);
+
+    // One capture, decoded AND written. A screenshot is by a wide margin the
+    // slowest thing this suite does, and taking two of the same instant costs a
+    // minute under software rendering to produce a byte-identical file.
+    const burningBuf = await page.screenshot({ timeout: 90000 });
+    const burning = decodePNG(burningBuf);
+    writeFileSync(`${OUT}hud-07-cooking.png`, burningBuf);
+
+    // IN PIXELS. The ring is at the crosshair, so the claim is that the middle
+    // of the frame changed - which is the check that the SVG `hidden` bug got
+    // past, because every state assertion about it was true.
+    const rect = [centre.x, centre.y, centre.x + centre.w, centre.y + centre.h];
+    const d = diff(cold, burning, rect);
+    check(d.changedPct > 6, 'ordnance: the fuse ring actually DREW at the crosshair',
+      `${d.changedPct}% of the centre changed (mean lift ${d.lift})`);
+
+    // The far end of the fuse has to read as danger before it reads as
+    // progress, so the colour has to have moved by the time it matters.
+    await page.waitForFunction(() => window.__SANDS__.grenades.cook > 0.50, null, { timeout: 90000 });
+    const hot = await page.evaluate(() => window.__H__.frag());
+    check(hot.ringBand === 'hot' || hot.ringBand === 'danger',
+      'ordnance: the fuse has left gold by halfway', `band ${hot.ringBand}`);
+
+    await page.waitForFunction(() => window.__SANDS__.grenades.cook > 0.78, null, { timeout: 90000 });
+    const late = await page.evaluate(() => window.__H__.frag());
+    check(late.ringBand === 'danger', 'ordnance: the fuse is red before it kills you',
+      `band ${late.ringBand} at ${late.dashOffset.toFixed(1)} of 106.81`);
+    check(late.dashOffset > early.dashOffset + 20,
+      'ordnance: the ring DRAINS as the fuse burns, it does not fill',
+      `dash offset ${early.dashOffset.toFixed(1)} -> ${late.dashOffset.toFixed(1)}`);
+
+    writeFileSync(`${OUT}hud-08-cook-danger.png`, await page.screenshot({ timeout: 90000 }));
+
+    // Let go: it throws, the count drops, the ring goes.
+    const heldCount = await page.evaluate(() => window.__SANDS__.grenades.count);
+    await page.keyboard.up('g');
+    await page.waitForFunction(() => !window.__SANDS__.grenades.state.cooking, null, { timeout: 90000 });
+    await page.evaluate(() => window.__H__.frames(3));
+
+    const after = await page.evaluate(() => window.__H__.frag());
+    const thrown = await page.evaluate(() => window.__SANDS__.grenades.stats());
+    check(!after.ringShown && !after.cooking,
+      'ordnance: releasing puts the ring and the danger state away',
+      `ring ${after.ringShown}, plate cooking ${after.cooking}`);
+    check(thrown.count === heldCount - 1 && String(after.count) === String(thrown.count),
+      'ordnance: the throw spent one and the HUD says so',
+      `${heldCount} -> ${thrown.count}, plate reads "${after.count}"`);
+  }
+
+  // --- the one-time hint retires itself -------------------------------------
+  //
+  // Not a tutorial and deliberately not a system: it is shown once, and pulling
+  // a pin is proof it has done its job. The cook above pulled one, so by here
+  // it must be gone and must stay gone.
+  {
+    const f = await page.evaluate(() => window.__H__.frag());
+    check(!f.hintShown, 'ordnance: the hint retired itself once a pin came out',
+      `hint shown ${f.hintShown}`);
+
+    const back = await page.evaluate(async () => {
+      const g = window.__SANDS__;
+      g.grenades.reset();
+      await window.__H__.frames(4);
+      return window.__H__.frag();
+    });
+    check(!back.hintShown, 'ordnance: and it does not come back with the next resupply',
+      `hint shown ${back.hintShown} at count ${back.count}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2d. WHICH WEAPON, AND WHICH NUMBER RECALLS IT
+// ---------------------------------------------------------------------------
+//
+// "The HUD needs to show which weapon." It showed the name and not the slot,
+// which is half an answer: seven weapons are bought across this map and every
+// one of them is one digit away at any moment, and knowing you are holding the
+// Apis without knowing it is on 5 is knowing nothing you can act on.
+
+{
+  const rows = [];
+  let wrong = [];
+
+  for (const [id, slot] of [['mk9', '1'], ['smg', '2'], ['shotgun', '3'], ['lmg', '5'], ['sunspear', '7']]) {
+    const got = await page.evaluate(async (w) => {
+      const g = window.__SANDS__;
+      g.weapons.grant(w);
+      g.weapons.equip(w);
+      await window.__H__.frames(3);
+      return { ...window.__H__.arms(), real: g.weapons.displayName(w).toUpperCase() };
+    }, id);
+
+    rows.push(`${id} -> "${got.weapon}" [${got.slot}]`);
+    if (got.weapon !== got.real) wrong.push(`${id}: plate says "${got.weapon}", armoury says "${got.real}"`);
+    if (got.slot !== slot) wrong.push(`${id}: plate says slot ${got.slot}, SLOTS says ${slot}`);
+  }
+
+  check(wrong.length === 0, 'arms: the plate names the weapon in hand and the digit that recalls it',
+    wrong.length ? wrong.join('; ') : rows.join('   '));
+
+  const keys = await page.evaluate(() => window.__H__.arms());
+  check(keys.reloadKeys.includes('R'), 'arms: the reload key is printed on the plate',
+    `key caps on the ammunition plate: ${keys.reloadKeys.join(', ') || 'NONE'}`);
+
+  // The reload hint lights only while pressing R would do something. Driven by
+  // FIRING the weapon through its own update, rather than by writing to the
+  // magazine: the readout has to be fed by the path the game feeds it by, or
+  // the check proves the harness works and nothing else.
+  {
+    const state = await page.evaluate(async () => {
+      const g = window.__SANDS__;
+      g.weapons.equip('mk9');
+      await window.__H__.frames(3);
+      const full = { canReload: window.__H__.arms().canReload, mag: g.weapons.magazine };
+
+      // Rate-limited, so each shot needs its own tick with enough delta.
+      for (let i = 0; i < 6; i++) g.weapons.update(0.5, { fire: true }, false);
+      await window.__H__.frames(3);
+      const spent = { canReload: window.__H__.arms().canReload, mag: g.weapons.magazine };
+      return { full, spent };
+    });
+
+    check(state.full.canReload === false && state.full.mag > 0,
+      'arms: the reload hint is dark while the magazine is full',
+      `full magazine ${state.full.mag}, hint lit ${state.full.canReload}`);
+    check(state.spent.mag < state.full.mag && state.spent.canReload === true,
+      'arms: and lights once there is something to put back',
+      `magazine ${state.full.mag} -> ${state.spent.mag}, hint lit ${state.spent.canReload}`);
+  }
+
+  // Put the world back where section 3 expects to find it.
+  //
+  // 2b walks the player out to the courtyard to test the exterior projection,
+  // which is a different call into fit(), and 2c holds the real G key out
+  // there. Section 3 then needs a WALL BUY under the crosshair for its prompt,
+  // and goRoom() only moves the room while the interior is the live space - so
+  // without this the overlap check ran in the avenue with no prompt up and
+  // asserted that the worst-case frame had all three elements on it while one
+  // of them could not exist. Found by looking at hud-05-boss.png and noticing
+  // the map was showing the courtyard.
+  await page.evaluate(() => {
+    const g = window.__SANDS__;
+    g.spaces.enter('interior', { x: 0, z: -143.5, rot: 0 });
+    g.world.update(1 / 60, 0);
+    window.__H__.goRoom('chamber-of-ascent');
+  });
+  await page.evaluate(() => window.__H__.frames(2));
+}
+
+// ---------------------------------------------------------------------------
 // 3. NOTHING OVERLAPS, under the worst frame the game can produce
 // ---------------------------------------------------------------------------
 
@@ -907,9 +1608,11 @@ await page.evaluate(() => window.__H__.frames(4));
   // test between them and it is not a clash, it is the DOM.
   const ids = Object.keys(boxes).filter((k) => k !== 'map-head' && k !== 'map-canvas');
 
-  // The crosshair, the hitmarker and the popup anchor all live ON the centre of
-  // the screen and are meant to. Overlap between those is the design.
-  const CENTRE = new Set(['crosshair', 'gold-pops', 'hitmarker']);
+  // The crosshair, the hitmarker, the fuse ring and the popup anchor all live
+  // ON the centre of the screen and are meant to. Overlap between those is the
+  // design: the ring is drawn AROUND the crosshair on purpose, because the
+  // middle of the frame is where a player holding a live grenade is looking.
+  const CENTRE = new Set(['crosshair', 'gold-pops', 'hitmarker', 'cook']);
 
   const clashes = [];
   for (let i = 0; i < ids.length; i++) {

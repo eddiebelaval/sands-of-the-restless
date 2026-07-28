@@ -169,6 +169,34 @@
     font-size: 9px; letter-spacing: .26em; color: var(--gold);
   }
 
+  /* ---- THE KEY CAP ----
+
+     Every verb the player has to perform prints its key beside the thing it
+     acts on, and this is that object.
+
+     It exists because of one report from the owner playing his own game: "I
+     hunt for the key". The bindings were stated in exactly one place - the
+     title screen - which is gone the moment play starts, so the whole control
+     scheme was a thing the player had to have memorised in the ten seconds
+     before the game began or go without. A feature nobody can find does not
+     exist, and the grenade is the proof: a cook-and-throw wager with a live
+     fuse, self-damage, bounce physics and a supply economy, and the owner had
+     been playing for days without once throwing one.
+
+     Bone on near-black inside a gold hairline, which is the plate at badge
+     size. Bone because this is the one class of HUD text whose entire job is to
+     be found by someone who is not looking for it, and bone is the brightest
+     value on the interface. */
+  .key-cap {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 15px; padding: 0 4px;
+    border: 1px solid rgba(217,178,106,.55);
+    background: rgba(18,12,6,.94);
+    font-family: inherit; font-size: 9px; letter-spacing: .04em;
+    color: var(--bone);
+    flex: none;
+  }
+
   #r-health { left: 22px; bottom: 22px; min-width: 148px; }
 
   /* The bar is the readout the number cannot be. Sekhmet moves the ceiling
@@ -193,9 +221,15 @@
   /* The boon strip. Directly above vitality, because the two are read
      together: how much life you have and what is keeping you alive. Empty
      slots are drawn as well as full ones, so the strip answers "should I stop
-     at the next shrine" and not only "what did I buy". */
+     at the next shrine" and not only "what did I buy".
+
+     Lifted from 96 to 104 when the ordnance plate went in beside vitality: a
+     full strip of NAMED boons is a good deal wider than a strip of empty
+     sockets, and at four chips carrying "SEKHMET" it reached far enough right
+     to land on the top edge of the new plate. Two pixels of overlap, which the
+     suite would have caught and the eye would not. */
   #r-boons {
-    position: absolute; left: 22px; bottom: 96px;
+    position: absolute; left: 22px; bottom: 104px;
     display: flex; gap: 7px; align-items: center;
   }
   .boon[hidden] { display: none; }
@@ -223,6 +257,117 @@
   .boon:not(.held) i { box-shadow: none; opacity: .55; }
   .boon.held { border-color: rgba(217,178,106,.45); }
 
+  /* ---- ORDNANCE ----
+
+     Beside vitality, not beside ammunition, and on the same baseline so the two
+     read as one cluster. They are the pair a player consults at the moment that
+     actually matters in this game - cornered, low, deciding whether to fight
+     the room or leave it - and the grenade is the only answer to that question
+     that is not "shoot faster".
+
+     The count is always up, at 26px in bone, exactly as vitality and gold are.
+     A consumable that only appears when you are holding one is a consumable
+     nobody plans around. The pips underneath say the other half of it: this HUD
+     already argues, at the boon strip, that "two of four" is a different piece
+     of information from "two", and it is the one that decides whether a player
+     spends the one in their hand. */
+  #r-frag { left: 186px; bottom: 22px; min-width: 134px; }
+  #r-frag .key-cap { margin-left: auto; }
+  #r-frag .val { display: block; }
+  #r-frag .pips { display: flex; gap: 4px; margin-top: 8px; }
+  #r-frag .pips i {
+    display: block; width: 13px; height: 4px;
+    background: rgba(217,178,106,.15);
+    box-shadow: inset 0 0 0 1px rgba(217,178,106,.22);
+  }
+  #r-frag .pips i.on {
+    background: linear-gradient(90deg, #b8894a, var(--gold));
+    box-shadow: none;
+  }
+  /* Nothing in the pouch. Dimmed rather than hidden, because the plate
+     disappearing would take the binding with it - and an empty pouch is
+     precisely when a player needs to know grenades exist and come back. */
+  #r-frag.out .val { color: var(--gold-mid); }
+  /* THE PIN IS OUT. The plate goes to danger, and it goes there on the frame
+     the pin comes out rather than at some threshold, because the wager starts
+     immediately: see #cook for the clock. */
+  #r-frag.cooking { border-color: rgba(224,86,60,.65); }
+  #r-frag.cooking .val { color: #ff8a6c; }
+  #r-frag.cooking .key-cap { border-color: rgba(224,86,60,.75); color: #ff8a6c; }
+
+  /* ---- THE FUSE ----
+
+     A 3.4 second fuse that kills you where you stand is not a progress bar, and
+     three decisions here follow from that.
+
+     It is drawn AT THE CROSSHAIR, because a player holding a live grenade is
+     looking down the middle of the screen at the thing they mean to hit, and a
+     clock in the corner of a HUD is a clock they will read after it has gone
+     off. It EMPTIES rather than fills: a ring draining reads as time running
+     out, a ring filling reads as a weapon charging, and this is the first one.
+     And it crosses to amber and then to red well before it expires, so the
+     element is danger first and information second - a player who has learned
+     nothing else about it still knows that red at the centre of their screen
+     while their thumb is on a key means let go.
+
+     The throb at the end is a wall-clock CSS animation, which is correct here
+     for the same reason it is correct on the gold popups: nothing in the
+     simulation reads it, so it cannot desynchronise anything by running at a
+     different rate than the clamped frame delta. */
+  /* A CLASS, NOT THE hidden ATTRIBUTE, and that is not a style preference.
+     `hidden` is a property of HTMLElement and this is an SVGElement, so
+     `el.hidden = false` on it sets a JavaScript expando and leaves the content
+     attribute exactly where it was - the ring stayed display:none for its whole
+     life while the code that hid it read back `hidden: false` and believed
+     itself. Found by rendering it and looking at the middle of the frame, which
+     is the only way anything in this class of bug has ever been found here. */
+  #cook {
+    display: none;
+    position: absolute; left: 50%; top: 50%;
+    width: 64px; height: 64px;
+    transform: translate(-50%, -50%) rotate(-90deg);
+  }
+  #cook.live { display: block; }
+  #cook circle { fill: none; }
+  .cook-track { stroke: rgba(6,4,2,.82); stroke-width: 5.5; }
+  .cook-burn {
+    stroke: var(--gold); stroke-width: 3.2; stroke-linecap: butt;
+    /* 2 * PI * 17, the circumference the dash offset is written against. */
+    stroke-dasharray: 106.81;
+    stroke-dashoffset: 0;
+  }
+  #cook.hot .cook-burn { stroke: #ffab3c; stroke-width: 4; }
+  /* HEAVIER as it gets SHORTER, which is the opposite of what happens if the
+     stroke is left alone. The arc is the fuse, so the last half second is the
+     least ink on the screen at the moment it matters most - measured on the
+     first version, the danger frame had a thinner mark than the opening one.
+     Width goes up as length comes down so the total ink holds. */
+  #cook.danger .cook-burn { stroke: #ff4c2c; stroke-width: 5.4; }
+  #cook.danger { animation: cook-throb .26s steps(2, end) infinite; }
+  /* The trough is .55 and not .38. A blink is the right signal and a blink that
+     halves a thin red arc over sunlit sand is a mark that is genuinely gone for
+     half of every cycle - caught in a screenshot of the danger band, which is
+     the frame that has to be the most readable one the element ever produces. */
+  @keyframes cook-throb { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+  /* ---- the one-time hint ----
+
+     Shown once, the first time the player is standing in the game with a
+     grenade in the pouch, and retired for the rest of the session the moment it
+     has been read or the moment a pin comes out - whichever happens first. It
+     is not a tutorial and there is deliberately no system behind it: one line,
+     one boolean, and it takes itself off the screen. */
+  #frag-hint {
+    position: absolute; left: 22px; bottom: 132px;
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 13px 8px;
+    font-size: 11px; letter-spacing: .17em; text-transform: uppercase;
+    color: var(--gold); white-space: nowrap;
+    opacity: 0; transition: opacity .35s ease;
+  }
+  #frag-hint[hidden] { display: none; }
+  #frag-hint.on { opacity: 1; }
+
   #r-gold { right: 22px; top: 22px; text-align: right; min-width: 118px; }
   #r-gold .cap { justify-content: flex-end; }
   .readout .val { display: block; font-size: 26px; letter-spacing: .08em; color: var(--bone); }
@@ -233,8 +378,13 @@
      find and this is one glance. Lifted clear of the fidelity buttons, which
      the wave counter used to sit on top of. */
   #r-ammo {
-    right: 22px; bottom: 62px; text-align: right; min-width: 156px;
+    right: 22px; bottom: 62px; text-align: right; min-width: 186px;
   }
+  /* The weapon's NAME and the number that recalls it, together. Seven weapons
+     are bought across this map and any of them can be swapped to instantly with
+     a digit, which is worth nothing to a player who has to remember which digit
+     - so the slot rides on the same line as the name and the player learns the
+     binding by reading the gun they are already holding. */
   #r-ammo .cap { justify-content: flex-end; }
   #r-ammo .val { display: block; margin-top: 1px; }
   #r-ammo b { font-weight: normal; font-size: 30px; letter-spacing: .04em; color: var(--bone); }
@@ -246,8 +396,12 @@
   #r-ammo.empty b { color: #ff6a4c; }
   #r-ammo.reloading b { color: var(--gold); }
 
+  /* The wave, and the one key that acts on this plate. They share the footer
+     rather than taking a line each: the reload binding is the least urgent
+     thing in this corner and does not deserve its own rule, but it does have to
+     be somewhere a player can find it without leaving the game. */
   #r-ammo .wave {
-    display: flex; align-items: center; justify-content: flex-end; gap: 7px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
     margin-top: 8px; padding-top: 7px;
     border-top: 1px solid rgba(217,178,106,.18);
     font-size: 9px; letter-spacing: .26em; color: var(--gold);
@@ -255,6 +409,15 @@
   #r-ammo .wave u {
     text-decoration: none; font-size: 15px; letter-spacing: .06em; color: var(--bone);
   }
+  #r-ammo .hint { display: flex; align-items: center; gap: 6px; }
+  /* Lit only while pressing it would do something. A key hint that is bright
+     when the magazine is full is a prompt that has cried wolf by the time the
+     magazine is empty. */
+  #r-ammo.canreload .hint .key-cap {
+    border-color: rgba(217,178,106,.95);
+    box-shadow: 0 0 8px rgba(217,178,106,.30);
+  }
+  #r-ammo.empty .hint .key-cap { border-color: #ff6a4c; color: #ff8a6c; }
 
   /* ---- the left column: where am I, and what next ----
 
@@ -564,6 +727,16 @@
     <symbol id="i-step" viewBox="0 0 12 12">
       <path d="M2 6h7M6 3l3 3-3 3"/>
     </symbol>
+    <!-- a frag: body, neck, and the spoon running down the side.
+         The first version drew the pin ring as a dot on a diagonal off the
+         neck, which at 12px stops being a grenade and becomes the glyph for
+         Mars. Rendered and looked at, which is the only way to find that. The
+         spoon down the flank is the silhouette that survives the size. -->
+    <symbol id="i-frag" viewBox="0 0 12 12">
+      <circle cx="5.5" cy="7.7" r="3.2"/>
+      <path d="M4.1 4.8V3.3h2.8v1.5"/>
+      <path d="M7.3 3.7c1.3.5 1.8 1.5 1.8 2.7v1.5"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -580,6 +753,14 @@
       <line x1="15" y1="11" x2="20" y2="11"/>
     </g>
     <circle cx="11" cy="11" r="1" fill="#d9b26a" opacity=".9"/>
+  </svg>
+
+  <!-- THE FUSE, at the crosshair. Hidden until a pin is out; see #cook above
+       for why it is here rather than on the ordnance plate, and why it drains
+       rather than fills. Painted by createGrenadeReadout in ui/hud.js. -->
+  <svg id="cook" viewBox="0 0 44 44" aria-hidden="true">
+    <circle class="cook-track" cx="22" cy="22" r="17"/>
+    <circle class="cook-burn" cx="22" cy="22" r="17" data-cook-burn="1"/>
   </svg>
 
   <div id="hud-left">
@@ -620,10 +801,30 @@
     <span class="val" data-gold>500</span>
   </div>
 
+  <!-- ORDNANCE. Always up, whether or not the pouch has anything in it, with
+       the key printed on it; see #r-frag above. Painted by
+       createGrenadeReadout in ui/hud.js from systems/grenades.js. -->
+  <div class="readout plate" id="r-frag">
+    <span class="cap">
+      <svg class="ico"><use href="#i-frag"/></svg>Frag<kbd class="key-cap">G</kbd>
+    </span>
+    <span class="val" data-frag>2</span>
+    <span class="pips" data-frag-pips></span>
+  </div>
+
   <div class="readout plate" id="r-ammo">
-    <span class="cap"><svg class="ico"><use href="#i-round"/></svg><span data-weapon>MK9</span></span>
+    <span class="cap"><svg class="ico"><use href="#i-round"/></svg><span data-weapon>MK9</span><kbd class="key-cap" data-slot>1</kbd></span>
     <span class="val"><b data-mag>12</b><i data-reserve>96</i></span>
-    <span class="wave">Wave<u data-wave>1</u></span>
+    <span class="wave">
+      <span class="hint"><kbd class="key-cap">R</kbd>Reload</span>
+      <span>Wave<u data-wave>1</u></span>
+    </span>
+  </div>
+
+  <!-- Once, and then never again. See #frag-hint above: one line, one boolean,
+       and it takes itself off the screen. -->
+  <div class="plate" id="frag-hint" hidden>
+    <kbd class="key-cap">G</kbd>Hold to cook, release to throw
   </div>
 
   <div class="plate" id="boss" hidden>

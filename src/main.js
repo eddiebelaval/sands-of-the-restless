@@ -34,7 +34,9 @@ import { createShrines } from './systems/shrines.js';
 import { createAltar } from './systems/altar.js';
 import { createPromptBus } from './ui/prompt.js';
 import { createInteracts } from './ui/interact.js';
-import { createBoonStrip, createReadouts, createPowerStrip, createFlash } from './ui/hud.js';
+import {
+  createBoonStrip, createReadouts, createPowerStrip, createFlash, createGrenadeReadout,
+} from './ui/hud.js';
 import { createMinimap } from './ui/minimap.js';
 import { createObjectives, createObjectivePanel } from './ui/objective.js';
 import { createGrenades } from './systems/grenades.js';
@@ -289,6 +291,18 @@ function boot() {
   });
 
   const powerStrip = createPowerStrip(document.getElementById('r-powers'), powerups);
+
+  /**
+   * The ordnance readout, and the reason it is constructed HERE.
+   *
+   * The cap is a constant inside systems/grenades.js and is reported by
+   * stats(), so it is read once at wiring time rather than being duplicated as
+   * a literal on the HUD - a HUD that says "of four" while the system says five
+   * is the kind of disagreement that only shows up in the one screenshot
+   * nobody takes. stats() also walks the pools, which is why it is called once
+   * and not once a frame; the frame loop uses the cheap getters.
+   */
+  const grenadeReadout = createGrenadeReadout(document, { max: grenades.stats().max });
 
   // -------------------------------------------------------------------------
   // where am I, and what next
@@ -774,10 +788,29 @@ function boot() {
       weapon: weapons.STATS[weapons.state.current]
         ? weapons.displayName(weapons.state.current).toUpperCase()
         : '',
+      // The digit that recalls this weapon, 1-based, straight off the same
+      // SLOTS table main.js binds Digit1..Digit7 against. One source per fact:
+      // the day the order changed, the HUD would otherwise be the thing that
+      // was wrong.
+      slot: SLOTS.indexOf(weapons.state.current) + 1 || '',
       empty: weapons.magazine === 0,
       reloading: weapons.isReloading,
+      canReload: !weapons.isReloading
+        && weapons.reserve > 0
+        && !!weapons.STATS[weapons.state.current]
+        && weapons.magazine < weapons.STATS[weapons.state.current].magazine,
       boss: director.boss,
     });
+
+    // Ordnance. Handed the numbers rather than the system, exactly as the
+    // readouts above are, and handed the CLAMPED delta because the one-time
+    // hint has a clock in it and simulated time runs several times slower than
+    // the wall under software rendering.
+    grenadeReadout.update({
+      count: grenades.count,
+      cooking: grenades.state.cooking,
+      cook: grenades.cook,
+    }, started ? dt : 0);
 
     // The map and the tracker, last, because both describe the frame that has
     // just been resolved. The tracker runs every frame and is cheap - a walk
@@ -800,7 +833,7 @@ function boot() {
     spaces, economy, doors, courtyard, interior: spaces.interior,
     director, combat,
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
-    readouts, powerStrip, objectives, objectivePanel, minimap,
+    readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     setFidelity, start,
     get elapsed() { return elapsed; },
   };

@@ -123,6 +123,19 @@ export function createMinimap({
     room: null,
     contacts: 0,
     painted: 0,
+
+    /**
+     * WHERE THE PLAYER WEDGE WAS ACTUALLY DRAWN, in canvas pixels, written by
+     * drawPlayer on the frame it draws.
+     *
+     * This is a record and not a claim: it is the same two numbers that were
+     * handed to moveTo, so a harness reading it is reading the rasteriser's
+     * input rather than re-deriving the projection and asserting its own
+     * arithmetic against itself. The tip is what makes the orientation
+     * checkable at all - the wedge is nine pixels of bone on a dark panel and
+     * fitting a direction to it from the image alone is noise.
+     */
+    mark: { x: 0, y: 0, tipX: 0, tipY: 0, yaw: 0 },
   };
 
   // ---------------------------------------------------------------------------
@@ -138,19 +151,48 @@ export function createMinimap({
   //
   let sx = 1, sy = 1, ox = 0, oy = 0;
 
+  //
+  // THE Z AXIS RAN THE WRONG WAY FOR THE WHOLE OF THIS FILE'S LIFE, and it is
+  // worth writing down exactly what was wrong because "the map is inverted" has
+  // three independent causes and only one of them was live.
+  //
+  //   world +X vs screen right   CORRECT, and always was.
+  //   world +Z vs screen down    INVERTED. `py` was `-z * sy + oy`, which puts
+  //                              +Z at the TOP - so the pyramid, which stands
+  //                              at the far -Z end of the avenue, was drawn
+  //                              BELOW the player walking toward it, and the
+  //                              nine interior rooms were mirrored end for end
+  //                              with the entry at the top and the King's
+  //                              Chamber, the deepest room in the tomb, at the
+  //                              bottom. Measured: stepping the player from
+  //                              z -149 to z -252 moved their mark 211 pixels
+  //                              DOWN the panel.
+  //   yaw vs the wedge           INVERTED as well, separately: see drawPlayer.
+  //
+  // The two errors are not the same error. A sign flip on Z alone leaves a
+  // self-consistent map that reads upside down; a sign flip on yaw alone leaves
+  // a correctly laid-out map with an arrow that points behind the player. Both
+  // were present, which is why the mark pointed 165-180 degrees away from the
+  // direction the player was actually travelling at every yaw tested, in both
+  // the courtyard AND the interior. Checking one pose could not have told them
+  // apart - a sign error and a transpose look identical from one sample.
+  //
+  // -Z is UP the panel, which is the ordinary top-down convention (look down
+  // +Y, +X right, +Z toward the bottom of the screen) and is also what makes
+  // this a compass: the player faces -Z on entry, so the thing ahead of them is
+  // the thing at the top of the map.
+  //
   function fit(minX, maxX, minZ, maxZ) {
     const w = W - PAD * 2;
     const h = H - PAD * 2;
     const k = Math.min(w / (maxX - minX), h / (maxZ - minZ));
     sx = k; sy = k;
     ox = PAD + (w - (maxX - minX) * k) / 2 - minX * k;
-    // World -Z is the way the player faces on entry, so it is drawn UP the
-    // panel. That flip is the whole reason this is not just a scale.
-    oy = PAD + (h - (maxZ - minZ) * k) / 2 + maxZ * k;
+    oy = PAD + (h - (maxZ - minZ) * k) / 2 - minZ * k;
   }
 
   const px = (x) => x * sx + ox;
-  const py = (z) => -z * sy + oy;
+  const py = (z) => z * sy + oy;
 
   // ---------------------------------------------------------------------------
   // primitives
@@ -165,8 +207,13 @@ export function createMinimap({
     ctx.fillRect(0, 0, W, H);
   }
 
+  // Callers pass a world rectangle, not a screen one, so which of z0/z1 lands
+  // at the top is a property of the projection rather than of the call. Taking
+  // the min and the max is what stops a future change of Z convention from
+  // silently handing fillRect a negative height.
   function rect(x0, z0, x1, z1, fill, stroke, lw = 1) {
-    const a = px(x0), b = py(z1), c = px(x1), d = py(z0);
+    const a = Math.min(px(x0), px(x1)), c = Math.max(px(x0), px(x1));
+    const b = Math.min(py(z0), py(z1)), d = Math.max(py(z0), py(z1));
     if (fill) { ctx.fillStyle = fill; ctx.fillRect(a, b, c - a, d - b); }
     if (stroke) {
       ctx.strokeStyle = stroke;
@@ -527,12 +574,31 @@ export function createMinimap({
   function drawPlayer() {
     const p = player.position;
     const a = px(p.x), b = py(p.z);
-    // Forward is (-sin yaw, 0, -cos yaw). On a panel with -Z up that is
-    // (-sin, -cos) in screen terms with y already flipped, so the wedge is
-    // rotated by the yaw directly.
+
+    // THE WEDGE IS ROTATED BY MINUS THE YAW, and the sign is derived rather
+    // than guessed, because guessing it is how this ended up backwards.
+    //
+    // player/camera.js turns LEFT on a rising yaw: `yaw -= dx * SENSITIVITY`,
+    // and forward is (-sin yaw, 0, -cos yaw). Project that through px/py, which
+    // are now a plain scale with no flip on either axis:
+    //
+    //     screen forward = (-sin yaw, -cos yaw)
+    //
+    // The wedge's tip is at local (0, -7), so whatever matrix is applied has to
+    // carry (0, -1) onto (-sin yaw, -cos yaw). The standard rotation
+    // [[c, -s], [s, c]] carries it onto (+sin, -cos) - correct in Z and
+    // MIRRORED IN X, which is the second half of the inversion the owner
+    // reported. Screen y runs downward, so a yaw that turns the player left
+    // must turn the wedge counter-clockwise ON SCREEN, which is a rotation by
+    // -yaw: [[c, s], [-s, c]].
+    //
+    // Verified by walking rather than by reading: teleport the player, step
+    // them 8 m along their own facing, and confirm the mark travels in the
+    // direction the wedge is pointing. That test is in test/hud.mjs and it is
+    // the one that would have caught this.
     const yaw = rig ? rig.yaw : 0;
     const c = Math.cos(yaw), s = Math.sin(yaw);
-    const pt = (fx, fz) => [a + (fx * c - fz * s), b + (fx * s + fz * c)];
+    const pt = (fx, fz) => [a + (fx * c + fz * s), b + (-fx * s + fz * c)];
 
     const [x0, y0] = pt(0, -7);
     const [x1, y1] = pt(4.4, 4);
@@ -547,6 +613,12 @@ export function createMinimap({
     ctx.strokeStyle = INK;
     ctx.lineWidth = 1.2;
     ctx.stroke();
+
+    state.mark.x = a;
+    state.mark.y = b;
+    state.mark.tipX = x0;
+    state.mark.tipY = y0;
+    state.mark.yaw = yaw;
   }
 
   // ---------------------------------------------------------------------------
@@ -710,6 +782,18 @@ export function createMinimap({
     attach(parts) {
       if (parts && parts.owns) weaponsOwn = parts.owns;
     },
+
+    /**
+     * The live projection: a world (x, z) to the canvas pixel it lands on.
+     *
+     * For the harness, and only for the harness. It is THE projection - the same
+     * two closures every mark on the panel is placed with, not a copy of them -
+     * so a test can put a known fixture at a known bearing and check the map
+     * agrees, and cannot be fooled by a second implementation that drifted.
+     * Valid for whichever space was painted last, because `fit` is called per
+     * paint with that space's bounds.
+     */
+    project(x, z) { return { x: px(x), y: py(z) }; },
 
     /** For the harness: which rooms the player has stood in. */
     get visited() { return [...seen]; },
