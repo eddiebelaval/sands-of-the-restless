@@ -778,6 +778,23 @@ export function createDirector({
     director: null,
   };
 
+  /**
+   * Who wants to know that a round began.
+   *
+   * THE ONLY HONEST SOURCE OF "A NEW WAVE STARTED", and it exists because the
+   * alternative was already in the codebase and already wrong. systems/
+   * grenades.js used to watch `state.wave` for a change and re-derive the event
+   * from it, which needs a guard for `forceWave()` and `reset()` moving the
+   * number BACKWARDS, another for wave zero between a reset and the first horn,
+   * and a private copy of last frame's value in every module that cares. Three
+   * pieces of bookkeeping, in each subscriber, all of them a chance to disagree
+   * with the counter the HUD is painting.
+   *
+   * A listener fired from inside beginWave() cannot drift from the increment
+   * one line above it. Same shape as combat.onKill for the same reason.
+   */
+  const waveListeners = new Set();
+
   function beginWave() {
     state.wave++;
     const { boss } = compose(state.wave);
@@ -803,6 +820,11 @@ export function createDirector({
       audio.waveStart?.();
       notice?.(`WAVE ${state.wave}`, 1800);
     }
+
+    // LAST, so a listener sees a wave that is fully composed, placed and
+    // announced. A per-round resupply that fired before the boss was on the
+    // field would be handing out grenades for a round that had not started.
+    for (const fn of waveListeners) fn(state.wave, boss);
   }
 
   // --- space routing --------------------------------------------------------
@@ -1010,6 +1032,19 @@ export function createDirector({
       const island = nav.near(player.position.x, player.position.z);
       if (island < 0) return true;
       return nav.near(x, z) === island;
+    },
+
+    /**
+     * Tell me when a round begins. Returns the unsubscribe.
+     *
+     * Called with `(wave, isBoss)` from inside beginWave(), which includes the
+     * one reached through `forceWave()` - that is correct and deliberate: a
+     * forced wave IS a round starting, and anything hung off this should treat
+     * it as one rather than needing to know how the round was reached.
+     */
+    onWaveStart(fn) {
+      waveListeners.add(fn);
+      return () => waveListeners.delete(fn);
     },
 
     /** Skip the breather. The harness and the debug console both want this. */

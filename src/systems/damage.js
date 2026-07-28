@@ -55,7 +55,42 @@ const CRITICAL = 0.35;
 /** How many body-hit cues one blast may play. See the note in applyBlast. */
 const BLAST_VOICES = 3;
 
+/**
+ * A blast finishes anything it would leave under this fraction of max health.
+ *
+ * BLASTS ONLY, AND THAT ASYMMETRY IS THE WHOLE JUSTIFICATION. A bullet that
+ * leaves a sliver is a fine outcome - the answer is another bullet, half a
+ * second away, and the player can see the stagger. A grenade that leaves a
+ * sliver is the defect the owner reported in those words: a frag lands at a
+ * body's feet, the body is standing afterwards, and the mechanic reads as
+ * broken whatever the health bar says. There is no follow-up throw; the pouch
+ * has four in it and the round has thirty bodies.
+ *
+ * It also turns the degrade at the top of the grenade's curve from a cliff into
+ * a slope. Against the shipped health table a 400-point centre kills a shambler
+ * outright through wave twelve and leaves 4.8 per cent at wave thirteen, which
+ * is one round of "it did nothing" sitting between "it kills" and "it wounds".
+ * Eight per cent absorbs exactly that round and no more: wave fourteen leaves
+ * 9.6 per cent and survives, on purpose, because that is where the frag is
+ * meant to become a wounding tool.
+ *
+ * Eight and not twenty because this must never become the reason something
+ * died. A body eight per cent from dead inside a fireball is dead; a body a
+ * fifth from dead is a body the player still has to finish.
+ */
+const BLAST_EXECUTE = 0.08;
+
 export function createCombat({ player, rig, post, audio, impacts, notice, director }) {
+  /**
+   * Late-bound, exactly like the director above it. See attach().
+   *
+   * This file acquires no opinion about what a grenade is; it holds the
+   * reference so that systems/powerups.js - which is constructed after
+   * systems/grenades.js and is handed `combat` but not `grenades` - has a seam
+   * to reach it through that does not require a line in main.js.
+   */
+  let grenades = null;
+
   const state = {
     /** 0..1 red wash, decayed every frame. */
     wash: 0,
@@ -202,7 +237,17 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       const dz = h.dirZ ?? (h.enemy.position.z - player.position.z);
 
       h.region = h.region || 'body';
-      const damage = state.instaKill ? Math.max(1, h.enemy.health) : h.damage;
+
+      let damage = state.instaKill ? Math.max(1, h.enemy.health) : h.damage;
+
+      // The execution floor. See BLAST_EXECUTE - a body left on a sliver by an
+      // explosion is the reported bug, not a near miss. Written as a raise of
+      // the damage rather than as a second call to hurt() so everything
+      // downstream is unchanged: one stagger, one topple, one `killed`, one
+      // payout.
+      const left = h.enemy.health - damage;
+      if (left > 0 && left <= h.enemy.maxHealth * BLAST_EXECUTE) damage = h.enemy.health;
+
       h.killed = h.enemy.hurt(damage, h.region, dx, dz);
       state.dealt += damage;
       connected++;
@@ -303,10 +348,16 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
     },
 
     /** Late binding: the director is constructed FROM this, so it cannot be
-     * passed in at construction time. */
+     * passed in at construction time. The grenades are the same shape from the
+     * other direction - they are constructed from this, and systems/powerups.js
+     * needs to reach them. */
     attach(parts) {
       if (parts.director) director = parts.director;
+      if (parts.grenades) grenades = parts.grenades;
     },
+
+    /** Whoever registered themselves as the grenade pouch, or null. */
+    get grenades() { return grenades; },
 
     get health() { return player.state.health; },
   };

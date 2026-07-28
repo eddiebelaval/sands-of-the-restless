@@ -260,6 +260,7 @@ const HALO_FRAG = [
 export function createPowerups({
   scene, world, player, camera, rig, audio, economy, weapons, combat, director,
   mysterybox = null, spaces = null, notice = null, flash = null,
+  grenades = null,
   rng = Math.random,
 }) {
   // --- scratch, allocated once ----------------------------------------------
@@ -838,13 +839,43 @@ export function createPowerups({
     }
   }
 
-  /** Max ammo: the reserve of every weapon the player is carrying. */
+  /**
+   * Max ammo: the reserve of every weapon the player is carrying, AND the
+   * grenade pouch.
+   *
+   * THE POUCH IS IN HERE BECAUSE THIS IS NOW THE ONLY MID-ROUND SUPPLY IN THE
+   * GAME. systems/grenades.js refills to four at the top of every round, which
+   * fixes the savings-account problem and creates a new one at the other end:
+   * a player who spends all four in the first thirty seconds of wave fourteen
+   * has no route back to a grenade until the next horn. The wall buy would be
+   * that route and nothing calls it yet.
+   *
+   * So the two are one concept - a supply reset - and splitting them across two
+   * drops would mean the game had a mechanic whose resupply existed only in a
+   * file. It also cannot inflate anything: refill() is a set-to-cap, so a full
+   * pouch takes nothing from this and the Flood is never a way to hold five.
+   *
+   * The pouch is reached through `combat.grenades` when it was not passed in,
+   * because main.js constructs the grenades before this module and hands both
+   * of us the same `combat`. See the registration at the foot of
+   * systems/grenades.js.
+   */
   function fillAmmo() {
     let filled = 0;
     for (const id of weapons.state.owned) {
       if (weapons.refillAmmo(id)) filled++;
     }
-    return filled;
+
+    // Counted rather than assumed, and reported, because a resupply the player
+    // cannot see did not happen as far as they are concerned. The banner says
+    // "+ 2 FRAGS" only when two actually arrived - a full pouch stays silent
+    // rather than claiming a top-up that was a no-op.
+    const pouch = grenades || combat?.grenades || null;
+    const before = pouch ? pouch.count : 0;
+    pouch?.refill?.();
+    const frags = pouch ? pouch.count - before : 0;
+
+    return { weapons: filled, frags };
   }
 
   /**
@@ -945,7 +976,8 @@ export function createPowerups({
 
       case 'hapi': {
         const n = fillAmmo();
-        detail = ` - ${n} WEAPON${n === 1 ? '' : 'S'}`;
+        detail = ` - ${n.weapons} WEAPON${n.weapons === 1 ? '' : 'S'}`;
+        if (n.frags > 0) detail += ` + ${n.frags} FRAG${n.frags === 1 ? '' : 'S'}`;
         break;
       }
 

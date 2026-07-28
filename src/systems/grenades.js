@@ -20,8 +20,9 @@
  *      goes through the room's own convolver, so a detonation in the Great
  *      Gallery tails and one in a corridor slaps. An explosion that is correct
  *      in state and invisible on screen has not happened.
- *   4. THE SUPPLY. Two in the pouch, four in the pocket, one back per wave. See
- *      the economy note at ECONOMY below.
+ *   4. THE SUPPLY. Four at the top of every round, spend-it-or-lose-it, hung
+ *      off the director's own wave start rather than off a poll of the wave
+ *      counter. See the economy note at ECONOMY below.
  *
  * COLLISION USES THE WORLD THE REST OF THE GAME USES and nothing else: the flat
  * array of `{x, z, r, h}` cylinders on `world.colliders`, the axis-aligned wall
@@ -150,17 +151,82 @@ const OUTER = 7.0;
 /**
  * Damage at the centre and at the outer edge.
  *
- * 260 kills a wave-one shambler (150) outright and takes a wave-eight one (307)
- * to a sliver; it also kills the player from full, which is the entire point of
- * cooking being a bet. 18 at the rim is a scratch. Solving the curve for 100 -
- * a full-health player - puts the survival line at 4.6 m, which is close enough
- * to the reference game that muscle memory transfers.
+ * THE FIRST NUMBER HERE WAS 260 AND IT MADE THE GRENADE A NOISE. Worked out
+ * against the health the director actually hands out - `hpScale(w) = 1 +
+ * (w-1)*0.15` over a 150-point shambler and a 560-point Bound:
+ *
+ *     wave  shambler   260 kills?    Bound   260 removes
+ *        1       150         yes       560        46.4%
+ *        5       240         yes       896        29.0%
+ *        6       263          NO       980        26.5%
+ *       10       352          no      1316        19.8%
+ *       20       578          no      2156        12.1%
+ *
+ * A grenade at a shambler's feet stopped killing it at WAVE SIX, and it has
+ * never killed a Bound at any wave in the game's history. The owner watched
+ * frags bounce off bodies and reported it as broken, which it was.
+ *
+ * 400 IS A FLAT NUMBER AND THAT IS THE POINT. Three shapes were on the table -
+ * a bigger flat number, damage that scales with the wave the way health does,
+ * or a core that is lethal regardless of health with falloff beyond it - and
+ * the flat number is the only one of the three that produces the curve the
+ * reference has: reliably lethal early, then degrading into utility.
+ *
+ *   NOT WAVE-SCALED. Damage that climbs with health never degrades. A frag
+ *   would delete a wave-thirty crowd exactly as it deletes a wave-one crowd,
+ *   the Bound would never become a reason to change how you fight, and the
+ *   grenade would be a delete button for the life of the run.
+ *
+ *   NOT A GUARANTEED-LETHAL CORE. Same failure, arrived at from the other
+ *   side: anything unarmoured inside 2.4 m dies forever. It also erases the
+ *   distinction the falloff exists to draw, because at that point the only
+ *   question a throw asks is whether the body was inside the circle.
+ *
+ * What a flat 400 does, against the same table:
+ *
+ *     wave  shambler   400 kills?   leaves      Bound   400 removes
+ *        1       150         yes         -        560        71.4%
+ *       10       352         yes         -       1316        30.4%
+ *       12       398         yes         -       1484        27.0%
+ *       13       420          no      4.8%       1568        25.5%
+ *       15       465          no     14.0%       1736        23.0%
+ *       20       578          no     30.7%       2156        18.6%
+ *
+ * Twelve rounds of reliable kills, then a slope rather than a cliff - and the
+ * 4.8 per cent left standing at wave thirteen is finished by the execution
+ * floor in systems/damage.js, so the practical line is thirteen and the frag
+ * is a wounding tool from fourteen. The Bound arrives at wave ten taking
+ * roughly a third of its health per frag, which is a tool and not a delete
+ * button, which is exactly where that variant is supposed to change the fight.
+ *
+ * 18 at the rim is still a scratch, and the self-damage is still the whole
+ * wager: 400 at the centre kills a 100-health player several times over.
  */
-const BLAST_MAX = 260;
+const BLAST_MAX = 400;
 const BLAST_EDGE = 18;
 
-/** Falloff exponent. Above 1 the lethal core is tight and the rim is long. */
-const FALLOFF = 1.7;
+/**
+ * Falloff exponent. Above 1 the lethal core is tight and the rim is long.
+ *
+ * RAISED WITH THE DAMAGE, ON PURPOSE, AND IT IS NOT A SECOND CHANGE - it is
+ * what keeps the first one from moving something that was already right. The
+ * curve solved for 100 damage is the distance at which the blast kills a
+ * full-health player, and at 260/1.7 that line sat at 4.57 m. Left at 1.7, a
+ * 400-point centre pushes it out to 5.14 m and every throw the player has
+ * muscle memory for becomes a suicide. At 2.35 it lands at 4.61 m: four
+ * centimetres from where it was.
+ *
+ * The same steepening is what makes a good throw legible. The radius at which
+ * the blast is lethal to a shambler now shrinks with the wave -
+ *
+ *     wave  1: 4.07 m     wave  5: 3.34 m     wave 10: 2.65 m
+ *     wave  3: 3.68 m     wave  8: 2.91 m     wave 12: 2.41 m
+ *
+ * - so the difference between landing it at their feet and landing it two
+ * metres wide is the difference between a kill and a stagger, and it gets
+ * sharper as the run goes on rather than staying a flat circle.
+ */
+const FALLOFF = 2.35;
 
 /** Height above the shell that the blast is centred on. */
 const BLAST_LIFT = 0.35;
@@ -176,41 +242,52 @@ const COVER_SKIP_FAR = 0.45;
 // --- ECONOMY ---------------------------------------------------------------
 
 /**
- * Two to start, four in the pocket, one back at the top of every wave after the
- * first, and 250 gold if you want to buy one.
+ * FOUR AT THE TOP OF EVERY ROUND. Not two and a drip.
  *
- * The reasoning, against the numbers already in the game (a kill pays 60, a
- * headshot 100, a wall gun runs 1000 to 1600):
+ * The old economy was two to start, a cap of four, and one back per wave, which
+ * made the pouch a savings account: the player who threw two on wave three
+ * spent waves four and five back at half supply, so the correct play was to
+ * never throw one. A per-round allowance is the opposite instrument. It is
+ * spend-it-or-lose-it, it resets on a clock the player can see (the wave number
+ * in the HUD), and it makes the interesting question "when in this round" rather
+ * than "can I afford to at all".
  *
- *   TWO, not one, because one is a consumable the player saves forever. The
- *   first grenade of a run has to be spendable or the mechanic never gets
- *   learned, and the second is what teaches the fuse.
+ *   FOUR is the cap and now also the grant, because five is a crowd-clear
+ *   button and three does not survive a bad round. The cap is what stops a
+ *   round from being opened by throwing the whole pouch and skipping the fight
+ *   it is made of - and with a refill it also has to be the number that is
+ *   still interesting on round twenty, when a frag wounds rather than deletes.
  *
- *   FOUR is the cap because five is a crowd-clear button. At 260 in the core a
- *   frag deletes an early wave; the cap is what stops a hoarder from opening
- *   wave twelve by throwing the whole pouch and skipping the fight the round is
- *   made of.
+ *   THE DRIP IS GONE. A refill to cap strictly dominates +1 per wave, so
+ *   keeping both would have been one mechanism that never fired. It was also
+ *   the wrong shape for the same reason the savings account was: a dividend
+ *   rewards not spending.
  *
- *   ONE PER WAVE is a dividend, not a reward, and it is deliberately not tied to
- *   performance. A player who is doing badly is exactly the player who needs the
- *   panic option; paying it out on kills would hand grenades to the people who
- *   did not need them. It also guarantees the mechanic never dies quietly on a
- *   broke player, which is what "resource" has to mean if the tension is going
- *   to survive past wave three.
+ *   THE REFILL HANGS OFF THE DIRECTOR'S OWN WAVE START, not off a poll of the
+ *   wave counter. The old code watched `director.state.wave` change and only
+ *   counted forward moves with a guard for `forceWave` and `reset` running it
+ *   backwards, which is a second copy of "a round began" that can disagree with
+ *   the first. `director.onWaveStart` fires inside `beginWave()`, one statement
+ *   after the increment the HUD reads, so the two cannot drift.
  *
- *   250 GOLD is four kills and change. A frag that reliably kills four is
- *   therefore break-even, which prices it as a TEMPO tool - buy your way out of
- *   a corner - rather than as a gold engine. It is a quarter of the cheapest
- *   wall gun, which is the right ratio for a consumable against a permanent.
+ *   150 GOLD, DOWN FROM 250. The buy is now strictly overtime: anything bought
+ *   is a frag the player would have been handed free at the next horn, so its
+ *   value is bounded by how much of the round is left. At 250 - four kills - it
+ *   was a bad trade nobody would take, which is a mechanic that exists in the
+ *   file and never in the game. At 150 it is two and a half kills, priced as an
+ *   impulse: the thing you buy with a Bound on you and an empty pouch, thirty
+ *   seconds before a refill you cannot wait for.
  *
  * The purchase is exposed as `buy()` rather than wired to a fixture, because the
  * wall-buy fixtures live in systems/wallbuy.js and world/, which this module
- * does not own. The price is decided; the wall is somebody else's to place.
+ * does not own. NOTHING CALLS IT YET - main.js constructs the module and never
+ * touches buy() - so the reprice is a decision recorded, not a change a player
+ * can currently feel. The wall is somebody else's to place.
  */
-const START_COUNT = 2;
 const MAX_COUNT = 4;
-const WAVE_DIVIDEND = 1;
-const GRENADE_PRICE = 250;
+const START_COUNT = MAX_COUNT;
+const WAVE_REFILL = MAX_COUNT;
+const GRENADE_PRICE = 150;
 
 // --- pools -----------------------------------------------------------------
 
@@ -1232,14 +1309,35 @@ export function createGrenades({
   let lastWave = director ? director.state.wave : 0;
   let heldLast = false;
 
+  /**
+   * The per-round allowance. Idempotent, so it cannot ever be a source of
+   * more than four, whoever calls it and however often.
+   */
+  function refill() {
+    state.count = Math.max(state.count, WAVE_REFILL);
+    return state.count;
+  }
+
+  /**
+   * SUBSCRIBED, NOT POLLED. See the ECONOMY note: the director fires this from
+   * inside beginWave(), one statement after the increment the HUD reads, so
+   * there is no second derivation of "a round started" to fall out of step.
+   *
+   * The poll below it is the fallback for a director that predates the hook,
+   * and it is deliberately the weaker of the two rather than a belt-and-braces
+   * duplicate: refill() is idempotent, so if both ever ran the answer is still
+   * four.
+   */
+  const unhook = director && director.onWaveStart
+    ? director.onWaveStart(() => { refill(); })
+    : null;
+
   function update(dt, input) {
     // --- supply --------------------------------------------------------------
-    if (director && director.state.wave !== lastWave) {
+    if (!unhook && director && director.state.wave !== lastWave) {
       // Only forward. forceWave() and reset() both move this number backwards
       // and neither of those is a wave the player survived.
-      if (director.state.wave > lastWave && lastWave >= 1) {
-        state.count = Math.min(MAX_COUNT, state.count + WAVE_DIVIDEND);
-      }
+      if (director.state.wave > lastWave) refill();
       lastWave = director.state.wave;
     }
 
@@ -1359,7 +1457,7 @@ export function createGrenades({
 
   // ---------------------------------------------------------------------------
 
-  return {
+  const api = {
     state,
     shells,
     effects,
@@ -1368,6 +1466,17 @@ export function createGrenades({
     beginCook,
     release,
     detonate,
+
+    /**
+     * Top the pouch back up to the round allowance.
+     *
+     * Public because two things outside this module need it and neither of them
+     * is a wave: the harness, and systems/powerups.js, where the Flood of Hapi
+     * is the game's only mid-round supply reset. It is a set-to-cap rather than
+     * an add, so it can be called from anywhere without an audit of who else
+     * called it this frame.
+     */
+    refill,
 
     /** Cooked fraction, 0..1, for a HUD ring. 1 means it is about to kill you. */
     get cook() { return state.cooking ? Math.min(1, state.cookT / FUSE) : 0; },
@@ -1478,6 +1587,7 @@ export function createGrenades({
     },
 
     dispose() {
+      unhook?.();
       for (const s of shells) scene.remove(s.group);
       for (const fx of effects) { scene.remove(fx.group); fx.handle?.dispose?.(); }
       shellGeo.dispose(); shellMat.dispose();
@@ -1489,11 +1599,26 @@ export function createGrenades({
       }
     },
   };
+
+  /**
+   * REGISTERED ON THE DAMAGE SYSTEM, WHICH IS THE ONE SEAM BOTH SIDES ALREADY
+   * HOLD. systems/powerups.js needs to top the pouch up on a Flood of Hapi and
+   * is constructed AFTER this module in main.js, so it cannot be handed the
+   * grenades at its own construction without a line in a file this lane does
+   * not own. It is handed `combat`, and so are we; damage.js already carries a
+   * late-binding attach() for exactly this shape, because the director is
+   * constructed from it and has the same chicken-and-egg.
+   *
+   * It is a registration, not a dependency: nothing here reads back off it.
+   */
+  combat?.attach?.({ grenades: api });
+
+  return api;
 }
 
 export const GRENADE_CONSTANTS = {
   FUSE, GRAVITY, THROW_SPEED, THROW_RISE, RESTITUTION,
   INNER, OUTER, BLAST_MAX, BLAST_EDGE, FALLOFF,
-  START_COUNT, MAX_COUNT, WAVE_DIVIDEND, GRENADE_PRICE,
+  START_COUNT, MAX_COUNT, WAVE_REFILL, GRENADE_PRICE,
   POOL, FX,
 };

@@ -731,6 +731,84 @@ const falloff = await page.evaluate(() => {
 });
 
 // ---------------------------------------------------------------------------
+// 7b. IT KILLS. Real bodies, at the health the director actually hands out.
+// ---------------------------------------------------------------------------
+
+/**
+ * The check the owner's report is actually about, and the one that was missing.
+ *
+ * Everything above measures the blast against itself - the curve is monotone,
+ * the rim is a scratch, the centre equals the constant - and every one of those
+ * passed while a grenade at a wave-eight shambler's feet did four fifths of its
+ * job and left it walking. A damage number is not a claim. "This kills that" is
+ * a claim, and it needs the enemy's OWN health at the wave in question on one
+ * side of it.
+ *
+ * Health comes from the director rather than from arithmetic here: `place()`
+ * scales by `hpScale(max(1, state.wave))`, so moving the director's counter and
+ * placing a body is the same code path a real wave uses, and `maxHealth` is
+ * read back off the actor rather than recomputed. If the scaling curve ever
+ * moves, this fails instead of quietly agreeing with a stale copy of it.
+ */
+const lethality = await page.evaluate(() => {
+  const g = window.__SANDS__;
+  window.__H__.hold(true);
+  window.__G__.reset();
+  window.__H__.clearEnemies();
+  g.combat.state.invulnerable = true;
+
+  const open = window.__H__.findOpen(7);
+
+  /**
+   * One body, at its feet, at a given wave. 0.6 m out and the blast on the
+   * deck, which is a grenade that landed - not one detonated inside the model.
+   */
+  function atFeet(id, wave) {
+    window.__H__.clearEnemies();
+    g.director.state.wave = wave;
+
+    const a = g.director.placeAt(id, open.x + 0.6, open.z);
+    if (!a) return null;
+
+    const max = a.maxHealth;
+    const before = a.health;
+    window.__G__.detonate(open.x, open.y + 0.05, open.z, false);
+
+    return {
+      wave,
+      maxHealth: Math.round(max),
+      took: +(before - a.health).toFixed(1),
+      leftPct: +((100 * a.health) / max).toFixed(1),
+      dead: !!(a.dying || a.dead || a.health <= 0),
+    };
+  }
+
+  const shambler = [1, 5, 10, 12, 13, 14, 20].map((w) => atFeet('shambler', w));
+  const bound = [10, 15].map((w) => atFeet('bound', w));
+  const husk = [10].map((w) => atFeet('husk', w));
+
+  // A body at the rim of the same blast, at wave one, which is the cheapest
+  // health in the game. If THAT survives, distance still means something.
+  window.__H__.clearEnemies();
+  g.director.state.wave = 1;
+  const far = g.director.placeAt('shambler', open.x + 6.3, open.z);
+  const farBefore = far ? far.health : 0;
+  window.__G__.detonate(open.x, open.y + 0.05, open.z, false);
+  const distant = far ? {
+    d: 6.3,
+    maxHealth: Math.round(far.maxHealth),
+    took: +(farBefore - far.health).toFixed(1),
+    dead: !!(far.dying || far.dead || far.health <= 0),
+  } : null;
+
+  window.__H__.clearEnemies();
+  g.director.state.wave = 0;
+  window.__H__.hold(false);
+
+  return { shambler, bound, husk, distant, blastMax: window.__K__.BLAST_MAX };
+});
+
+// ---------------------------------------------------------------------------
 // 8. geometry blocks it
 // ---------------------------------------------------------------------------
 
@@ -849,6 +927,10 @@ const gold = await page.evaluate(() => {
 
   const killPay = g.economy.gold - goldBefore;
   const killed = !!victim && (victim.dying || victim.dead || victim.health <= 0);
+  // Sampled HERE, not at the end of the block. The group section below adds
+  // five more to the same lifetime counter, and reading it once at the return
+  // reported six for a check whose whole subject is "one".
+  const kills = window.__G__.state.kills - killsBefore;
 
   window.__H__.clearEnemies();
 
@@ -870,11 +952,45 @@ const gold = await page.evaluate(() => {
   window.__G__.detonate(open.x, open.y + 0.1, open.z, false);
   const emptyPay = g.economy.gold - goldBefore3;
 
+  // --- ONCE EACH, NOT ONCE PER PASS ----------------------------------------
+  //
+  // One kill proves the record reaches the payout table; it does NOT prove the
+  // payout runs once. `applyBlast` writes `killed` and `payHits` reads it, and
+  // both walk the same pooled array - a blast that paid per record AND per
+  // listener, or that failed to null a record between detonations, would show
+  // up here and nowhere above. Five bodies in the core of one blast: five
+  // kills, five bounties, no sixth.
+  window.__H__.clearEnemies();
+  g.director.state.wave = 1;
+
+  const group = [];
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    const e = g.director.placeAt('shambler',
+      open.x + Math.cos(a) * 1.4, open.z + Math.sin(a) * 1.4);
+    if (e) group.push(e);
+  }
+
+  const goldBefore4 = g.economy.gold;
+  const killsBefore4 = window.__G__.state.kills;
+  window.__G__.detonate(open.x, open.y + 0.1, open.z, false);
+  const groupPay = g.economy.gold - goldBefore4;
+  const groupDead = group.filter((e) => e.dying || e.dead || e.health <= 0).length;
+  const groupKills = window.__G__.state.kills - killsBefore4;
+
+  // And the SAME pooled records again, on an empty field. A record still
+  // holding a corpse would pay a second time for a body that is already gone.
+  window.__H__.clearEnemies();
+  const goldBefore5 = g.economy.gold;
+  window.__G__.detonate(open.x, open.y + 0.1, open.z, false);
+  const replayPay = g.economy.gold - goldBefore5;
+
+  g.director.state.wave = 0;
   window.__H__.hold(false);
   return {
-    killed, killPay, hitPay, survived, emptyPay,
-    kills: window.__G__.state.kills - killsBefore,
+    killed, killPay, hitPay, survived, emptyPay, kills,
     bounty: g.economy.BOUNTY,
+    groupPlaced: group.length, groupDead, groupKills, groupPay, replayPay,
   };
 });
 
@@ -943,49 +1059,103 @@ const leak = await page.evaluate(() => {
 // 11. the supply
 // ---------------------------------------------------------------------------
 
+/**
+ * FOUR AT THE TOP OF EVERY ROUND, and the refill is driven through the
+ * DIRECTOR'S REAL WAVE START rather than by poking its counter.
+ *
+ * The previous version of this section set `director.state.wave = 2` by hand
+ * and asserted a dividend, which tested a poll that no longer exists and would
+ * have passed against a module that refilled on any write to that field. The
+ * hook now lives inside `beginWave()`, so the only honest way to fire it is to
+ * let the director run a breather out and begin a wave - which also proves the
+ * thing the poll could never prove: that the count and the wave number the HUD
+ * paints move on the SAME statement.
+ */
 const supply = await page.evaluate(() => {
   const g = window.__SANDS__;
   window.__H__.hold(true);
   window.__G__.reset();
+  window.__H__.clearEnemies();
   g.combat.state.invulnerable = true;
 
   const start = window.__G__.count;
 
-  // Throwing spends.
-  window.__G__.throwNow(99);
-  const afterOne = window.__G__.count;
-  window.__G__.throwNow(99);
-  const afterTwo = window.__G__.count;
+  // --- spending ------------------------------------------------------------
+  const spend = [];
+  for (let i = 0; i < start; i++) {
+    window.__G__.throwNow(99);
+    spend.push(window.__G__.count);
+  }
+  const emptied = window.__G__.count;
   const refusedWhenEmpty = window.__G__.throwNow(99) === null;
   const cookRefused = window.__G__.beginCook() === false;
+  window.__G__.clearLive();
 
-  // The wave dividend. Driven by moving the director's own counter, which is
-  // what the module watches.
-  g.director.state.wave = 1;
-  window.__G__.update(1 / 60, null);
-  g.director.state.wave = 2;
-  window.__G__.update(1 / 60, null);
-  const afterWave = window.__G__.count;
+  // --- the hook exists at all ----------------------------------------------
+  const hasHook = typeof g.director.onWaveStart === 'function';
 
-  // The cap.
-  window.__G__.give(9);
-  const capped = window.__G__.count;
+  /** Run the director far enough to begin one wave, and report both numbers. */
+  function beginWave(n) {
+    g.director.state.running = true;
+    g.director.forceWave(n);
+    const waveBefore = g.director.state.wave;
+    g.director.update(1 / 60, 0);
+    const out = {
+      waveBefore,
+      wave: g.director.state.wave,
+      count: window.__G__.count,
+    };
+    g.director.state.running = false;
+    g.director.state.phase = 'breather';
+    g.director.state.timer = 9999;
+    return out;
+  }
 
-  // The purchase.
+  // From empty, a round start hands back a full pouch.
+  const fromEmpty = beginWave(7);
+
+  // From PARTIAL, it tops up rather than adding - throw one, start a round,
+  // and the pouch is four again, not five and not three.
   window.__G__.throwNow(99);
+  const partial = window.__G__.count;
+  window.__G__.clearLive();
+  const fromPartial = beginWave(8);
+
+  // From FULL, a second round start changes nothing. A refill written as an
+  // add with a clamp and a refill written as a set look identical here only
+  // because the clamp is right; the check is cheap and the cap is the promise.
+  const fromFull = beginWave(9);
+
+  // --- the cap holds against everything else that grants -------------------
+  window.__G__.give(9);
+  const afterGive = window.__G__.count;
+  window.__G__.refill();
+  const afterRefill = window.__G__.count;
+
+  // --- the purchase --------------------------------------------------------
+  window.__G__.throwNow(99);
+  const beforeBuy = window.__G__.count;
   const goldBefore = g.economy.gold;
   const bought = window.__G__.buy();
   const spent = goldBefore - g.economy.gold;
+  const afterBuy = window.__G__.count;
+
+  // Refused at the cap, so the buy can never be the route past four either.
+  const refusedAtCap = window.__G__.buy() === false;
 
   window.__G__.clearLive();
   window.__G__.reset();
+  window.__H__.clearEnemies();
   window.__H__.hold(false);
 
   return {
-    start, afterOne, afterTwo, refusedWhenEmpty, cookRefused,
-    afterWave, capped, bought, spent,
+    start, spend, emptied, refusedWhenEmpty, cookRefused,
+    hasHook, fromEmpty, partial, fromPartial, fromFull,
+    afterGive, afterRefill,
+    beforeBuy, bought, spent, afterBuy, refusedAtCap,
     price: window.__K__.GRENADE_PRICE,
     max: window.__K__.MAX_COUNT,
+    refillTo: window.__K__.WAVE_REFILL,
   };
 });
 
@@ -1260,6 +1430,159 @@ const afterState = await page.evaluate(() => {
 });
 
 // ---------------------------------------------------------------------------
+// 14. LOOK AT A KILL. A frame with bodies still standing in it is the bug.
+// ---------------------------------------------------------------------------
+
+/**
+ * The owner's report was a picture, not a number: "they just hit them".
+ *
+ * So this is the picture. Six shamblers in a ring inside the lethal core, one
+ * frag, three frames - before, the flash, and the aftermath a second and a bit
+ * later - and the assertion is on what is STANDING in the last one.
+ *
+ * THE DIRECTOR HAS TO RUN FOR THE AFTERMATH, which is the whole reason this is
+ * a separate section from the staged blast above. Every other block in this
+ * file stops the director so its targets hold still, and a corpse in a stopped
+ * director never topples: `beginDeath` sets `dying` and the actual fall is
+ * integrated in `actor.update`, which only `director.update` calls. Photographed
+ * with the director held, six dead mummies stand bolt upright in the smoke -
+ * which is the reported defect, staged by the harness, and it would have been
+ * read as the defect itself.
+ *
+ * The wave counter is parked and the phase pinned to a breather with a long
+ * timer, so running the director advances the BODIES and nothing else.
+ */
+const groupStaged = await page.evaluate((o) => {
+  const g = window.__SANDS__;
+  window.__H__.hold(true);
+  window.__G__.clearLive();
+  window.__H__.clearEnemies();
+  g.combat.state.invulnerable = true;
+
+  g.director.state.wave = 1;
+  const bodies = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.3;
+    const e = g.director.placeAt('shambler',
+      o.x + Math.cos(a) * 1.6, o.z + Math.sin(a) * 1.6);
+    if (e) bodies.push(e);
+  }
+  window.__BODIES__ = bodies;
+
+  // Back and slightly high, so all six and the ground they are on are in frame.
+  window.__H__.place(o.x - 9.5, o.z + 4.0, 0);
+  window.__H__.aimAt(o.x, o.y + 1.0, o.z);
+
+  return {
+    placed: bodies.length,
+    health: bodies.map((e) => Math.round(e.maxHealth)),
+    standing: bodies.filter((e) => e.live && !e.dying).length,
+  };
+}, framing.open);
+
+const groupBefore = await shoot('gren-5-group-before', 'six bodies, before the frag', 4);
+
+const groupBlast = await page.evaluate((o) => {
+  const g = window.__SANDS__;
+  window.__G__.detonate(o.x, o.y + 0.35, o.z, false);
+
+  // Same 0.067 s the staged flash uses, so the two frames are comparable.
+  g.director.state.running = true;
+  for (let i = 0; i < 8; i++) {
+    window.__G__.update(1 / 120, null);
+    g.director.update(1 / 120, 0);
+  }
+  g.director.state.running = false;
+
+  const b = window.__BODIES__;
+  return {
+    reached: window.__G__.state.lastBlast.enemies,
+    dead: b.filter((e) => e.dying || e.dead || e.health <= 0).length,
+    standing: b.filter((e) => e.live && !e.dying).length,
+  };
+}, framing.open);
+
+const groupFlash = await shoot('gren-6-group-blast', 'the frag among six bodies', 3);
+
+const groupAfter = await page.evaluate(() => {
+  const g = window.__SANDS__;
+
+  /**
+   * 0.90 s, and the number is chosen against the death phases in
+   * enemies/mummy.js rather than by taste: topple runs 0.62 s, then the body
+   * LIES for 0.45 s, and only then does a 0.9 s crumble begin. 0.90 s is a
+   * quarter of a second into the lie - every body is flat, every body is still
+   * fully opaque, and the smoke has about a third of its opacity left.
+   *
+   * The first cut of this stepped to 1.3 s and photographed an EMPTY PATCH OF
+   * SAND. Six corpses had crumbled and been retired, which is a frame that
+   * proves the kill by absence and is worth nothing as evidence: it is what a
+   * blast that deleted the actors outright would also look like, and it is not
+   * what the player sees when they throw one. The aftermath has to have the
+   * bodies IN it.
+   */
+  g.director.state.running = true;
+  for (let i = 0; i < 108; i++) {
+    window.__G__.update(1 / 120, null);
+    g.director.update(1 / 120, 0);
+  }
+  g.director.state.running = false;
+
+  const b = window.__BODIES__;
+
+  /**
+   * How far each body has actually FALLEN, as the angle its own up-axis makes
+   * with the world's. `dying` is a flag anyone can set; this is the thing on
+   * screen, and a corpse at zero is a corpse standing bolt upright in the frame
+   * being photographed.
+   *
+   * MEASURED AS A TILT, NOT AS rotation.x. `beginDeath` topples AWAY FROM THE
+   * BLAST, around the horizontal axis perpendicular to it, so six bodies in a
+   * ring fall around six different axes - reading rotation.x reported 0.459 for
+   * the two that fell sideways and 1.515 for the two that fell backwards, and
+   * a threshold on it would have failed a third of a group that was flat on the
+   * ground. The angle between the body's up and the world's is the same number
+   * whichever way it went over.
+   */
+  const UP = new g.THREE.Vector3(0, 1, 0);
+  const _v = new g.THREE.Vector3();
+
+  const pitch = b.map((e) => +Math.abs(e.group ? e.group.rotation.x : 0).toFixed(3));
+  const tilt = b.map((e) => {
+    const body = e.group && e.group.children ? e.group.children[0] : null;
+    if (!body) return 0;
+    return +_v.set(0, 1, 0).applyQuaternion(body.quaternion).angleTo(UP).toFixed(3);
+  });
+
+  return {
+    dead: b.filter((e) => e.dying || e.dead || e.health <= 0).length,
+    standing: b.filter((e) => e.live && !e.dying).length,
+    retired: b.filter((e) => !e.live).length,
+    // Still parented AND still drawing. A body that has been unhooked from the
+    // scene graph, or whose meshes have gone invisible, is not in the frame
+    // this section exists to photograph.
+    inScene: b.filter((e) => !!(e.group && e.group.parent)).length,
+    visible: b.filter((e) => !!(e.group && e.group.visible)).length,
+    pitch,
+    tilt,
+    // Past 1.0 rad - 57 degrees off vertical - is past anything that could read
+    // as a stumble. A completed topple lands near pi/2.
+    toppled: tilt.filter((p) => p > 1.0).length,
+    liveInDirector: g.director.liveCount,
+  };
+});
+
+const groupAftermath = await shoot('gren-7-group-aftermath', 'the crater, 0.9 s later', 3);
+
+await page.evaluate(() => {
+  const g = window.__SANDS__;
+  window.__H__.clearEnemies();
+  g.director.state.wave = 0;
+  window.__G__.reset();
+  window.__H__.hold(false);
+});
+
+// ---------------------------------------------------------------------------
 // report
 // ---------------------------------------------------------------------------
 
@@ -1275,6 +1598,7 @@ show('rest', rest);
 show('fuse', fuse);
 show('overcook', overcook);
 show('falloff', falloff);
+show('lethality', lethality);
 show('cover', cover);
 show('gold', gold);
 show('leak', leak);
@@ -1285,6 +1609,28 @@ show('bounce frame', bounceFrame);
 show('blast frame', blastState);
 show('aftermath frame', afterFrame);
 show('aftermath', afterState);
+show('group staged', groupStaged);
+show('group blast', groupBlast);
+show('group aftermath', groupAfter);
+
+/**
+ * The damage curve, printed rather than asserted.
+ *
+ * The assertions below fix the two ends - it kills a shambler at ten, it does
+ * not delete a Bound - and this is the middle, so the next person to touch
+ * BLAST_MAX can see the whole shape it produced without re-deriving it.
+ */
+console.log('\n--- the curve, on real bodies ---');
+for (const r of lethality.shambler) {
+  console.log(`  shambler w${String(r.wave).padStart(2)}  hp ${String(r.maxHealth).padStart(4)}` +
+    `  took ${String(r.took).padStart(6)}  left ${String(r.leftPct).padStart(5)}%  ` +
+    (r.dead ? 'DEAD' : 'walks'));
+}
+for (const r of lethality.bound) {
+  console.log(`  BOUND    w${String(r.wave).padStart(2)}  hp ${String(r.maxHealth).padStart(4)}` +
+    `  took ${String(r.took).padStart(6)}  left ${String(r.leftPct).padStart(5)}%  ` +
+    (r.dead ? 'DEAD' : 'walks'));
+}
 
 console.log('\n--- shots ---');
 for (const s of shots) {
@@ -1364,6 +1710,44 @@ const checks = {
   'past the rim is exactly nothing':      falloff.beyondRim === 0,
   'the centre is lethal':                 falloff.atCentre === K.BLAST_MAX,
 
+  // --- 7b. it actually kills -----------------------------------------------
+  //
+  // THE CHECK THE REPORT WAS ABOUT. Asserted against the body's own maxHealth
+  // at the wave the director would have handed it out at, not against the
+  // curve. The three waves the owner named are named here.
+  'a frag kills a shambler at wave 1':
+    lethality.shambler[0].wave === 1 && lethality.shambler[0].dead === true,
+  'a frag kills a shambler at wave 5':
+    lethality.shambler[1].wave === 5 && lethality.shambler[1].dead === true,
+  'a frag kills a shambler at wave 10':
+    lethality.shambler[2].wave === 10 && lethality.shambler[2].dead === true,
+  // Twelve is the designed end of the reliable band and thirteen is the round
+  // the execution floor in systems/damage.js absorbs, so the practical line is
+  // thirteen. Pinned, because "it kills forever" is the failure on the other
+  // side of the one being fixed.
+  'it still kills a shambler at wave 12': lethality.shambler[3].dead === true,
+  'the execution floor carries wave 13':  lethality.shambler[4].dead === true,
+  'it stops killing after that':          lethality.shambler[5].dead === false
+                                          && lethality.shambler[6].dead === false,
+  // ...and what it does instead is a wound worth the throw, not a scratch.
+  'a wave-20 shambler is badly hurt':     lethality.shambler[6].leftPct < 35,
+  'a frag kills a husk at wave 10':       lethality.husk[0].dead === true,
+
+  // THE BOUND. It arrives at wave ten and it must NOT be deleted by a frag -
+  // that is the variant's entire job - but a fifth of its health was the
+  // owner's complaint, so the floor is a real quarter and the ceiling is alive.
+  'a Bound survives a frag at wave 10':   lethality.bound[0].dead === false,
+  'a Bound survives a frag at wave 15':   lethality.bound[1].dead === false,
+  'a frag takes a real bite out of a Bound at 10':
+    lethality.bound[0].leftPct < 75 && lethality.bound[0].leftPct > 55,
+  'and still a quarter of one at 15':
+    lethality.bound[1].leftPct < 80 && lethality.bound[1].leftPct > 60,
+
+  // Distance still decides. Same blast, same wave-one body, six metres out.
+  'a distant body survives the same blast':
+    !!lethality.distant && lethality.distant.dead === false,
+  'and it was genuinely in range':        lethality.distant.took > 0,
+
   // --- 8. cover ------------------------------------------------------------
   'a wall was found to hide behind':      cover.found === true,
   'both bodies were placed':              cover.shieldedPlaced && cover.controlPlaced,
@@ -1377,6 +1761,11 @@ const checks = {
   'the module counted the kill':          gold.kills === 1,
   'a non-lethal blast pays 10':           gold.hitPay === gold.bounty.hit && gold.survived,
   'a blast that hits nothing pays nothing': gold.emptyPay === 0,
+  // ONCE EACH. Five bodies, five bounties - not ten, and not one.
+  'a blast killed all five':              gold.groupPlaced === 5 && gold.groupDead === 5,
+  'five kills pay five bounties, once':   gold.groupPay === 5 * gold.bounty.kill,
+  'the module counted five':              gold.groupKills === 5,
+  'the pooled records do not pay twice':  gold.replayPay === 0,
 
   // --- 10. leaks -----------------------------------------------------------
   'a hundred throws ran':                 leak.thrown === 100 && leak.detonated >= 100,
@@ -1389,14 +1778,30 @@ const checks = {
   'no audio voice leak':                  leak.audioVoices <= leak.audioCap,
 
   // --- 11. supply ----------------------------------------------------------
-  'the player starts with two':           supply.start === K.START_COUNT,
-  'throwing spends one':                  supply.afterOne === supply.start - 1
-                                          && supply.afterTwo === 0,
+  'the player starts with a full pouch':  supply.start === K.MAX_COUNT
+                                          && K.START_COUNT === K.MAX_COUNT,
+  'throwing spends one at a time':
+    supply.spend.join(',') === [3, 2, 1, 0].join(',') && supply.emptied === 0,
   'an empty pouch refuses the throw':     supply.refusedWhenEmpty === true,
   'an empty pouch refuses the cook':      supply.cookRefused === true,
-  'a wave pays a dividend':               supply.afterWave === K.WAVE_DIVIDEND,
-  'the pouch caps':                       supply.capped === K.MAX_COUNT,
-  'a grenade can be bought':              supply.bought === true && supply.spent === K.GRENADE_PRICE,
+
+  // THE REFILL, through the director's own wave start rather than a poll.
+  'the director publishes a wave start':  supply.hasHook === true,
+  'a round start refills to four':        supply.fromEmpty.count === K.WAVE_REFILL,
+  'the wave counter moved with it':       supply.fromEmpty.wave === 7
+                                          && supply.fromEmpty.waveBefore === 6,
+  'a round tops a partial pouch up':      supply.partial === K.MAX_COUNT - 1
+                                          && supply.fromPartial.count === K.MAX_COUNT,
+  'a round on a full pouch adds nothing': supply.fromFull.count === K.MAX_COUNT,
+
+  // THE CAP. Nothing - the refill, a grant, or a purchase - goes past four.
+  'the pouch caps against a grant':       supply.afterGive === K.MAX_COUNT,
+  'refill never exceeds the cap':         supply.afterRefill === K.MAX_COUNT,
+  'a grenade can be bought':              supply.beforeBuy === K.MAX_COUNT - 1
+                                          && supply.bought === true
+                                          && supply.spent === K.GRENADE_PRICE
+                                          && supply.afterBuy === K.MAX_COUNT,
+  'the buy is refused at the cap':        supply.refusedAtCap === true,
 
   // --- 12. inside ----------------------------------------------------------
   'the router swapped to the interior':   inside.space === 'interior',
@@ -1435,6 +1840,28 @@ const checks = {
   'the fixture retires':                  afterState.activeFx === 0
                                           && afterState.lights.every((l) => l === 0)
                                           && afterState.opacities.every((o) => o === 0),
+  // --- 14. the kill, in frame ----------------------------------------------
+  'six bodies were staged':               groupStaged.placed === 6
+                                          && groupStaged.standing === 6,
+  'the frag reached all six':             groupBlast.reached === 6,
+  'all six died to one frag':             groupBlast.dead === 6,
+  // THE REPORTED BUG, AS AN ASSERTION. Nothing is left on its feet.
+  'nothing is standing in the aftermath': groupAfter.standing === 0,
+  // And they are visibly DOWN, not merely flagged dead. The pitch is what the
+  // camera sees; `dying` is what the code believes. Past 0.6 rad is past the
+  // point a fall reads as a fall rather than as a stumble.
+  'the bodies are on the ground':         groupAfter.toppled === 6,
+  // ...and they are still IN the photographed frame, rather than crumbled and
+  // retired. See the note on the step count: an empty patch of sand proves the
+  // kill by absence, which is exactly what a broken blast would also look like.
+  'the corpses are in the aftermath frame':
+    groupAfter.inScene === 6 && groupAfter.visible === 6 && groupAfter.retired === 0,
+  'the crater frame is not the plate':    groupAftermath.meanLuma !== groupBefore.meanLuma,
+  'the blast frame lifts the group plate':
+    groupFlash.meanLuma > groupBefore.meanLuma + 1.5,
+  'the group blast does not clip':        groupFlash.clipPct < 3,
+  'the group blast does not flatten it':  groupFlash.spread > groupBefore.spread * 0.9,
+
   'every shot rendered a lit frame':      DARK.length === 0,
   'no console errors':                    errors.length === 0,
 };
