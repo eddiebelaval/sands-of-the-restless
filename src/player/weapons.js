@@ -81,10 +81,50 @@ export const BASE_STATS = {
     audio: 'bolt',
   },
 
+  /**
+   * THE SUNSPEAR: one shot, one body, through wave twenty.
+   *
+   * It is the rarest thing in the game - mystery-box exclusive alongside the
+   * bolt rifle, with no wall anywhere that sells it - and until this pass it was
+   * a 95-damage energy rifle, which is to say it was worse than the carbine you
+   * can buy for 1250 gold on wave two. A weapon whose only route in is luck has
+   * to be worth the luck.
+   *
+   * THE NUMBER IS DERIVED, NOT CHOSEN. The binding constraint at wave twenty is
+   * the Bound - 560 base health, the armoured variant, unlocked at wave ten -
+   * and enemies/director.js scales health linearly:
+   *
+   *     hpScale(w) = 1 + (w - 1) * 0.15
+   *     hpScale(20) = 1 + 19 * 0.15 = 3.85
+   *     Bound at wave 20 = 560 * 3.85 = 2156
+   *
+   * Not the shambler (150 -> 578), not the husk (85 -> 327), not the scarab
+   * (45 -> 173). 2400 clears 2156 with room, and because the curve is linear the
+   * margin is legible as waves rather than as a percentage: the last wave a
+   * 2400-damage body shot still one-shots a Bound is
+   *
+   *     w = 1 + (2400/560 - 1) / 0.15 = 22.9  ->  through wave 22.
+   *
+   * Bosses are deliberately NOT in that arithmetic. The wave-20 god is Sekhmet
+   * at 9600 base and 2.65 scale - 25,440 - and a boss that dies to one trigger
+   * pull is not a boss.
+   *
+   * WHAT IT COSTS, because one-shot-everything is otherwise strictly dominant.
+   * The damage went up 25x and the ammunition came down to a quarter: four in
+   * the tube, twenty in reserve, twenty-four rounds in the whole run, at 55
+   * rounds a minute rather than 180. Wave twenty sends 34 bodies. The Sunspear
+   * cannot clear a wave; it can delete the four things in that wave that were
+   * going to kill you, and then it is a paperweight until a Flood of Hapi drops.
+   * That is the trade, and it is why the new Max Ammo drop matters to it more
+   * than to any other weapon in the armoury.
+   *
+   * The headshot multiplier stays at 1.6 and is now only meaningful against a
+   * god, which is the one target left that a body shot does not finish.
+   */
   sunspear: {
-    damage: 95, headshot: 1.6,     // splash weapons reward volume, not precision
-    rpm: 180, auto: true,
-    magazine: 20, reserve: 60,
+    damage: 2400, headshot: 1.6,
+    rpm: 55, auto: true,
+    magazine: 4, reserve: 20,
     spreadHip: 0.020, spreadAds: 0.006,
     pellets: 1, range: 80,
     audio: 'energy',

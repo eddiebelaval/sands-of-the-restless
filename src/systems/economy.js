@@ -54,6 +54,23 @@ export function createEconomy({ start = STARTING_GOLD, popups = null } = {}) {
   let earned = 0;                 // lifetime, for the end-of-run readout
   let spent = 0;
 
+  /**
+   * What every COMBAT payout is multiplied by. The Twin Crowns sets 2.
+   *
+   * Here rather than anywhere else for the same reason the Shrine of Thoth is
+   * paid as a second award and not as a scaled bounty: BOUNTY is the tuned
+   * spread and nothing reaches in to rewrite it. This multiplies the payout on
+   * its way out of award(), which is the one function every kill in the game
+   * comes through, so a bullet kill, a grenade kill and a scarab bitten to
+   * death by a shotgun all double together or none of them do.
+   *
+   * It deliberately does NOT touch grant(), spend() or the puzzle reward. A
+   * double-points drop doubles what you EARN IN COMBAT; it is not a discount on
+   * doors and it is not a multiplier on a flat bonus that was already sized
+   * against the wall buys.
+   */
+  let multiplier = 1;
+
   const listeners = new Set();
 
   // Live popup nodes, oldest first. Tracked rather than queried out of the DOM
@@ -122,7 +139,7 @@ export function createEconomy({ start = STARTING_GOLD, popups = null } = {}) {
    * @returns {number} the amount awarded, 0 if the kind is unknown
    */
   function award(kind, opts = {}) {
-    const amount = BOUNTY[kind] || 0;
+    const amount = (BOUNTY[kind] || 0) * multiplier;
     if (!amount) return 0;
 
     gold += amount;
@@ -185,10 +202,26 @@ export function createEconomy({ start = STARTING_GOLD, popups = null } = {}) {
     get earned() { return earned; },
     get spent() { return spent; },
 
+    /**
+     * Multiply every combat payout. Clamped to sane ground and returned, so a
+     * caller never has to read back what it just set.
+     */
+    setMultiplier(n) {
+      multiplier = Math.max(1, Math.min(8, Number(n) || 1));
+      return multiplier;
+    },
+
+    get multiplier() { return multiplier; },
+
     reset(to = start) {
       gold = to;
       earned = 0;
       spent = 0;
+      // NOT the multiplier. A reset is a purse operation - the harness uses it
+      // between sections, and fell() resets the run - and silently cancelling a
+      // live boon from inside a bookkeeping call is exactly the kind of remote
+      // effect that takes a day to find. Whoever granted the multiplier takes
+      // it back.
       notify(0, 'reset');
     },
   };

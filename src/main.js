@@ -34,10 +34,11 @@ import { createShrines } from './systems/shrines.js';
 import { createAltar } from './systems/altar.js';
 import { createPromptBus } from './ui/prompt.js';
 import { createInteracts } from './ui/interact.js';
-import { createBoonStrip, createReadouts } from './ui/hud.js';
+import { createBoonStrip, createReadouts, createPowerStrip, createFlash } from './ui/hud.js';
 import { createMinimap } from './ui/minimap.js';
 import { createObjectives, createObjectivePanel } from './ui/objective.js';
 import { createGrenades } from './systems/grenades.js';
+import { createPowerups } from './systems/powerups.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
@@ -267,6 +268,28 @@ function boot() {
     notice: (text, ms) => showNotice(text, ms),
   });
 
+  /**
+   * What the dead drop.
+   *
+   * After the director, because the Second Death resolves against THIS frame's
+   * live actors, and after combat because the roll hangs off combat's kill
+   * listener - which is the only seam in the game that knows both that
+   * something died and where its body was. It is handed the chest as well,
+   * because the Fire Sale is a power-up whose entire effect is a change to the
+   * chest, and the chest is the thing that owns whether one is running.
+   *
+   * `flash` is the full-frame element the Second Death fires; it is a readout,
+   * so it comes from the HUD layer and not from a system.
+   */
+  const powerups = createPowerups({
+    scene, world, player, camera, rig, audio,
+    economy, weapons, combat, director, mysterybox, spaces,
+    notice: (text, ms) => showNotice(text, ms),
+    flash: createFlash(document.getElementById('flash')),
+  });
+
+  const powerStrip = createPowerStrip(document.getElementById('r-powers'), powerups);
+
   // -------------------------------------------------------------------------
   // where am I, and what next
   // -------------------------------------------------------------------------
@@ -432,6 +455,7 @@ function boot() {
     viewmodel.setFidelity(high);
     impacts.setFidelity(high);
     grenades.setFidelity(high);
+    powerups.setFidelity(high);
     director.setFidelity(high);
     altar.setFidelity(high);
     audio.setFidelity(high);
@@ -656,6 +680,11 @@ function boot() {
       // on the frame it happened rather than the frame after.
       grenades.update(dt, input.state);
 
+      // After both, because a drop is rolled from a kill either of them just
+      // resolved, and because the Second Death measures the field the director
+      // has already advanced this frame.
+      powerups.update(dt, elapsed);
+
       combat.update(dt);
 
       // GOING DOWN COSTS THE BOONS, and it has to, or none of this is a wager.
@@ -671,6 +700,11 @@ function boot() {
       // only ever goes up is a perfectly honest event source.
       if (combat.state.downs !== downsSeen) {
         downsSeen = combat.state.downs;
+        // The power-ups go with them, and for the identical reason: a run that
+        // resets to wave one while keeping half a minute of one-hit kills is a
+        // death that cost a counter. What is still lying on the floor stays
+        // there - the player earned those and the field has just been cleared.
+        powerups.clearEffects();
         if (shrines.count) {
           shrines.dropAll();
           showNotice('THE GODS WITHDRAW THEIR FAVOUR', 3000);
@@ -752,6 +786,9 @@ function boot() {
     // repaints at the same rate relative to the simulation on any machine.
     objectivePanel.update(dt);
     minimap.update(dt);
+    // Cheap when nothing is running: it reads a list that is empty and touches
+    // no DOM at all.
+    powerStrip.update();
   }
 
   frame();
@@ -762,8 +799,8 @@ function boot() {
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
     director, combat,
-    power, wallbuys, shrines, altar, mysterybox, grenades, interacts, promptBus,
-    readouts, objectives, objectivePanel, minimap,
+    power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
+    readouts, powerStrip, objectives, objectivePanel, minimap,
     setFidelity, start,
     get elapsed() { return elapsed; },
   };

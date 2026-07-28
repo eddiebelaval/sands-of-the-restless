@@ -420,6 +420,87 @@
        lag the number it is drawn from and read as the boss healing. */
   }
 
+  /* ---- the power-up strip ----
+
+     Under the gold plate, right-hand column, because gold and the boons that
+     multiply it are read in the same glance and because both bottom corners are
+     already spoken for by vitality and ammunition. It grows DOWNWARDS as
+     effects stack, so a second one arriving never moves the first.
+
+     The plain meaning is the big line and the Egyptian name is the small one
+     under it. That ordering is the whole point: a player with four husks on them
+     needs "ONE HIT KILLS", not "THE FEATHER OF MAAT". */
+  #r-powers {
+    position: absolute; right: 22px; top: 92px;
+    display: flex; flex-direction: column; gap: 7px;
+    align-items: flex-end;
+  }
+  .power[hidden] { display: none; }
+  .power {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 12px 8px;
+    min-width: 208px;
+  }
+  /* The mark, in the same colour as the drop the player walked over. Rotated
+     45 degrees, exactly as the boon chips are, so the two strips read as one
+     family of things you are carrying. */
+  .power i {
+    display: block; width: 9px; height: 9px;
+    background: var(--power, #d9b26a);
+    box-shadow: 0 0 8px var(--power, transparent);
+    transform: rotate(45deg);
+  }
+  .power-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .power b {
+    font-weight: normal; font-size: 12px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--bone);
+    white-space: nowrap;
+  }
+  .power u {
+    text-decoration: none; font-size: 8px; letter-spacing: .2em;
+    text-transform: uppercase; color: var(--gold-mid);
+    white-space: nowrap;
+  }
+  .power s {
+    text-decoration: none; font-size: 20px; letter-spacing: .04em;
+    color: var(--power, var(--gold));
+  }
+  /* The bar sits on the plate's bottom edge, spanning the whole chip: a number
+     is read, a bar that is nearly gone is seen without being looked at. */
+  .power span {
+    grid-column: 1 / -1;
+    display: block; height: 2px; margin-top: 6px;
+    background: rgba(217,178,106,.14);
+    overflow: hidden;
+  }
+  .power em {
+    display: block; height: 100%; width: 100%;
+    transform: scaleX(1); transform-origin: left center;
+    background: var(--power, var(--gold));
+  }
+
+  /* ---- the full-frame flash ----
+
+     For the Second Death, and deliberately nothing else. It is drawn over the
+     whole viewport under the rest of the HUD, so readouts stay legible through
+     it, and it is pointer-transparent like everything else in here. */
+  #flash {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at center,
+      var(--flash, #fff2cf) 0%, rgba(255,220,150,.35) 55%, rgba(255,200,120,0) 100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  #flash.on { animation: flash-out var(--flash-ms, 600ms) ease-out forwards; }
+  @keyframes flash-out {
+    0%   { opacity: .92; }
+    22%  { opacity: .70; }
+    100% { opacity: 0; }
+  }
+
   #notice {
     position: absolute; left: 50%; top: 62%;
     transform: translateX(-50%);
@@ -487,6 +568,10 @@
 </svg>
 
 <div id="hud" hidden>
+  <!-- FIRST inside #hud, so every readout paints over it and stays legible
+       through the flash. See createFlash in ui/hud.js. -->
+  <div id="flash"></div>
+
   <svg id="crosshair" viewBox="0 0 22 22" aria-hidden="true">
     <g stroke="#d9b26a" stroke-width="1.4" stroke-linecap="round" opacity=".9">
       <line x1="11" y1="2"  x2="11" y2="7"/>
@@ -545,6 +630,11 @@
     <div id="boss-name">ANUBIS</div>
     <div id="boss-track"><div id="boss-bar"></div></div>
   </div>
+
+  <!-- WHAT IS BURNING RIGHT NOW. Painted by createPowerStrip in ui/hud.js from
+       systems/powerups.js; empty, and touching no DOM at all, whenever nothing
+       is running. -->
+  <div id="r-powers"></div>
 
   <div id="gold-pops"></div>
   <div class="plate" id="prompt"></div>

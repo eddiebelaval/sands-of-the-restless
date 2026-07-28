@@ -65,7 +65,47 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
     taken: 0,
     /** Harness escape hatch. Nothing in the game sets this. */
     invulnerable: false,
+
+    /**
+     * THE FEATHER OF MAAT, and it belongs exactly here.
+     *
+     * Insta-kill is not a property of a weapon and not a property of an enemy;
+     * it is a rule about what a hit RESOLVES TO, and this file is the only
+     * place in the game where that resolution happens. Both entry points read
+     * it - a grenade fragment under the Feather kills as surely as a pistol
+     * round - and neither of them has to know what set it.
+     *
+     * It is applied as damage equal to the target's remaining health rather
+     * than as a separate "die now" path, so everything downstream is unchanged:
+     * hurt() still computes the stagger share, still topples the body away from
+     * the shooter, and still returns the one fact the payout reads. A boss dies
+     * to it too, which is correct: the drop is rare, it lasts thirty seconds,
+     * and "the god fell to one pistol round" is a story.
+     */
+    instaKill: false,
+
+    /** Lifetime kills resolved through this file, for the harness. */
+    kills: 0,
   };
+
+  /**
+   * Who wants to know that something died, and where.
+   *
+   * The power-up roll needs two facts at the moment of a kill - that it
+   * happened, and the position to put a drop at - and both are known here and
+   * nowhere else with any certainty. main.js's payout() sees `killed` but not
+   * the body; the director sees the body but only a frame later, once it is
+   * already crumbling. So this is the seam, and it is a listener rather than an
+   * injected system because this file must not acquire an opinion about what a
+   * power-up is.
+   */
+  const killListeners = new Set();
+
+  function announceKill(enemy, region) {
+    state.kills++;
+    if (!killListeners.size) return;
+    for (const fn of killListeners) fn(enemy, region);
+  }
 
   /**
    * Resolve a burst of hits from one trigger pull.
@@ -88,7 +128,9 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       if (!s) continue;
 
       const head = h.region === 'head';
-      const damage = s.damage * (head ? s.headshot : 1);
+      const damage = state.instaKill
+        ? Math.max(1, h.enemy.health)
+        : s.damage * (head ? s.headshot : 1);
 
       // Topple away from the shooter. The horizontal component of the line from
       // the player to the body is the only part that matters; a vertical one
@@ -99,6 +141,7 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       h.killed = h.enemy.hurt(damage, h.region, dx, dz);
       state.dealt += damage;
       connected++;
+      if (h.killed) announceKill(h.enemy, h.region);
 
       // Two distinct sounds, because the two payouts are distinct. A player who
       // cannot hear the difference between 60 and 100 has no feedback loop on
@@ -159,9 +202,14 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       const dz = h.dirZ ?? (h.enemy.position.z - player.position.z);
 
       h.region = h.region || 'body';
-      h.killed = h.enemy.hurt(h.damage, h.region, dx, dz);
-      state.dealt += h.damage;
+      const damage = state.instaKill ? Math.max(1, h.enemy.health) : h.damage;
+      h.killed = h.enemy.hurt(damage, h.region, dx, dz);
+      state.dealt += damage;
       connected++;
+      // Suppressible, because the Second Death kills the whole field through
+      // this path and a nuke that rolled twenty drops would be a bug that looks
+      // like a jackpot. See systems/powerups.js.
+      if (h.killed && !h.silent) announceKill(h.enemy, h.region);
 
       // The body sound, never the headshot sound. A blast cannot land a
       // headshot, and the two cues exist to tell the player which payout they
@@ -247,6 +295,12 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
     applyBlast,
     damagePlayer,
     update,
+
+    /** Tell me when something dies. Returns the unsubscribe. */
+    onKill(fn) {
+      killListeners.add(fn);
+      return () => killListeners.delete(fn);
+    },
 
     /** Late binding: the director is constructed FROM this, so it cannot be
      * passed in at construction time. */

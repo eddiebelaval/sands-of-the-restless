@@ -52,6 +52,21 @@ import { STATS, displayName } from '../player/weapons.js';
 export const PULL_COST = 950;
 
 /**
+ * WHAT ONE PULL COSTS DURING A FIRE SALE.
+ *
+ * Ten, which is the canonical number and reads as a joke the player is in on:
+ * it is not a discount, it is the necropolis briefly not caring. A pull is
+ * still a spend rather than free, so the purchase path is the identical path -
+ * economy.spend() is still the buy, it can still fail on an empty purse, and
+ * there is no second branch through this file that grants a roll without taking
+ * anything.
+ */
+export const FIRE_SALE_COST = 10;
+
+/** How long a sale runs, in simulated seconds, if nobody says otherwise. */
+export const FIRE_SALE_SECONDS = 30;
+
+/**
  * THE STOCK LIST.
  *
  * Six of the seven weapons. The MK9 is left out deliberately and it is the one
@@ -183,11 +198,42 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
 
     /** Seconds left on the refusal window. Quoted in the prompt. */
     offerLeft: 0,
+
+    /**
+     * THE FIRE SALE.
+     *
+     * `fireSale` is whether one is running, `saleLeft` the simulated seconds
+     * remaining, and `saleEnding` whether the window has run out and the sale
+     * is being HELD OPEN because the chest is mid-pull. See endSale().
+     */
+    fireSale: false,
+    saleLeft: 0,
+    /** The window this sale was STARTED with, so a HUD bar has a denominator. */
+    saleFor: 0,
+    saleEnding: false,
+    salesTotal: 0,
+    saleHops: 0,
   };
 
   /** Fixture records, filled by attach(). Index into this is the placement. */
   let records = [];
   let index = -1;
+
+  /**
+   * WHERE THE CHEST LIVES, as against where it is being USED.
+   *
+   * Outside a Fire Sale these are the same number and `home` is dead weight.
+   * During one, every plinth is awake and the player may pull at any of them,
+   * so `index` follows whichever one they walked to while `home` stays on the
+   * placement the chest actually occupies. When the sale ends, the chest is at
+   * `home` and the other two go dark.
+   *
+   * That is the whole reason a sale cannot secretly relocate the chest. It is
+   * moved by exactly one thing - going cold, which announces itself with a
+   * scarab, a sting and a banner - and settle() is the only function that
+   * writes `home`.
+   */
+  let home = -1;
 
   /** Positional audio handles, one per chest, keyed by the same index. */
   const voices = [];
@@ -209,6 +255,44 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
   function visuals() { const r = current(); return r && r.visuals; }
   function isActive(rec) { return !!rec && rec === current(); }
 
+  /**
+   * ONE PRICE, READ FROM ONE PLACE.
+   *
+   * describe() quotes this and pull() spends this, and they are one function
+   * call rather than two constants precisely because a Fire Sale is the obvious
+   * way to break the invariant every purchase in this game keeps: what the
+   * prompt says is what the purse loses. There is no path through this file
+   * where the quote and the debit can be computed differently, and the harness
+   * asserts the two against each other rather than against 10.
+   */
+  function price() {
+    return state.fireSale ? FIRE_SALE_COST : PULL_COST;
+  }
+
+  /**
+   * Is this plinth lit and open for business at all.
+   *
+   * Outside a sale that is exactly one of the three. During a sale it is all of
+   * them, which is the part that makes it an EVENT rather than a discount: the
+   * two dormant plinths the player has walked past for ten waves come up
+   * together, and the one they are nearest is the one they use.
+   */
+  function isAwake(rec) {
+    if (!rec) return false;
+    if (isActive(rec)) return true;
+    return state.fireSale && records.includes(rec);
+  }
+
+  /** Wake or sleep every placement that is not the one in use. */
+  function setExtrasAwake(on) {
+    for (let i = 0; i < records.length; i++) {
+      if (i === index) continue;
+      const v = records[i].visuals;
+      if (!v) continue;
+      if (on) { v.setPresent(true); v.setArrive(1); } else { v.setPresent(false); }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // placement
   // ---------------------------------------------------------------------------
@@ -223,6 +307,7 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
     if (prev && prev.visuals) prev.visuals.setPresent(false);
 
     index = next;
+    home = next;
     state.spawn = (records[next].config && records[next].config.spawn) || String(next);
     state.pulls = 0;
     state.coldAt = randInt(COLD_AFTER.min, COLD_AFTER.max);
@@ -233,8 +318,31 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
       v.setArrive(announce ? 0 : 1);
     }
 
+    // A relocation inside a Fire Sale still leaves every plinth lit. setPresent
+    // above has just put the one it moved AWAY from to sleep, which is right
+    // outside a sale and wrong inside one.
+    if (state.fireSale) setExtrasAwake(true);
+
     setPhase(announce ? 'arriving' : 'idle');
     if (announce) voices[index] && voices[index].play('boxJingle', { gain: 0.55 });
+  }
+
+  /**
+   * Move which plinth is BEING USED, without moving the chest.
+   *
+   * Only legal during a Fire Sale and only from idle, so it can never land
+   * inside a roll: the player walks to a lit plinth, presses F, and the machine
+   * runs there. The pull counter and the go-cold threshold deliberately do NOT
+   * reset - see the note on pull() - because the three plinths in a sale are one
+   * chest with three doors, not three chests.
+   */
+  function hopTo(next) {
+    if (next === index) return false;
+    index = next;
+    state.spawn = (records[next].config && records[next].config.spawn) || String(next);
+    state.saleHops++;
+    spin = 0;
+    return true;
   }
 
   /**
@@ -269,21 +377,34 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
 
   /** Pay, draw, and start the roll. */
   function pull() {
-    if (!economy.canAfford(PULL_COST)) {
-      return deny(`Need ${PULL_COST - economy.gold} more gold`);
+    const cost = price();
+
+    if (!economy.canAfford(cost)) {
+      return deny(`Need ${cost - economy.gold} more gold`);
     }
 
     // spend() IS the purchase, the same contract doors.js and wallbuy.js buy
     // through. Checking the purse and then deducting as two steps invites the
     // balance to move in between; this way the deduction either happened or the
     // pull did not.
-    if (!economy.spend(PULL_COST, 'mysterybox')) return deny();
+    if (!economy.spend(cost, 'mysterybox')) return deny();
 
     const i = Math.floor(rng() * POOL.length);
     state.offer = POOL[i];
     state.offered.push(state.offer);
     schedule = buildSchedule(i);
 
+    /**
+     * A SALE PULL STILL COUNTS TOWARD GOING COLD.
+     *
+     * The alternative is a thirty-second window of unbounded ten-gold rolls,
+     * which is not a bonus, it is the armoury handed over. Counting them means
+     * a sale is worth four to eight pulls at most - the same budget any
+     * placement has ever had - and what the sale actually buys is that those
+     * pulls cost 10 instead of 950 and can be taken at whichever of the three
+     * plinths the player is nearest. That is already an enormous swing: 950 to
+     * 10 is the entire price of the mechanic.
+     */
     state.pulls++;
     state.pullsTotal++;
     goingCold = state.pulls >= state.coldAt;
@@ -326,6 +447,84 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
   }
 
   // ---------------------------------------------------------------------------
+  // the fire sale
+  // ---------------------------------------------------------------------------
+
+  /**
+   * THE NAMELESS ARE GENEROUS.
+   *
+   * Two things happen and the second is the one that makes it an event: the
+   * price drops to a token, and every plinth on the map wakes up. The dormant
+   * plinths are already built, already placed and already silent when asleep,
+   * so waking them is one call each - and the player who has spent ten waves
+   * walking past a dead slab in the Great Gallery watches it come up.
+   *
+   * Re-triggering refreshes the window rather than extending it, on the same
+   * principle the power-up effects use: two of the same boon is not double the
+   * boon.
+   */
+  function fireSale(seconds = FIRE_SALE_SECONDS) {
+    const fresh = !state.fireSale;
+
+    state.fireSale = true;
+    state.saleEnding = false;
+    state.saleLeft = Math.max(state.saleLeft, seconds);
+    state.saleFor = Math.max(state.saleFor, seconds);
+
+    if (fresh) {
+      state.salesTotal++;
+      setExtrasAwake(true);
+      notice?.('THE NAMELESS ARE GENEROUS - EVERY CHEST, 10 GOLD', 3400);
+      for (let i = 0; i < records.length; i++) {
+        voices[i] && voices[i].play('boxJingle', { gain: 0.5 });
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * End it, or ASK to end it.
+   *
+   * THE ONE CASE THAT MATTERS is the window running out while the player is
+   * standing at a plinth that is not the chest's home, mid-roll, watching marks
+   * cycle on 10 gold they have already spent. Ending the sale there would put
+   * the chest back at `home` and the fixture they are looking at to sleep, with
+   * their pull inside it. So the sale is HELD OPEN until the machine is idle
+   * again, and `saleEnding` says so on the HUD. The player keeps the roll they
+   * paid for and cannot keep starting new ones, because the price restores the
+   * moment the window is genuinely over.
+   *
+   * The same rule covers a sale that runs out while the chest is COOLING: the
+   * scarab, the sting and the relocation all finish, the chest settles at its
+   * new home, and only then do the extras go dark.
+   */
+  function endSale() {
+    if (state.phase !== 'idle') {
+      state.saleEnding = true;
+      return false;
+    }
+
+    state.fireSale = false;
+    state.saleEnding = false;
+    state.saleLeft = 0;
+    state.saleFor = 0;
+
+    // Back to the chest's own plinth. This is a no-op unless the player pulled
+    // somewhere else during the window.
+    if (home >= 0 && home !== index) {
+      index = home;
+      state.spawn = (records[home].config && records[home].config.spawn) || String(home);
+      const v = visuals();
+      if (v) { v.setPresent(true); v.setArrive(1); }
+    }
+
+    setExtrasAwake(false);
+    notice?.('THE NAMELESS CLOSE THEIR HANDS', 2600);
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
   // prompt
   // ---------------------------------------------------------------------------
 
@@ -338,13 +537,33 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
    * telling the player off for walking past them.
    */
   function describe(rec) {
-    if (!isActive(rec)) return { text: '', deny: false };
+    if (!isActive(rec)) {
+      // A plinth woken by a Fire Sale is a real fixture with a real price, and
+      // it quotes the SAME price() the debit reads. While the chest is busy at
+      // one of the three, the other two say what the busy one says, because
+      // "the chest is stirring" is true of all of them at once during a sale.
+      if (!isAwake(rec)) return { text: '', deny: false };
+      if (state.phase !== 'idle') {
+        return { text: 'THE CHEST OF THE NAMELESS STIRS', deny: false };
+      }
+      const affordHere = economy.canAfford(price());
+      return {
+        text: `THE NAMELESS ARE GENEROUS - ${price()} GOLD${affordHere ? '  [F]' : ''}`,
+        deny: !affordHere,
+      };
+    }
 
     switch (state.phase) {
       case 'idle': {
-        const afford = economy.canAfford(PULL_COST);
+        const afford = economy.canAfford(price());
+        if (state.fireSale) {
+          return {
+            text: `THE NAMELESS ARE GENEROUS - ${price()} GOLD${afford ? '  [F]' : ''}`,
+            deny: !afford,
+          };
+        }
         return {
-          text: `CHEST OF THE NAMELESS - ${PULL_COST} GOLD${afford ? '  [F]' : ''}`,
+          text: `CHEST OF THE NAMELESS - ${price()} GOLD${afford ? '  [F]' : ''}`,
           deny: !afford,
         };
       }
@@ -383,6 +602,17 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
   // ---------------------------------------------------------------------------
 
   function buy(rec) {
+    // A sale plinth that is not the one in use. Walking up to it and pressing F
+    // moves the machine there and pulls, in one keypress - which is what the
+    // player thinks they are doing. It is refused unless the chest is idle, so
+    // this can never yank a roll out from under itself.
+    if (!isActive(rec) && isAwake(rec) && state.phase === 'idle') {
+      const i = records.indexOf(rec);
+      if (i < 0) return false;
+      hopTo(i);
+      return pull();
+    }
+
     if (!isActive(rec)) return false;
     if (state.phase === 'idle') return pull();
     if (state.phase === 'settling' || state.phase === 'presenting') return take();
@@ -448,6 +678,26 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
 
     t += dt;
     v.tick(dt, elapsed);
+
+    // --- the fire sale --------------------------------------------------------
+    //
+    // Simulated seconds, like every other duration in this file. The extras
+    // breathe too, because a lit plinth that is perfectly still next to one that
+    // is breathing reads as the still one being broken.
+    if (state.fireSale) {
+      for (let i = 0; i < records.length; i++) {
+        if (i !== index && records[i].visuals) records[i].visuals.tick(dt, elapsed);
+      }
+
+      if (state.saleLeft > 0) {
+        state.saleLeft = Math.max(0, state.saleLeft - dt);
+        if (state.saleLeft <= 0) endSale();
+      } else {
+        // Held open past its window because the chest was busy. Try again every
+        // frame; endSale() is the thing that knows when it is safe.
+        endSale();
+      }
+    }
 
     switch (state.phase) {
       case 'arriving': {
@@ -599,9 +849,26 @@ export function createMysteryBox({ weapons, economy, player, audio, notice, rng 
     state,
     POOL,
     PULL_COST,
+    FIRE_SALE_COST,
     describe,
     buy,
     update,
+
+    /** Start or refresh a Fire Sale. The power-up drop is the only caller. */
+    fireSale,
+
+    /** What a pull costs RIGHT NOW. The prompt and the debit both read this. */
+    get price() { return price(); },
+
+    /** Whether a plinth is lit at all, which a Fire Sale changes. */
+    isAwake,
+
+    /** Where the chest actually lives, as against where it is being used. */
+    get homeSpawn() {
+      return home >= 0 && records[home]
+        ? (records[home].config && records[home].config.spawn) || String(home)
+        : null;
+    },
 
     /** Late binding: the fixtures come from the interaction layer. */
     attach(fixtures) {

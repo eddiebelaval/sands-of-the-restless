@@ -111,6 +111,153 @@ export function createBoonStrip(el, shrines) {
 }
 
 // ---------------------------------------------------------------------------
+// the power-up strip
+// ---------------------------------------------------------------------------
+
+/**
+ * WHICH BOONS ARE BURNING, AND FOR HOW MUCH LONGER.
+ *
+ * A timed power-up with no on-screen clock is a power-up the player finds out
+ * about twice: once when the screen said something, and once when their gun
+ * stops one-shotting. Both facts have to be glanceable, and "which one is
+ * running" has to survive TWO of them being running at once - which is why this
+ * is a stack of chips rather than one line that the second effect overwrites.
+ *
+ * Each chip carries three things and they are in priority order for a player who
+ * is being chased: a coloured mark, THE PLAIN MEANING in the largest type on the
+ * chip, and the name underneath it. The Egyptian name is the flavour and the
+ * player will use it to talk about the game; it is not what they need to read
+ * with four husks on them. Underneath both is a bar that empties, because a
+ * number counting down is read and a bar that is nearly gone is SEEN.
+ *
+ * Nothing here decides anything: systems/powerups.js owns what is running and
+ * for how long, this is handed the list once a frame and paints it. The Fire
+ * Sale row in that list comes from the chest rather than from the power-up
+ * system, for the reason stated there.
+ */
+export function createPowerStrip(el, powerups) {
+  if (!el || !powerups) return { update() {}, rows: [] };
+
+  const rows = [];
+  // What each row currently shows, so the common case - sixty frames a second
+  // with nothing running - touches no DOM at all.
+  const painted = [];
+
+  function rowAt(i) {
+    if (rows[i]) return rows[i];
+
+    const chip = document.createElement('div');
+    chip.className = 'power plate';
+
+    const dot = document.createElement('i');
+    chip.appendChild(dot);
+
+    const body = document.createElement('div');
+    body.className = 'power-body';
+
+    const plain = document.createElement('b');
+    const name = document.createElement('u');
+    body.appendChild(plain);
+    body.appendChild(name);
+    chip.appendChild(body);
+
+    const secs = document.createElement('s');
+    chip.appendChild(secs);
+
+    const track = document.createElement('span');
+    const fill = document.createElement('em');
+    track.appendChild(fill);
+    chip.appendChild(track);
+
+    el.appendChild(chip);
+    rows[i] = { chip, plain, name, secs, fill };
+    painted[i] = { id: null, secs: null, frac: -1 };
+    return rows[i];
+  }
+
+  function update() {
+    const list = powerups.active();
+
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      const row = rowAt(i);
+      const was = painted[i];
+
+      if (row.chip.hidden) row.chip.hidden = false;
+
+      if (was.id !== e.id) {
+        was.id = e.id;
+        row.plain.textContent = e.plain;
+        row.name.textContent = e.name;
+        row.chip.style.setProperty('--power', hex(e.colour));
+      }
+
+      // Ceil, so a chip never reads 0 while its effect is still running.
+      const secs = Math.max(0, Math.ceil(e.left));
+      if (secs !== was.secs) {
+        was.secs = secs;
+        row.secs.textContent = secs;
+      }
+
+      const frac = e.duration > 0 ? Math.max(0, Math.min(1, e.left / e.duration)) : 0;
+      if (Math.abs(frac - was.frac) > 0.004) {
+        was.frac = frac;
+        // A transform, which the compositor takes off the main thread, rather
+        // than a width, which is a layout every frame an effect is running.
+        row.fill.style.transform = `scaleX(${frac.toFixed(3)})`;
+      }
+    }
+
+    for (let i = list.length; i < rows.length; i++) {
+      if (rows[i].chip.hidden) continue;
+      rows[i].chip.hidden = true;
+      painted[i].id = null;
+      painted[i].secs = null;
+      painted[i].frac = -1;
+    }
+  }
+
+  return { update, rows, painted };
+}
+
+// ---------------------------------------------------------------------------
+// the full-frame flash
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE ELEMENT, FOR EVENTS THAT HAVE TO BE IMPOSSIBLE TO MISS.
+ *
+ * The Second Death kills everything alive in one frame, and a mass kill with no
+ * screen event is a bug that looks like a bug: twenty bodies simply stop being
+ * there. So the moment is three things at three distances - this, a ring
+ * expanding through the world from the player's feet, and a camera that is
+ * visibly hit - and this is the one that cannot be missed no matter where the
+ * player is looking.
+ *
+ * The fade is a CSS animation on wall-clock time, which is correct HERE and only
+ * here for the same reason the gold popups are: it is a readout, nothing in the
+ * simulation depends on when it finishes, so it cannot desynchronise anything by
+ * running at a different rate than the clamped frame delta.
+ */
+export function createFlash(el) {
+  if (!el) return { fire() { return false; } };
+
+  return {
+    fire(colour = '#fff2cf', ms = 600) {
+      el.style.setProperty('--flash', colour);
+      el.style.setProperty('--flash-ms', `${ms}ms`);
+      // Restart the animation. Removing the class and forcing a reflow before
+      // adding it back is the only reliable way; without the reflow the browser
+      // coalesces both writes and nothing happens on a second flash.
+      el.classList.remove('on');
+      void el.offsetWidth;
+      el.classList.add('on');
+      return true;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // the readouts
 // ---------------------------------------------------------------------------
 
