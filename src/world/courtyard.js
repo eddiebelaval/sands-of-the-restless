@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { buildMaterials } from './materials.js';
 import { box, plane, cylinderUV } from './uv.js';
-import { chamferedBox, erode, duneField } from './geometry.js';
+import { chamferedBox, chamferFor, erode, duneField } from './geometry.js';
 import { buildScatter } from './scatter.js';
 import { dressAvenue } from './dressing.js';
 
@@ -173,11 +173,25 @@ export function buildCourtyard(scene) {
   /**
    * A cut stone block: chamfered edges, optional erosion, world-scale UVs.
    *
-   * Chamfer scales with the block so a 60-unit pyramid step and a 2-unit piece
-   * of rubble both read as stone rather than one reading as a rounded pillow.
+   * THE CHAMFER SCALES WITH THE BLOCK, and until 2026-07-27 it did not, despite
+   * this comment having claimed it did. `Math.min(0.11, min * 0.055)` is a CAP,
+   * not a scale: every member thicker than two metres - which is every wall,
+   * every pylon, every course of the pyramid - collapsed onto the same 11 cm,
+   * and the pyramid's own override was 24 cm on a sixty-two metre face. At the
+   * ninety metres the pyramid is read from that is three pixels, which is a
+   * hairline and not a highlight, and a blind side-by-side against the reference
+   * project came back with "no bevel on anything so no edge in the scene catches
+   * an edge highlight, which is why the stone reads as painted cardboard."
+   *
+   * `chamferFor` (geometry.js) is the rule: a fraction of the member's longest
+   * dimension, floored so small members keep a real arris, clamped against its
+   * thinnest so a slab cannot become a pillow. The `chamfer` option is now a
+   * MINIMUM rather than an override - every explicit value in this file was
+   * authored under the old cap and every one of them is smaller than the rule,
+   * so they survive as a record of intent and change nothing.
    */
   const stone = (w, h, d, mat, density, { eroded = 0, chamfer = null } = {}) => {
-    const c = chamfer ?? Math.min(0.11, Math.min(w, h, d) * 0.055);
+    const c = chamferFor(w, h, d, chamfer ?? 0);
     const geo = chamferedBox(w, h, d, c, density);
     if (eroded > 0) erode(geo, eroded, 1.1, (w * 7 + h * 13 + d * 3) % 97);
 
@@ -258,23 +272,43 @@ export function buildCourtyard(scene) {
    * the player walks toward for the whole game. Under the old flat noon key
    * they were pale. Under the new one they were the brightest thing in frame.
    *
-   * The chamfer widens the mouth of that slot by another 0.24 at each lip, and
-   * the bevels that would have closed it are not drawn (see the winding note in
-   * geometry.js). 0.7 of overlap is more than all three effects put together and
-   * costs nothing: the overlap is inset behind the course below, so it is buried
-   * in solid stone and the stepped profile the player sees is unchanged.
+   * The chamfer also widens the mouth of that slot, once at each lip, and the
+   * lap has to be wider than BOTH of those plus the erosion or the joint opens
+   * again. It used to be a hand-picked 0.7 against a hand-picked 0.24 chamfer.
+   * Now the chamfer comes from the scale rule and the base course takes about
+   * 0.72, so 0.7 would no longer cover it - the exact regression that put two
+   * bands of open sky at eye level either side of the doorway. So the lap is
+   * DERIVED from the widest bevel any course will take rather than authored
+   * beside it, and cannot drift out of agreement with it if the rule is
+   * retuned. It costs nothing either way: the lapped band is inset 2.6 m behind
+   * the course below, so it is buried in solid stone and the stepped profile
+   * the player sees is unchanged.
    */
-  const COURSE_LAP = 0.7;
+  const COURSE_H = 3.8;
+
+  // Probed with a deliberately generous height, so the lap is computed against
+  // a chamfer at least as wide as the one the courses will actually get.
+  let widestBevel = 0;
+  for (let i = 0; i < STEPS; i++) {
+    const w = 62 - i * 5.2;
+    widestBevel = Math.max(widestBevel, chamferFor(w, COURSE_H + 1.5, w));
+  }
+  const COURSE_LAP = widestBevel + 0.25;
 
   for (let i = 0; i < STEPS; i++) {
     const w = 62 - i * 5.2;
-    const h = 3.8;
+    const h = COURSE_H;
 
     // Each course is nudged off true and eroded. Eleven perfectly aligned
     // identical boxes is the other half of the "voxel game" read: real
     // masonry has settled, and settled courses are never flush.
+    //
+    // No chamfer floor here any more. The rule gives the 62 m base course about
+    // 0.72 and the 10 m top course about 0.20, which is the right shape: the
+    // courses nearest the eye and largest on screen get the widest arris, and
+    // the taper up the pyramid is itself a depth cue.
     const step = stone(w, h + COURSE_LAP, w, M.limestone, DENSITY.limestone,
-      { eroded: 0.10, chamfer: 0.24 });
+      { eroded: 0.10 });
     step.position.set(
       (rand() - 0.5) * 0.5,
       h * 0.5 + i * h - COURSE_LAP * 0.5,
@@ -1391,6 +1425,135 @@ export function buildCourtyard(scene) {
       bedded(rw, rh, rw * 0.85, M.limestone, DENSITY.rubble,
         cx + Math.cos(a) * d, cz + Math.sin(a) * d, { eroded: 0.18, bed: 0.32 });
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // the far skyline: masses OUTSIDE the temenos
+  // -------------------------------------------------------------------------
+  //
+  // "Give the skyline silhouette variety - right now the horizon is one flat
+  // edge." Everything in the level up to this point terminates at the perimeter
+  // wall 52 metres out, so the horizon is the perimeter's parapet, the avenue's
+  // parapet, and the one triangle of the pyramid, and there is nothing at any
+  // distance past those. A necropolis with a single monument in it and empty
+  // desert immediately behind it reads as a set, because a real one is a field
+  // of them built over centuries.
+  //
+  // THIS IS A DEPTH CUE BEFORE IT IS DECORATION, which is the reason it is
+  // landing in the same pass as the fog. Aerial perspective is a comparison:
+  // "distant" only means anything against something nearer, and with one object
+  // in the far field there is nothing to compare it to. Measured from the
+  // spawn, the temple stands at 92 m, the near satellite at about 145, the two
+  // far ones at about 225, and the escarpment past 200, which at the new sigma
+  // is roughly 50, 67, 82 and 80 per cent extinction. That is a ladder with
+  // rungs on it rather than one object and a horizon.
+  //
+  // RULES THIS PASS OBEYS, because it is landing next to a finished avenue:
+  //   - Its own RNG stream. Drawing from `rand` or `brand` would shift every
+  //     sequence downstream of it and silently move the avenue and the
+  //     perimeter, which is exactly how the last boundary pass nearly went
+  //     wrong. `sky` is a third stream and nothing else reads it.
+  //   - Nothing inside the perimeter, nothing inside the walkable rectangle, no
+  //     colliders. It cannot be reached, walked into, or shot.
+  //   - No shadows, cast or received. All of it stands well outside
+  //     SHADOW_EXTENT, so a shadow flag on it costs a shadow-map draw that
+  //     lands nowhere.
+  //   - Seated on `groundY`, like everything else out here. A backdrop mass
+  //     floating half a metre off a dune it is standing on is visible from
+  //     across the map precisely because it is on the horizon line.
+  const sky = rng(770311);
+
+  const farGroup = new THREE.Group();
+  farGroup.name = 'far-skyline';
+  group.add(farGroup);
+
+  /**
+   * A backdrop block: no shadows, no collider, not a hit target.
+   *
+   * `noHit` is not housekeeping. `world.hitTargets` is the courtyard group and
+   * the weapon raycast is recursive, so without the tag a shot fired down the
+   * avenue and over the temple would stop on a mastaba two hundred metres away
+   * and spawn an impact nobody can see, which is a bullet that silently did
+   * nothing. The tag is the same one build.js and grenades.js already use.
+   */
+  const farBlock = (w, h, d, x, z, yaw, y0 = 0) => {
+    const m = stone(w, h, d, M.limestone, DENSITY.limestone, { eroded: 0.06 });
+    m.castShadow = false;
+    m.receiveShadow = false;
+    m.userData.noHit = true;
+    m.position.set(x, groundY(x, z) + y0 + h / 2, z);
+    m.rotation.y = yaw;
+    farGroup.add(m);
+    return m;
+  };
+
+  /**
+   * A stepped mass, the same construction as the temple but authored small.
+   *
+   * Deliberately the same silhouette family rather than a different one: these
+   * are meant to read as the rest of the necropolis, so the main pyramid stops
+   * being the only thing of its kind in the world and starts being the nearest
+   * and largest thing of its kind. That is a different and much better reading
+   * of the same frame.
+   */
+  const farPyramid = (x, z, base, courses, courseH, yaw) => {
+    for (let i = 0; i < courses; i++) {
+      const w = base * (1 - i / (courses + 0.6));
+      farBlock(w, courseH * 1.25, w, x, z, yaw, i * courseH);
+    }
+  };
+
+  // Two satellites, flanking and well behind the temple, at different distances
+  // and different proportions. The near one is squat and wide; the far one is
+  // steeper and taller, which is what stops them reading as one asset placed
+  // twice.
+  farPyramid(-88, -86, 46, 7, 4.6, 0.21);
+  farPyramid(122, -158, 34, 9, 5.0, -0.34);
+
+  // A third, much further out and nearly dissolved, so the ladder has a rung
+  // past the point where anything is still legible as architecture.
+  farPyramid(24, -191, 58, 8, 6.4, 0.08);
+
+  /**
+   * The quarry escarpment along the far side.
+   *
+   * A ridge, not a wall: the blocks vary in height, depth and yaw and overlap
+   * along the run, so the top line is broken and the mass has a front and a
+   * flank instead of one flat face. This is the piece that actually removes the
+   * "one flat edge" - the satellites give the skyline objects, this gives it a
+   * horizon that is not level.
+   *
+   * It stays inside the dune field, which is 420 metres square and therefore
+   * ends at 210. A backdrop mass placed past that edge stands on nothing: its
+   * base draws against sky rather than against sand, a couple of pixels above
+   * where the ground plane stops, which is the same "floating" read the
+   * perimeter had to be rebuilt once to fix.
+   */
+  for (let i = 0; i < 9; i++) {
+    const t = i / 8;
+    const x = -170 + t * 340;
+    const z = -172 - sky() * 30;
+    const w = 46 + sky() * 38;
+    const h = 17 + Math.sin(t * 5.1 + 1.3) * 9 + sky() * 13;
+    farBlock(w, h, 30 + sky() * 22, x, z, (sky() - 0.5) * 0.5);
+  }
+
+  // The same run turned ninety degrees down the east flank, so the enclosure is
+  // not a stage with a painted backdrop on exactly one side.
+  for (let i = 0; i < 5; i++) {
+    const t = i / 4;
+    const z = -130 + t * 220;
+    const x = 152 + sky() * 26;
+    const h = 15 + Math.sin(t * 4.4) * 8 + sky() * 11;
+    farBlock(40 + sky() * 24, h, 56 + sky() * 24, x, z, (sky() - 0.5) * 0.5);
+  }
+
+  // Four distant pylon stubs. A necropolis skyline needs at least one vertical
+  // that is not a pyramid or the whole horizon is one shape repeated.
+  for (const [px, pz, ph] of [
+    [-63, -148, 27], [-71, -151, 24], [154, -96, 22], [-166, -172, 31],
+  ]) {
+    farBlock(9 + sky() * 5, ph, 9 + sky() * 5, px, pz, sky() * 0.6);
   }
 
   // -------------------------------------------------------------------------

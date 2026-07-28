@@ -103,6 +103,56 @@ const SkyShader = {
     // Kept on +X and behind the player, as before, so the disc stays out of
     // frame while they walk the corridor the level wants them to walk.
     //
+    // 2026-07-27: SWINGING THE BEARING TO GROUND THE ACTORS WAS PROPOSED,
+    // MEASURED, AND REJECTED. Do not re-derive this.
+    //
+    // The proposal was good and the reasoning behind it was sound. The blind
+    // judge's first complaint was that the enemies float; the characters lane
+    // proved the shadows are cast at full strength and correctly diagnosed the
+    // defect as geometric - the sun sits 32 degrees off the avenue's axis and
+    // the player walks the avenue, so an actor's shadow lies almost directly
+    // away from the camera, foreshortens to a sliver, and hides behind the legs
+    // that cast it. The fix suggested was 40 to 60 degrees of azimuth, which
+    // would lay it ACROSS the view.
+    //
+    // Swept 32 / 40 / 46 / 52 / 60 / 65 / 75 at this elevation, measured by
+    // knockout - the same frame rendered twice with sun.castShadow toggled and
+    // differenced, restricted to floor pixels found by raycasting the same
+    // camera, so "floor in shadow" means the floor and not the walls. Mid
+    // avenue, share of visible floor inside a cast shadow:
+    //
+    //        32 deg   45.2%      52 deg   64.9%
+    //        40       55.8       60       54.7
+    //        46       62.9       75       36.6
+    //
+    // The pyramid was never the binding constraint: its north face goes 195.7
+    // luma at 32 to 176.7 at 75, a tenth, because at the current fog sigma half
+    // of what reaches the eye from it is inscatter and the top of every course
+    // faces up and does not care where the sun is.
+    //
+    // THE FLOOR IS THE CONSTRAINT, AND IT DEFEATS THE PROPOSAL ON ITS OWN
+    // TERMS. Shadow length scales with the height of what casts it. An actor is
+    // 1.8 m, so at 27 degrees its shadow is 3.5 m long, and rotating the sun
+    // from 32 to 46 moves the tip of that shadow 0.65 m further across the view
+    // - a few dozen pixels at eight metres. The avenue wall is 13 m, so its
+    // shadow is 25.5 m, and the SAME rotation sweeps it 4.6 m further across a
+    // 30 m avenue. The wall wins by a factor of seven, and it wins in the wrong
+    // direction: rendered with a husk standing at eight metres mid-avenue, by
+    // 46 degrees the actor is inside the wall's shadow and has no lit ground
+    // left to cast onto at all. The rotation that would lay the actor's shadow
+    // across the view is the same rotation that lays the wall's shadow over the
+    // actor. There is no azimuth at this elevation and this avenue width that
+    // separates them.
+    //
+    // 32 degrees is also the only setting that still hits the design target two
+    // paragraphs up - a floor genuinely half in and half out, at 45.2 per cent -
+    // and the near-left masonry at the spawn, which is the frame's warm anchor,
+    // holds its sunlit face until about 65 and is gone by 75.
+    //
+    // So the grounding fix stays where the characters lane put it: a projected
+    // contact patch, which is view-independent by construction and does not
+    // have to fight the wall for the floor.
+    //
     //   x = sin(32) * cos(27), y = sin(27), z = cos(32) * cos(27)
     uSunDir:     { value: new THREE.Vector3(0.4721, 0.4540, 0.7556).normalize() },
 

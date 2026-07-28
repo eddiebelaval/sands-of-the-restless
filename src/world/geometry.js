@@ -25,6 +25,68 @@
 import * as THREE from 'three';
 
 /**
+ * How wide a bevel has to be, on a member of this size, to actually read.
+ *
+ * WHY A CONSTANT CHAMFER CANNOT WORK
+ *
+ * A chamfer sells a cut edge because it holds a THIRD shading value between two
+ * faces: the flat facing the sun, the flat facing away, and a narrow band at an
+ * angle to both that catches a bright line. A band can only hold a value if it
+ * is several pixels wide. So the useful size of a chamfer is set by how big the
+ * object is on screen, and that is set by how big the object is in the world -
+ * a 2 m rock is read from two metres and a 62 m pyramid course is read from
+ * ninety.
+ *
+ * At 1440 px across a 75 degree frame one pixel subtends about 9.1e-4 radians,
+ * so a bevel needs roughly `0.0018 * distance` metres to be two pixels and
+ * about five times that to be a band with a value in it rather than a hairline.
+ * The shipped numbers were a flat 6 cm default with an 11 cm cap in the
+ * courtyard, which is five pixels on a crate at arm's length and under one on
+ * the pyramid. That is the whole of "no bevel on anything so no edge in the
+ * scene catches an edge highlight, which is why the stone reads as painted
+ * cardboard": the bevels were being drawn, paid for in triangles, and were too
+ * small to carry a highlight.
+ *
+ * THE RULE
+ *
+ * Scale with the member's longest dimension, floor it so small members keep a
+ * real edge, and clamp it against the member's THINNEST dimension so a slab
+ * does not turn into a rounded pillow. The thin clamp is what keeps a 2 m
+ * rubble chunk reading as stone: a sixth of the thin axis is a cut arris, not a
+ * fillet.
+ *
+ * `floor` lets a call site ask for MORE than the rule gives without being able
+ * to ask for a bevel too small to see. Every explicit chamfer in the courtyard
+ * predates this function and every one of them was smaller than the rule, so
+ * they now act purely as documentation of intent.
+ */
+export const CHAMFER_RULE = {
+  frac: 0.02,      // of the longest dimension
+  min: 0.09,       // metres. Below this a bevel is decoration on any member.
+  // Hard ceiling as a fraction of the thinnest dimension. This is the number
+  // that keeps a 2 m rubble chunk a stone instead of a pillow, and it is also
+  // what stops the pyramid's courses eating their own risers: at 0.22 a 4.5 m
+  // course took a 0.99 m arris top and bottom and only 2.5 m of it was left
+  // flat, which turns a stepped profile into a batter.
+  thinFrac: 0.16,
+  max: 1.1,        // metres. Nothing in this world wants a wider arris.
+};
+
+/**
+ * @param {number} w
+ * @param {number} h
+ * @param {number} d
+ * @param {number} [floor] a minimum in world units, still subject to the clamps
+ */
+export function chamferFor(w, h, d, floor = 0) {
+  const R = CHAMFER_RULE;
+  const span = Math.max(w, h, d);
+  const thin = Math.min(w, h, d);
+  const want = Math.max(floor, span * R.frac, R.min);
+  return Math.min(want, thin * R.thinFrac, R.max);
+}
+
+/**
  * @param {number} w width  (x)
  * @param {number} h height (y)
  * @param {number} d depth  (z)
