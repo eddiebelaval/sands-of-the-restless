@@ -161,6 +161,16 @@ const SkyShader = {
     // driving the whole dome, and the haze band comes DOWN hard: at 0xf2dfba it
     // measured luma 202 and was the brightest thing in the frame by a distance,
     // which is what put the sky and the sand in the same band.
+    //
+    // THIS DOME DOES NOT OWN THE HORIZON BY ITSELF. core/fog.js runs as a post
+    // pass over every pixel INCLUDING the sky, and a horizon-bearing ray takes
+    // its full 900 m clamp, so better than eighty per cent of the band along the
+    // skyline is that pass's uInscatter with these colours only showing through
+    // underneath. The two were allowed to disagree for a day - a tan uHorizon
+    // under a periwinkle inscatter - and the fog won, which is how the whole
+    // distance ended up reading cold under a sky authored warm. If uHorizon or
+    // uHazeBand moves, re-derive fog.js's inscatter against it; the three rules
+    // for doing that are written at the bottom of fog.js.
     uZenith:     { value: new THREE.Color(0x3f6aa4) },
     uHorizon:    { value: new THREE.Color(0xcaa377) },
     // The bright deck glow, hugging the horizon itself. Deliberately NOT near

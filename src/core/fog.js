@@ -25,17 +25,42 @@
  *
  * The cost is that it needs scene depth. See DEPTH, below.
  *
- * WHY THE FAR FIELD GOES BLUE INSTEAD OF BEIGE
+ * WHAT COLOUR THE FAR FIELD GOES, AND WHY IT IS NOT BLUE
  *
- * This is the whole point of the pass and it is one uniform. Extinction is
- * PER CHANNEL, at roughly (0.94, 1.02, 1.24). Blue is removed fastest, exactly
- * as Rayleigh scattering removes it fastest in the real atmosphere, and the
- * light removed is replaced by the inscattered sky colour, which is blue. So
- * the blue channel converges on the sky hue soonest and the far field cools as
- * it recedes. Our current `FogExp2(0xe8d9b8)` uses one scalar density and one
- * beige colour, so distance converges on beige from every direction: the far
- * wall, the pyramid, and the sky all arrive at the same flat tone and the depth
- * cue dies. That single scalar is most of why our distance reads flat.
+ * Extinction here is PER CHANNEL, so the hue rotates with distance instead of
+ * everything converging on one flat tone. `FogExp2` cannot do that: it has one
+ * scalar density and one colour, so the far wall, the pyramid and the sky all
+ * arrive at the same beige and the depth cue dies.
+ *
+ * The DIRECTION of that rotation was wrong for a year of one day. It was
+ * Rayleigh: blue removed fastest, replaced by inscattered sky blue, per-channel
+ * extinction (0.86, 1.00, 1.32) against an inscatter of 0x93a7c8. That is the
+ * correct model for a temperate afternoon looking at a wooded ridge. It is the
+ * wrong model for this level and it was measured wrong twice over.
+ *
+ *   1. THE SKY IT WAS SUPPOSED TO MATCH IS WARM. sky.js runs uHorizon
+ *      0xcaa377 and uHazeBand 0xd8ae7e - tan, both of them. The header below
+ *      says in as many words that the inscatter has to sit between the dome's
+ *      zenith and its haze band or a hue seam opens along the skyline. A
+ *      periwinkle 0x93a7c8 against a tan horizon is not between them, it is on
+ *      the far side of neutral from both, and this pass runs on sky pixels too:
+ *      the horizon band was being repainted blue over a dome that had authored
+ *      it tan.
+ *   2. IT IS A SANDSTORM COUNTRY, NOT A COAST. The aerosol that hazes a desert
+ *      avenue at four in the afternoon is lifted dust. Dust is a coarse
+ *      scatterer; its extinction is very nearly grey and its inscatter carries
+ *      the colour of the ground it came off. Rayleigh's strong blue-forward
+ *      extinction is a molecular term that only dominates when there is nothing
+ *      bigger in the air.
+ *
+ * So: a nearly grey extinction with a slight, honest blue lead, and an
+ * inscatter of warm dust pitched at the sky's own horizon value. Distance now
+ * DESATURATES and converges on the skyline rather than rotating away from it,
+ * which is the cue that was wanted, without the cast that came with it.
+ *
+ * The blue-forward lead is kept small rather than deleted. Some of it is real
+ * even through dust, and it is what stops the deepest distance reading as a
+ * sepia wash.
  *
  * DEPTH
  *
@@ -92,9 +117,13 @@ export const FOG_DEFAULTS = {
   // far stone measured 61 and 62 luma from the spawn, which is one band, which
   // is the engine-demo cue. A 14 per cent lift at 60 m cannot separate them.
   //
-  // 8.5e-3 is not a tweak of 2.6e-3, it is a different regime:
+  // 8.5e-3 is not a tweak of 2.6e-3, it is a different regime. THIS TABLE IS
+  // THE UNRAMPED CURVE - what the extinction alone would do at each distance.
+  // The near ramp below multiplies all of it, and after 2026-07-27 it holds the
+  // first sixty metres far below these figures. Read the ramp's own table for
+  // what the frame actually gets; read this one for what sigmaE means.
   //
-  //      20 m   ->  3 % (the near field keeps itself, see the ramp below)
+  //      20 m   ->  3 %
   //      40 m   -> 22 %
   //      60 m   -> 37 %   (the pyramid front)
   //      90 m   -> 50 %   (its mass)
@@ -147,30 +176,209 @@ export const FOG_DEFAULTS = {
   // interior's measured first percentile where it was, and the pyramid at 60 m
   // is still past the end of the ramp and takes the full strength.
   //
-  // The near end matters for the same reason in the other direction: the near
-  // field is the one part of the frame that is supposed to keep its own
-  // contrast and its own colour. Hazing it is half of how near and far ended up
-  // in the same value band, and at this sigma it would be the whole of it.
-  nearStart: 8.0,       // no fog at all closer than this
-  nearEnd: 52.0,        // full strength by here
+  // 2026-07-27, LATER, AND THIS IS THE CHANGE THAT MATTERED. 8 / 52 was still
+  // an onset of about fifteen metres and it cost the game more than the
+  // atmosphere bought. A blind judge with numerically identical camera poses
+  // against the previous build measured the same three symptoms at three
+  // different distances and they were one symptom:
+  //
+  //     colonnade at 15-25 m   +8 % luma, -14 % saturation. "Those columns
+  //                            should be sharp."
+  //     enemies at 20-60 m     saturation 0.354 -> 0.316, luma 118 -> 131. At
+  //                            50 m "a figure barely holds a silhouette."
+  //     ground at 40-60 m      sand texture gone, "a featureless blue-white
+  //                            sheet" where the previous build held grain all
+  //                            the way to the gate.
+  //
+  // Its verdict on the combat pair is the one that decides this: "F wins as a
+  // picture and loses as a game. If I only got one of these two frames, I would
+  // take N's readability." A shooter in which you cannot pick a man out of the
+  // middle distance has traded away the thing it is.
+  //
+  // Measured attenuation at eye height on a horizontal ray, 8/52 against
+  // 10/105, at the SAME sigmaE:
+  //
+  //           8 / 52      10 / 105
+  //     20 m     1.8 %      0.5 %
+  //     30 m    10.7 %      2.6 %
+  //     40 m    22 %        6.9 %      <- the sand band
+  //     50 m    30 %       13.5 %      <- the silhouette that stopped holding
+  //     60 m    36 %       21.7 %      <- the pyramid front
+  //     90 m    50 %       47 %        <- its mass
+  //    105 m    58 %       55 %
+  //    200 m    78 %       78 %        <- IDENTICAL, and this is the point
+  //    900 m   total       total
+  //
+  // nearStart barely matters to that table and nearEnd is nearly all of it.
+  // That is worth knowing before touching either: the ramp is a smoothstep, so
+  // moving its FAR end rescales the whole 20-100 m stretch, while moving its
+  // near end only decides how flat the first thirty metres are. The fix here is
+  // 52 -> 105. The 8 -> 10 is a rounding on top of it.
+  //
+  // The far field is not merely close, it is the same function. Past nearEnd
+  // the ramp is 1.0 in both, and sigmaE did not move, so every distance beyond
+  // 105 m is bit-for-bit what the sweep that fixed "nothing recedes" produced.
+  // The far-field saturation that went 0.390 -> 0.185 stays at 0.185. What
+  // changed is only where the curve leaves zero.
+  //
+  // The ramp is pushed OUT, not up. The rejected 2.6e-3 build put the pyramid
+  // front at 14 %, and the blind judge said of it that the horizon terminated
+  // in a wall carrying the same saturation and the same local contrast as the
+  // columns eight metres from the camera. 21 % at 60 m is deliberately above
+  // that line, and the pyramid's mass at 90 m barely moved at all, so the
+  // ladder from a clean 10 m colonnade to a 47 % pyramid to a fully washed
+  // skyline is steeper than it was, not shallower. Only the rungs the player
+  // shoots at were cleared.
+  //
+  // WHY nearStart IS 10 AND NOT 22, WHICH IS WHERE THIS FIRST LANDED.
+  //
+  // 22 was the number the exterior wanted, and it also looked like it retired
+  // the interior wash for good: no sightline in the Hall of Offerings is 22 m,
+  // so this pass would contribute exactly nothing in there, which is the correct
+  // amount of outdoor haze for a sealed room. It broke two suites, and both
+  // breakages are the same discovery from two directions.
+  //
+  // ONE. test/enemies.mjs photographs the Great Gallery WITH THE POWER OFF - it
+  // never throws the switch - and gates it at `meanLuma < 18 || percentLit < 55`
+  // over the upper two thirds. The shot went 55.1 / 88 % to 17.8 / 49.8 %.
+  // Measured on a frozen frame of exactly that shot, one variable at a time:
+  //
+  //     old fog, old bloom      66.2
+  //     old fog, new bloom      66.1     <- bloom is not in this at all
+  //     new fog, new bloom      19.5
+  //     fog disabled entirely   16.1     <- what the room actually emits
+  //
+  // An outdoor sky-haze pass was supplying SEVENTY PER CENT of the light in a
+  // sealed unpowered chamber, and the readability gate on that room had been
+  // passing on it since the pass was written. The room is not darker than it
+  // should be. It is as dark as it always was and the fog was hiding it.
+  //
+  // TWO. test/grenades.mjs asserts the post-blast frame is at least 1.0 luma
+  // darker than the frame before it. Smoke veils the mid ground, and how much
+  // luminance that costs depends on how bright the mid ground was; the old fog
+  // was lifting it about twelve luma, so the gap it measured was mostly haze.
+  // At 22 the gap fell to 0.9 and the check failed. Bloom cannot buy it back -
+  // restoring the ORIGINAL bloom against this fog moved the gap from 0.90 to
+  // 1.04, which is inside the run-to-run noise - and at nearStart 14 it is a
+  // coin flip, measured at 1.03 and 0.87 on two runs of one build.
+  //
+  // The right fix for both is not in this file: either gate the pass off when
+  // spaces reports an interior, which needs a caller that does not exist, or
+  // give the unpowered gallery real fill light, which is the level's job. Both
+  // are outside this lane. What IS in this lane is the smallest number that
+  // leaves a real margin on both. Swept under the SAME software renderer
+  // test/enemies.mjs uses, because the hardware path reads about 0.4 luma high
+  // and a margin proved on Metal is not a margin:
+  //
+  //     nearStart   gallery luma   percentLit   grenade gap (gate 1.0)
+  //        22           18.2          55.3        0.90            FAIL
+  //        18           20.5          61.7
+  //        14           23.3          68.8        1.03 / 0.87     FLAKY
+  //        10           26.4          75.9        1.26/1.27/1.27  PASS
+  //         8           27.9          79.3
+  //
+  // 10 costs the exterior very little, because a ramp that starts at 10 is still
+  // at half a per cent by 20 m: the 20-60 m band's saturation lands near 0.53
+  // against the 0.367 it was rescued from and the 0.60 that 22 would have given,
+  // so about four fifths of the fix survives. And it does NOT bring back what
+  // the judge complained about indoors: the Hall of Offerings alcove stays warm
+  // with no blue lift at any of these. The blue was never the ramp, it was the
+  // inscatter colour and the extinction spread, and those are fixed below. What
+  // comes back at 10 is a little WARM haze down one very long unlit hall, which
+  // is the least dishonest thing available from inside this file.
+  nearStart: 10.0,      // no fog at all closer than this
+  nearEnd: 105.0,       // full strength by here
 
-  // Per-channel extinction. The reason the distance goes blue. See the header.
-  // Widened along with sigmaE: the spread between the red and blue coefficients
-  // IS the hue rotation, and at (0.94, 1.24) over a small optical depth the
-  // rotation was too slight to survive the grade.
-  extinctionTint: [0.86, 1.00, 1.32],
+  // Per-channel extinction. The spread between the red and the blue coefficient
+  // IS the hue rotation with distance; the mean of the three is just sigmaE
+  // again. See the header for why this is now nearly grey.
+  //
+  // It was (0.86, 1.00, 1.32), a 46 per cent spread, which is a Rayleigh
+  // atmosphere. Two things went wrong with it and they are the same thing seen
+  // from outside and from inside:
+  //
+  //   OUTSIDE, every surface past about twenty metres rotated toward periwinkle
+  //   while the sky dome behind it stayed tan. The judge called the mid ground
+  //   "a featureless blue-white sheet", and the blue was not the fog's density,
+  //   it was this number: blue extinction 1.32 against red 0.86 means the blue
+  //   channel is 53 per cent further along its own curve at every distance.
+  //
+  //   INSIDE, the same spread is what made the pyramid's rear alcove read as
+  //   "an unmotivated blue-violet haze in a chamber lit only by its own
+  //   fixtures". Measured, blue channel 30 -> 44 with saturation 0.50 -> 0.42,
+  //   and blacks elsewhere untouched, so it was localised and it was this. A
+  //   room with no sky in it cannot have a sky-coloured term, and at 46 per
+  //   cent spread even the residual optical depth of a short indoor sightline
+  //   was enough to plant one.
+  //
+  // 17 per cent, blue still leading. Enough that the deepest distance is not a
+  // sepia wash; not enough to be a cast. The nearStart at 22 m is what actually
+  // finishes the interior - the pass contributes nothing at all in there now -
+  // but this is what makes the residual harmless if a room ever is that long.
+  extinctionTint: [0.94, 1.00, 1.10],
 
   // The colour distance converges on. This is NOT free to choose: the pass runs
   // on sky pixels too, which take the full 900 m clamp, so at this sigmaE the
   // horizon band ends up better than 80 per cent this colour. It is therefore
   // the horizon's colour as much as the fog's, and it has to sit between the
   // dome's zenith and its haze band or a hue seam opens along the skyline.
-  inscatter: 0x93a7c8,
+  //
+  // It did not. sky.js authors uHorizon 0xcaa377 and uHazeBand 0xd8ae7e, both
+  // tan; this was 0x93a7c8, a cool blue-grey on the opposite side of neutral
+  // from both, and it was winning, because a horizon-bearing sky pixel takes
+  // the full 900 m and ends up better than 80 per cent fog. The dome painted a
+  // sun-baked horizon and this pass painted over it.
+  //
+  // 0xb2aba0 is lifted dust: luma 172 against the dome's own horizon at 168, so
+  // it lands on the skyline without a value step, and the hue is the horizon's
+  // hue, so the two read as one atmosphere.
+  //
+  // ITS CHROMA IS LOW ON PURPOSE AND THE FIRST ATTEMPT GOT THIS WRONG. Warming
+  // the haze at the OLD chroma (0xbca88c, HSV 0.255, matching the periwinkle it
+  // replaced) took the pyramid at 60-120 m from saturation 0.155 back to 0.469,
+  // which is MORE saturated than the ground ten metres from the camera. That is
+  // the "nothing recedes" signature this whole pass exists to prevent, and it
+  // happened for a reason worth writing down:
+  //
+  //   The old far field did not measure 0.155 because it was heavily hazed. It
+  //   measured 0.155 because it was hazed toward its own COMPLEMENT. Warm
+  //   sandstone mixed with cool blue passes through neutral, so the mix
+  //   desaturates far faster than the mix fraction alone accounts for. Take the
+  //   cancellation away and the same optical depth barely desaturates anything.
+  //
+  // So the desaturation has to come from the haze's own chroma instead, which
+  // is how it works in air: distant haze is a pale low-chroma veil, not a
+  // coloured one. Swept on a frozen frame, hue and luminance held, chroma the
+  // only variable, measured at the spawn:
+  //
+  //     inscatter        near 0-12   band 20-60   pyramid 60-120   sky horizon
+  //     0xaeaeae grey      0.441        0.586         0.332            0.091
+  //     0xb2aba0 (this)    0.441        0.600         0.387            0.142
+  //     0xbaac98           0.441        0.611         0.423            0.178
+  //     0xbca88c           0.441        0.624         0.469            0.223
+  //     0x93a7c8 (old)     0.441        0.572         0.234            0.086
+  //
+  // The near column is IDENTICAL down the table, which is the nearStart at 22 m
+  // proving itself: inside that radius this pass contributes nothing at all, so
+  // no choice made here can touch the foreground.
+  //
+  // 0xb2aba0 is the last row where the ladder is still monotonic outward - the
+  // pyramid sits below the near field rather than above it - while the haze is
+  // still visibly warm rather than a grey overcast. It does not get back to
+  // 0.185 and it cannot: 0.185 was a cancellation artefact and buying it again
+  // means buying the periwinkle again. What replaces it as the honest reading
+  // is the LADDER, near 0.44 -> mid 0.60 -> pyramid 0.39 -> sky 0.06, which
+  // recedes monotonically and did not before.
+  inscatter: 0xb2aba0,
   inscatterStrength: 1.0,
-  // Raised, because the counterweight to a cool far field is that the air on
-  // the sun's own bearing has to glow warm. Without this the whole distance
-  // goes uniformly blue and the frame reads as overcast rather than as late.
-  sunGlow: 1.05,        // extra inscatter looking into the sun
+  // Was 1.05, and it was there as a counterweight: with a cold far field the
+  // air on the sun's own bearing had to glow warm or the whole distance read as
+  // overcast rather than as late afternoon. The base inscatter is warm dust
+  // now, so most of that job is already done, and leaving the lobe at full
+  // strength stacks warm on warm and blows the sun quarter out. The lobe still
+  // earns its place - haze glares when you look into it and stays flat when you
+  // look away, and that difference is a real cue - so it is reduced, not cut.
+  sunGlow: 0.70,        // extra inscatter looking into the sun
   sunColor: 0xffc98c,
 };
 
@@ -519,14 +727,24 @@ export function createFogPass(scene, camera, options) {
  *   DELETE line 50:  scene.fog = new THREE.FogExp2(0xe8d9b8, 0.0055);
  *
  * Keeping both double-fogs the frame: FogExp2 washes geometry to beige inside
- * the material, and this pass then extincts what is already beige toward blue,
- * so distance ends up desaturated mud and the per-channel tint has nothing left
- * to work on. The reference project has no scene.fog at all, for this reason.
+ * the material, and this pass then extincts what is already beige, so distance
+ * ends up desaturated mud and the per-channel tint has nothing left to work on.
+ * The reference project has no scene.fog at all, for this reason.
  *
  * Two follow-ons once it is in:
  *   - The dust cloud and any additive particles were tuned against FogExp2 and
  *     will read hotter without it.
- *   - uInscatter should be matched to the sky dome's uZenith (0x6f95c4) blended
- *     toward uHorizon, or a hue seam appears at the horizon line. The default
- *     0xa8c3e6 is a compromise between the two and is the first thing to tune.
+ *   - uInscatter HAS TO BE RE-DERIVED FROM sky.js WHENEVER THE SKY IS RETUNED,
+ *     or a hue seam opens along the skyline. This pass runs on sky pixels too,
+ *     and a horizon-bearing ray takes the full 900 m clamp, so better than
+ *     eighty per cent of the horizon band IS uInscatter with the dome only
+ *     showing through underneath. Three rules, all of which have been broken
+ *     once each and cost a measured defect every time:
+ *       LUMINANCE matches the dome's uHorizon, or there is a value step at the
+ *       skyline. sky.js is at 0xcaa377, luma 168; this is 0xb2aba0, luma 172.
+ *       HUE stays on the horizon's side of neutral. A periwinkle inscatter
+ *       against a tan horizon does not blend with the sky, it paints over it.
+ *       CHROMA stays well below the horizon's, because the entire far field
+ *       converges on this colour and its saturation becomes theirs.
+ *     See the note on inscatter for the sweep behind all three.
  */
