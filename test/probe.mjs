@@ -7,6 +7,15 @@
 import { chromium } from 'playwright';
 import { resolveChrome } from './chrome.mjs';
 
+/**
+ * The build under test. argv[2] or SANDS_URL, defaulting to the dev server.
+ *
+ * This used to be a hardcoded literal, which meant every `node test/x.mjs <url>`
+ * SILENTLY IGNORED the url and tested whatever happened to be on 4177. Isolated-tree
+ * verification was therefore not isolated in seven of nine suites, for days.
+ */
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+
 const CHROME = resolveChrome();
 
 const browser = await chromium.launch({
@@ -17,7 +26,7 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 1440, height: 860 } });
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 
-await page.goto('http://127.0.0.1:4177/index.html', { waitUntil: 'load' });
+await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2500);
 await page.evaluate(() => document.getElementById('begin').click());
 await page.waitForTimeout(1200);

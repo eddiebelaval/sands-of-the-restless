@@ -49,6 +49,15 @@ import sharp from 'sharp';
 import { resolveChrome } from './chrome.mjs';
 import { mkdirSync } from 'node:fs';
 
+/**
+ * The build under test. argv[2] or SANDS_URL, defaulting to the dev server.
+ *
+ * This used to be a hardcoded literal, which meant every `node test/x.mjs <url>`
+ * SILENTLY IGNORED the url and tested whatever happened to be on 4177. Isolated-tree
+ * verification was therefore not isolated in seven of nine suites, for days.
+ */
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+
 const OUT = new URL('../shots/', import.meta.url).pathname;
 mkdirSync(OUT, { recursive: true });
 
@@ -153,7 +162,7 @@ const logs = [];
 page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
 
-await page.goto('http://127.0.0.1:4177/index.html', { waitUntil: 'load' });
+await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
 await page.waitForTimeout(1400);
