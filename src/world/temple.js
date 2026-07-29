@@ -1244,45 +1244,66 @@ function buildGate({ M, rand, between, stoneMat }) {
 
   // The winged sun-disc, as geometry.
   //
-  // ITS OWN GOLD, and this is not a detail. The shared gold is metalness 0.92
-  // over a roughness map that bottoms out at 0.12, which is correct for a
-  // gilded cornice catching the sky twelve metres up and is a MIRROR at reading
-  // distance: the first pass put a 1.55 m disc of it at eye height in a
-  // shadowed reveal and it came back as a chrome ball with the bloom pass
-  // wrapped around it. A carved and gilded relief is a rough surface with a
-  // warm diffuse component, so this copy is dulled and shrunk. Cloned rather
-  // than tuned in place because every other gold object in the game is fine.
-  const relief = M.gold.clone();
-  relief.metalness = 0.62;
-  relief.roughness = 1.0;
-  relief.roughnessMap = null;      // the map drives it to a mirror
-  relief.emissiveIntensity = 0.25;
-  relief.color = M.gold.color.clone().multiplyScalar(0.92);
-  // And the dimple relief comes down with it. `paintGold` is a product of two
-  // sines, so its normal map is a regular checker; at full strength on a 2.4 m
-  // disc every dimple gets its own specular and the field reads as a woven
-  // pattern rather than as beaten metal.
-  relief.normalScale = relief.normalScale.clone().setScalar(0.3);
+  // ITS OWN GOLD, and this is not a detail - but the tuning now lives in
+  // `materials.js` as `goldRelief` rather than as a clone patched up here. See
+  // the note there: the previous clone nulled the roughness map and pinned
+  // roughness to 1.0, and a metal at roughness 1 has no specular lobe at all,
+  // which is precisely what "a flat orange circle" was.
+  const relief = M.goldRelief;
 
-  // UVs scaled ISOTROPICALLY, by hand.
+  /**
+   * ONE DENSITY FOR EVERY PIECE OF THIS RELIEF, and it is derived rather than
+   * chosen. 0.383 tiles per unit against the 256 px map is 98 texels per metre,
+   * against a MEASURED 75 screen pixels per metre at the disc in the six-metre
+   * frame - so 1.3 texels per screen pixel, which is the band the door slab was
+   * brought into and for the same reason. `paintGold` puts 29 hammer strikes
+   * across a tile, so a facet lands at 9 cm: nine texels, about seven screen
+   * pixels at six metres and three and a half at twelve.
+   *
+   * What was here before ran 0.14 on the disc and 0.15 on the wings - 38 texels
+   * per metre, or 0.50 texels per screen pixel. The map was MAGNIFIED twofold,
+   * so the mip chain was never reached and the old map's `sin * sin`
+   * checkerboard was drawn at 47 cm a cell, five cells across the disc, in
+   * perfect focus. The note it was changed under blamed a mip beat, which was
+   * true of the 0.5 density it replaced and not of the one it introduced. The
+   * arithmetic is in `paintGold` and it is worth reading before anyone touches
+   * this number again.
+   *
+   * One texel per screen pixel is only safe because the map is now IRREGULAR.
+   * The same density under a regular grid is the classic checkerboard - that is
+   * what the 0.5 state was - so these two changes are one change and must not
+   * be separated.
+   */
+  const RELIEF_D = 0.383;
+
+  // UVs scaled ISOTROPICALLY, by hand, and the caps scaled SEPARATELY from the
+  // side.
   //
   // `cylinderUV` scales cap UVs by the SIDE's factors - u by circumference, v
   // by height - which is meaningless on a disc, and on a 0.28 m deep disc it is
-  // a 27:1 stretch: the hammered-gold grain came out as horizontal corrugation
-  // across the one object in the frame the eye is meant to land on. This is the
-  // same trap that inflated every cylinder's measured density before the caps
-  // were dropped, and here the cap IS the object.
+  // a 27:1 stretch. But scaling both by one factor, which is what this did
+  // instead, has the mirror-image bug: three.js gives the cap a unit circle and
+  // the side a unit rectangle, so one number cannot serve both. The side then
+  // carried a whole tile across 28 cm of depth - 900 texels per metre on the
+  // rim - and the rim is what the eye follows around the object.
   //
-  // The scale is 0.14 tiles per unit, not the 0.5 the other gold in the scene
-  // uses. `paintGold` puts 48 hammer dimples across a tile, so at 0.5 this disc
-  // carried 120 of them over 2.4 m - 2 cm features, which at the eight metres
-  // the player reads the door from beat against the mip chain and came out as a
-  // checkerboard. A gilded disc this size was raised with a much bigger tool.
-  const discGeo = new THREE.CylinderGeometry(1.18, 1.24, 0.28, 26);
+  // Caps are normalised on their own radius by three.js, so the span is the
+  // diameter. The side's u runs the circumference and its v runs the depth.
+  const discGeo = new THREE.CylinderGeometry(1.18, 1.24, 0.28, 40);
   {
     const uv = discGeo.attributes.uv;
-    const k = 1.24 * 2 * 0.14;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * k, uv.getY(i) * k);
+    const nrm = discGeo.attributes.normal;
+    const capK = 1.24 * 2 * RELIEF_D;
+    const sideU = Math.PI * 2 * 1.21 * RELIEF_D;
+    const sideV = 0.28 * RELIEF_D;
+    for (let i = 0; i < uv.count; i++) {
+      // Cap normals point along local Y; the side's point outward in XZ.
+      if (Math.abs(nrm.getY(i)) > 0.5) {
+        uv.setXY(i, uv.getX(i) * capK, uv.getY(i) * capK);
+      } else {
+        uv.setXY(i, uv.getX(i) * sideU, uv.getY(i) * sideV);
+      }
+    }
     uv.needsUpdate = true;
   }
   const disc = new THREE.Mesh(discGeo, relief);
@@ -1292,8 +1313,32 @@ function buildGate({ M, rand, between, stoneMat }) {
   disc.receiveShadow = true;
   portal.add(disc);
 
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(1.36, 0.13, 6, 26), relief);
+  /**
+   * The raised rim.
+   *
+   * WAS A LIFE PRESERVER, in three separate ways that compounded. Six radial
+   * segments is a hexagonal tube, and smooth vertex normals on a hexagon read
+   * as something inflated rather than as something cast. A 0.13 tube on a 1.36
+   * major standing off a 1.24 disc left the bead floating clear of the edge it
+   * is supposed to be the edge OF, with a dark gap between. And its UVs were
+   * left at the three.js default 0..1, so a whole tile wrapped the 0.82 m tube
+   * circumference while another whole tile wrapped the 8.5 m major - a 10:1
+   * anisotropy, on the one part of this object that is curved in both axes.
+   *
+   * A bead, not a tube: 0.095 on a 1.30 major spans radius 1.205 to 1.395, so
+   * it sits ON the disc's 1.24 edge and rolls off it. UVs are world-proportional
+   * at the same RELIEF_D as everything else, which is what puts the same 9 cm
+   * hammer facet on the rim as on the face.
+   */
+  const ringGeo = new THREE.TorusGeometry(1.30, 0.095, 10, 44);
+  {
+    const uv = ringGeo.attributes.uv;
+    const uK = Math.PI * 2 * 1.30 * RELIEF_D;
+    const vK = Math.PI * 2 * 0.095 * RELIEF_D;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * uK, uv.getY(i) * vK);
+    uv.needsUpdate = true;
+  }
+  const ring = new THREE.Mesh(ringGeo, relief);
   ring.position.set(0, 5.7, 0.98);
   ring.castShadow = true;
   ring.receiveShadow = true;
@@ -1309,13 +1354,58 @@ function buildGate({ M, rand, between, stoneMat }) {
     // different rakes with the shorter one riding above, read as feathers: the
     // overlap throws a shadow along the joint between them and that shadow is
     // the whole difference.
-    for (const [len, x, y, rake] of [
-      [1.55, 2.16, 5.60, 0.19],
-      [1.05, 1.96, 5.94, 0.30],
+    /**
+     * FOUR COURSES, SHINGLED, not two plates and not a fan.
+     *
+     * Removing the checkerboard stopped these being orange-and-tan strips and
+     * turned them into two smooth gold sticks poking out of a boss, which at
+     * six metres is a bar, not a wing. The first attempt at feathers hung three
+     * separate quills below on widening rakes, and that rendered as a sunburst
+     * of detached ingots - a fan is what a bird's wing does in flight and it is
+     * not what is carved on a temple door.
+     *
+     * An Egyptian winged disc SHINGLES: courses of feathers of falling length,
+     * each course overlapping the one below, the whole sweeping out and down to
+     * a tip. So this is one stack, not a body plus appendages. The rake FALLS as
+     * the courses descend (0.30 at the top to 0.02 at the bottom) which is what
+     * tapers the outline into a tip instead of splaying it, and the lengths fall
+     * with it so the outer edge is a diagonal.
+     *
+     * The z steps back 6 cm per course so each one is genuinely BEHIND the one
+     * above rather than merely below it. The original note here is right that
+     * the shadow along the joint is the whole difference; four courses say it
+     * three times instead of once.
+     *
+     * THESE JOIN THE MOVING DOOR AUTOMATICALLY, by construction rather than by
+     * luck. `doors.js` builds its part list from the same `position.z > 0.2`
+     * predicate that tags `noBatch` at the foot of this function, so any child
+     * standing proud of the jamb is driven into the sand and hidden with the
+     * rest. Nothing anywhere holds a count of these meshes, which is why adding
+     * two courses per side is a two-line change and not a contract change.
+     */
+    /**
+     * INNER ENDS RUN UNDER THE RIM, and that is a correction rather than a
+     * tuning. Every course used to start at about x = 1.4, and the disc's outer
+     * bead is only 1.40 at its widest and narrows to 1.23 by the height of the
+     * bottom course - so each course cleared the disc by a growing gap and the
+     * wings hung in space beside it. A wing joins a body. These lengths are set
+     * from the tips inward: the outer tips are unchanged, and the inner ends
+     * land 15 cm inside the bead at each course's own height, so the disc
+     * occludes them and the wings read as emerging from behind it.
+     *
+     * The tips stay inside the slab's own 6 m width. The original note here is
+     * emphatic about that and it still holds: run them past 2.94 and they
+     * disappear behind the piers, leaving the disc with two stubs beside it.
+     */
+    for (const [len, x, y, rake, z] of [
+      [1.29, 1.85, 5.94, 0.30, 0.98],
+      [1.70, 2.09, 5.60, 0.19, 0.92],
+      [1.63, 2.00, 5.30, 0.10, 0.86],
+      [1.46, 1.81, 5.03, 0.02, 0.80],
     ]) {
       const wing = new THREE.Mesh(
-        chamferedBox(len, 0.42, 0.26, chamferFor(len, 0.42, 0.26, 0.05), 0.15), relief);
-      wing.position.set(side * x, y, 0.92);
+        chamferedBox(len, 0.42, 0.26, chamferFor(len, 0.42, 0.26, 0.05), RELIEF_D), relief);
+      wing.position.set(side * x, y, z);
       wing.rotation.z = -side * rake;
       wing.castShadow = true;
       wing.receiveShadow = true;

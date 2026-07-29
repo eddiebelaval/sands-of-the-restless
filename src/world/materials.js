@@ -100,12 +100,66 @@ export function buildMaterials() {
     // --- metals ----------------------------------------------------------
     gold: new THREE.MeshStandardMaterial({
       ...tex.gold,
-      color: 0xffd98a,
+      // NEARLY WHITE, DOWN FROM 0xffd98a, because the map now carries the metal
+      // instead of standing in for it. paintGold used to paint a narrow band of
+      // orange (206..252 red, 62..110 blue) and this tint multiplied the blue
+      // by a further 0.54, which is how gold in this game came out the colour
+      // of a traffic cone. The rewritten map ramps to gold's real reflectance;
+      // tinting that again would just put the orange straight back. Same
+      // correction the scanned sets get four lines below in `upgradeMaterials`.
+      color: 0xfff0d8,
       roughness: 1.0,
       metalness: 0.92,
       normalScale: new THREE.Vector2(0.5, 0.5),
       emissive: 0x2a1c05,
       emissiveIntensity: 0.4,
+    }),
+
+    /**
+     * The winged sun-disc on the sealed doorway, and NOTHING ELSE.
+     *
+     * Split off the shared gold for the same reason `doorstone` is split off
+     * the shared granite, one object further down the same door: this is a
+     * 2.4 m relief read from six metres at eye height in a shadowed reveal, and
+     * the shared gold is tuned for a gilded cornice twelve metres up. Serving
+     * both from one material has now failed twice - once as a chrome ball, and
+     * once as the flat orange disc this replaces.
+     *
+     * It used to be a clone made in `temple.js` that nulled the roughness map
+     * and pinned roughness to 1.0. That is what a material registry exists to
+     * stop: the tuning lived in the level file, the map set it wanted did not
+     * exist, and the only way to escape a mirror was to delete the specular
+     * entirely. Both halves are now authored - see the `goldRelief` note in
+     * textures.js for the roughness range.
+     *
+     * metalness 0.85, up from the clone's 0.62. 0.62 was the same hedge from
+     * the other side: half a metal has a suppressed specular AND a diffuse term
+     * that does not belong on gold, which is a large part of why this read as
+     * painted plastic. Gold is a conductor. The dial that keeps it from being a
+     * mirror is roughness, and roughness is now doing that job properly.
+     */
+    goldRelief: new THREE.MeshStandardMaterial({
+      ...tex.goldRelief,
+      color: 0xfff0d8,
+      roughness: 1.0,
+      metalness: 0.85,
+      // 0.30, and this number was walked DOWN from 0.8 by rendering it.
+      //
+      // The clone this replaces sat at 0.3 to suppress the checkerboard the old
+      // map put in the normals. That defect is gone, so the first cut here went
+      // to 0.8 - and a metal amplifies normal detail far more than stone does,
+      // because what a normal perturbs on a conductor is the whole reflected
+      // environment rather than a diffuse lambert term. At 0.8 the disc read as
+      // a bed of gold nuggets and at 0.55 as crocodile skin. The planishing
+      // wants to be a shimmer you notice at three metres, not relief you count
+      // at twelve.
+      normalScale: new THREE.Vector2(0.30, 0.30),
+      // A conductor has no diffuse term, so in the reveal's shadow this object
+      // has only whatever the IBL hands it. A little emissive is the floor that
+      // keeps a gold relief from going black in shade; it is deliberately less
+      // than the cornice's, which is in open sun and needs no help.
+      emissive: 0x241804,
+      emissiveIntensity: 0.18,
     }),
 
     gunmetal: new THREE.MeshStandardMaterial({

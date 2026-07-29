@@ -745,25 +745,236 @@ function paintDoorstone(size = 512) {
   return c;
 }
 
-/** Hammered gold leaf. Bright, warm, with tooling marks. */
+/**
+ * Gilded bronze, planished by hand and three thousand years old.
+ *
+ * PLANISHING, NOT A GRID, and that is the whole of this rewrite.
+ *
+ * The map this replaces was `sin(u*48) * sin(v*48)`. A product of two sines IS
+ * a checkerboard; no UV scale removes one, it only chooses how big the squares
+ * are. Shipped, the winged sun-disc on the sealed doorway carried five of those
+ * squares across two and a half metres and read as an orange bath toy stuck to
+ * a very good stone door.
+ *
+ * THE MIP DIAGNOSIS IN THE PREVIOUS NOTE WAS DESCRIBING A STATE THIS FILE HAD
+ * ALREADY LEFT, and that matters more than the texture does, because the same
+ * mistake is available on every surface in here. Measured at the pose the
+ * player actually buys the door from:
+ *
+ *     disc face, 1.18 m radius             2.36 m across
+ *     UV span after temple.js scaled it    0.347
+ *     map                                  256 px
+ *     texel density                        37.6 texels/m
+ *     screen density AT THE DISC at the     75 px/m
+ *       6 m pose (1440x900, 75 deg
+ *       vertical), MEASURED off the frame
+ *     ratio                                0.50 TEXELS PER SCREEN PIXEL
+ *
+ * The screen figure is measured rather than derived because the derived one
+ * flatters this surface. A plane six metres away and square to the eye gets
+ * 97.7 px/m at this resolution and field of view, but the disc is mounted 3.8 m
+ * ABOVE the eye: the slant range is 7.1 m and the camera is looking up at it,
+ * so its vertical foreshortening is another 0.84. Quote the 97.7 and every
+ * ratio on this object comes out a third too generous.
+ *
+ * The map was MAGNIFIED twofold. The mip chain was never reached, so there was
+ * nothing there to beat against: what the player saw was one checker cell of
+ * `PI/48` UV = 16.8 texels = 47 cm, drawn at full resolution, perfectly
+ * resolved, 35 screen pixels wide at six metres and 18 at twelve. A
+ * checkerboard read is USUALLY a regular grid near one texel per pixel - which
+ * is what this surface was before the UV scale went from 0.5 to 0.14, and the
+ * note was true then. The fix moved it out of the aliasing band and into the
+ * "enormous painted checker" band, and the second is worse, because aliasing at
+ * least varies with distance and this did not.
+ *
+ * The lesson the slab taught applies unchanged: measure texels against screen
+ * pixels before touching anything. It just pointed the other way here.
+ *
+ * WHAT A PLANISHED SURFACE ACTUALLY IS: a field of overlapping shallow facets
+ * left by a rounded hammer, every one a slightly different size and struck from
+ * a slightly different angle, with a bright crown and a dark crease where two
+ * of them meet. That is a jittered cellular field - strikes scattered on a
+ * lattice, each pixel taking its nearest strike - and it has no axis for
+ * anything to beat against. It degrades to noise under the mips rather than to
+ * a moire, which is what lets it be authored at one texel per screen pixel.
+ *
+ * STRIKES is the one number that sets feature size, and everything else is
+ * derived from it. 29 strikes across the tile, against the 0.383 tiles per unit
+ * the relief carries in temple.js, puts a hammer facet at 9 cm - nine texels,
+ * and about seven screen pixels at six metres. Coarse enough to still be there
+ * at twelve, fine enough that nobody counts them at six. The finest thing
+ * authored in here is the crease between two facets at roughly three texels,
+ * which is 3 cm and about two screen pixels at the read.
+ */
 function paintGold(size = 256) {
   const c = makeCanvas(size);
   const ctx = c.getContext('2d', { willReadFrequently: true });
   const img = ctx.createImageData(size, size);
   const d = img.data;
 
+  const STRIKES = 29;
+
+  /**
+   * The same LOCAL renormalisation `paintDoorstone` uses, for the same reason
+   * and with the same caveat. `hash2` returns roughly 0.01 to 0.50 on the
+   * integer lattice, so `fbm` is neither centred on 0.5 nor the amplitude it
+   * claims, and the `fbm() - 0.5` idiom used elsewhere in this file is a
+   * near-constant darkening rather than a signed variation. Fixing the hash
+   * would move every procedural surface in the game at once - including the
+   * sand, which two blind rounds called the best material in either build - so
+   * it is worked around here and written up rather than smuggled in.
+   */
+  const field = (octaves, period, seed) => {
+    const a = new Float32Array(size * size);
+    let lo = Infinity, hi = -Infinity;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const t = fbm(x / size, y / size, octaves, period, seed);
+        a[y * size + x] = t;
+        if (t < lo) lo = t;
+        if (t > hi) hi = t;
+      }
+    }
+    const k = hi > lo ? 1 / (hi - lo) : 0;
+    for (let i = 0; i < a.length; i++) a[i] = (a[i] - lo) * k;
+    return a;
+  };
+
+  // Periods are cells per tile. The tile covers 2.61 m at the relief's density,
+  // so period 3 is an 87 cm feature and period 40 is 6.5 cm - which brackets
+  // the 9 cm hammer facet from both sides and leaves no hole in the spectrum.
+  const fTarnish = field(3, 3, 131);
+  const fWear = field(2, 7, 197);
+  const fGrain = field(2, 40, 251);
+
+  /**
+   * Strike centres and per-strike radii.
+   *
+   * The jitter is deliberately near-full-cell (0.06 to 0.94) because a smith
+   * does not land blows on a grid; at half a cell the lattice is still legible
+   * and the whole point of this rewrite is that no lattice survives. The radius
+   * varies 0.74 to 1.26 cells for the same reason - the size of the mark
+   * depends on how square the blow was.
+   *
+   * `* 2` on every hash is the local renormalisation described above.
+   */
+  const sx = new Float32Array(STRIKES * STRIKES);
+  const sy = new Float32Array(STRIKES * STRIKES);
+  const sr = new Float32Array(STRIKES * STRIKES);
+  for (let cy = 0; cy < STRIKES; cy++) {
+    for (let cx = 0; cx < STRIKES; cx++) {
+      const i = cy * STRIKES + cx;
+      sx[i] = cx + 0.06 + Math.min(1, hash2(cx, cy, 17) * 2) * 0.88;
+      sy[i] = cy + 0.06 + Math.min(1, hash2(cx, cy, 43) * 2) * 0.88;
+      sr[i] = 0.74 + Math.min(1, hash2(cx, cy, 89) * 2) * 0.52;
+    }
+  }
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const u = x / size, v = y / size;
-      // Overlapping dimples read as hammered metal.
-      const dimple = Math.sin(u * 48 + fbm(u, v, 2, 6, 5) * 8) *
-                     Math.sin(v * 48 + fbm(u, v, 2, 6, 9) * 8);
-      const t = dimple * 0.5 + 0.5;
+      const idx = y * size + x;
 
-      const i = (y * size + x) * 4;
-      d[i]     = 206 + t * 46;
-      d[i + 1] = 158 + t * 56;
-      d[i + 2] =  62 + t * 48;
+      // Nearest and second-nearest strike over the 3x3 neighbourhood, with the
+      // lattice index wrapped so the tile is seamless and the stored centre
+      // un-wrapped back into this pixel's neighbourhood so the distance is real.
+      const px = u * STRIKES, py = v * STRIKES;
+      const gx0 = Math.floor(px), gy0 = Math.floor(py);
+      let f1 = 1e9, f2 = 1e9;
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const gx = gx0 + ox, gy = gy0 + oy;
+          const wx = ((gx % STRIKES) + STRIKES) % STRIKES;
+          const wy = ((gy % STRIKES) + STRIKES) % STRIKES;
+          const j = wy * STRIKES + wx;
+          const ax = gx + (sx[j] - wx), ay = gy + (sy[j] - wy);
+          const dd = Math.hypot(px - ax, py - ay) / sr[j];
+          if (dd < f1) { f2 = f1; f1 = dd; } else if (dd < f2) { f2 = dd; }
+        }
+      }
+
+      // The dome.
+      //
+      // A RECIPROCAL, NOT A CLAMPED PARABOLA, and that is not a flourish. The
+      // first cut of this used `max(0, 1 - f1*f1*1.35)`, which goes flat at the
+      // cell edge, and a dome with a hard rim around a flat floor is a PEBBLE.
+      // Rendered, the disc came back as a bed of gold nuggets - every facet its
+      // own object with its own highlight and its own dark outline. Beaten
+      // metal is a continuous rolling surface. This form never reaches zero and
+      // never flattens, so neighbouring facets run into each other.
+      const dome = 1 / (1 + f1 * f1 * 2.6);
+
+      // The crease, where two facets meet - and WIDE and SHALLOW, for the same
+      // reason. At three texels it drew a hard outline around every facet,
+      // which is the other half of the pebble read.
+      const crease = smoothstep(Math.min((f2 - f1) / 0.42, 1));
+
+      const tarn = fTarnish[idx];
+      const wear = fWear[idx];
+      const grain = fGrain[idx];
+
+      // Tarnish collects in the LOW ground - the creases and the shoulders -
+      // because that is where weather sits and where no hand has ever polished
+      // it back. Gating on the facet is what stops it being a wash over
+      // everything, which would just be a darker flat fill.
+      const low = 1 - dome * crease;
+      const patina = Math.min(1, Math.max(0, (tarn - 0.30) / 0.55)) * low;
+
+      // And the opposite: crowns that hands and blown sand have kept bright.
+      // Bounded to the top of the wear field so these are patches, not a wash.
+      const bright = Math.max(0, wear - 0.55) * 2.2 * dome * crease;
+
+      /**
+       * THE FACETS ARE A TENTH OF THIS RAMP AND THE WEATHER IS THE REST, and
+       * getting that the wrong way round is what made the first cut nuggets.
+       *
+       * Gold is a conductor. It has no diffuse term worth the name, so what the
+       * player sees is the environment reflected and steered by the NORMAL and
+       * the ROUGHNESS - and both of those are derived from this canvas by
+       * `materialMaps`. Planishing therefore has to be authored as a gentle
+       * undulation, about a tenth of the range, and read through the specular.
+       * Authored as albedo contrast instead, every facet becomes a painted-on
+       * light and dark blob that survives into shadow, where a real one would
+       * vanish. That is the difference between hammered metal and gravel.
+       *
+       * So the big albedo moves here are the LOW-frequency ones - patina in the
+       * hollows, wear on the crowns - which is also what actually reads as
+       * three thousand years old at six metres.
+       */
+      let t = 0.52
+        + (dome - 0.55) * 0.13
+        + (crease - 0.70) * 0.06
+        + (grain - 0.5) * 0.05
+        + bright * 0.22
+        - patina * 0.30;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+
+      // A WIDE VALUE LADDER, and this is the second half of why the old map
+      // read as plastic. It ran 206..252 in red: a 46-step band, one value, one
+      // hue, no darks. Metal reads as metal because it has somewhere to fall
+      // to - dark bronze in the hollows, near-white on the polished crowns -
+      // and the top of this ramp lands on gold's actual reflectance, which is
+      // about (255, 227, 160) in sRGB, rather than on traffic-cone orange.
+      //
+      // THE FLOOR IS 108, NOT 74, and on a conductor that is not a brightness
+      // preference. At metalness 0.85 this map IS the reflectance: there is no
+      // diffuse term underneath it to carry the surface where the albedo is
+      // dark, so a floor at 74 does not read as bronze in shadow, it reads as
+      // an unlit hole. 108 is the darkest this can go and still return light.
+      let r = 108 + t * 147;
+      let g = 76 + t * 151;
+      let b = 34 + t * 126;
+
+      // Tarnish is cooler and greyer than the metal under it. Small: bronze
+      // that has gone literally green is a fountain, not a temple door.
+      r -= patina * 26;
+      g -= patina * 6;
+      b += patina * 16;
+
+      const i = idx * 4;
+      d[i]     = r < 0 ? 0 : r > 255 ? 255 : r;
+      d[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+      d[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
       d[i + 3] = 255;
     }
   }
@@ -837,7 +1048,36 @@ export function buildTextures() {
     // turning glassy where the world-space grime term pushes roughness up.
     doorstone: materialMaps(doorstone, { normalStrength: 2.2, rough: [0.62, 0.86] }),
 
-    gold: materialMaps(gold, { normalStrength: 1.0, rough: [0.12, 0.34] }),
+    // ROUGHNESS FLOOR RAISED FROM 0.12. Gilding on a cornice that has stood in
+    // a sandstorm since the Bronze Age is not a mirror, and 0.12 is one. Only
+    // moves the specular lobe wider and dimmer, so it cannot re-blow the
+    // highlight the lighting pass was verified against.
+    gold: materialMaps(gold, { normalStrength: 1.4, rough: [0.20, 0.44] }),
+
+    // The winged sun-disc, and NOTHING ELSE. Same painted canvas, different
+    // maps derived from it, on the paintDoorstone precedent: one painter, two
+    // map sets, no second copy of the pixel code.
+    //
+    // ROUGHNESS 0.30-0.66 against the cornice's 0.20-0.44, and this is the
+    // change that stops the disc being a flat orange fill. What shipped was
+    // `roughness = 1.0` with `roughnessMap = null` on a metal - and a metal at
+    // roughness 1 has NO specular lobe at all, so a 2.4 m gold disc mounted at
+    // eye height in the most-looked-at frame in the game was rendering as
+    // uniform diffuse orange. It had no highlight to catch the low sun with
+    // because it had been given nothing to catch it.
+    //
+    // The map is the authority rather than a constant, because `roughnessFrom
+    // Canvas` reads the albedo: the polished crowns come out smooth and the
+    // tarnished creases come out matte, which is the correct relationship and
+    // is free. 0.30 at the smooth end is a BROAD soft lobe on a surface this
+    // size, not a point - the wide highlight the disc should catch the sun
+    // with. It stops well short of the 0.12 that put a chrome ball in this
+    // reveal on the first attempt.
+    //
+    // normalStrength 1.6, up from the cornice's 1.4: the planishing is a 9 cm
+    // facet at 4.6% albedo contrast, and relief that never reaches the lighting
+    // is the unread-chamfer failure again - paid for, and never drawn.
+    goldRelief: materialMaps(gold, { normalStrength: 1.6, rough: [0.36, 0.62] }),
   };
 
   return cache;
