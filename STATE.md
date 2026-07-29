@@ -1,6 +1,6 @@
 # STATE - where this build actually is
 
-Last updated 2026-07-28. Read this before continuing; it is the handoff note,
+Last updated 2026-07-29. Read this before continuing; it is the handoff note,
 not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
@@ -158,6 +158,54 @@ surface you spend the most pixels on."
 Everything after that judgement (pyramid, arms, powerups, fog) is UNJUDGED.
 Round 3 has not been run.
 
+## Blind round 4, 2026-07-28 — WE WON THE HEAD-TO-HEAD
+
+  round 1  lost 2-5   us 2.5  them 4
+  round 2  won 4-3    us 3    them 4     (lost overall on weighting)
+  round 3  lost 1-5   us 3    them 4.5
+  round 4  WON        us 4.5  them 3.5
+
+Scores are NOT comparable across rounds: the reference build is byte-identical
+every round and has been scored 4, 4.5 and 3.5 by different judges. Only
+within-round comparisons hold.
+
+The judge's summary, worth keeping: "Market has better content; Temple has
+better rendering. Rendering is the harder gap to close on a deadline, and it is
+the one the eye reads first." And: "Temple is the only build with an authored
+lighting model - every surface has a lit side and a shadow side in a different
+HUE, not just a different value." That is the exact criticism levelled at US in
+round 1, reversed.
+
+Its warning: "If Market fixed only its exposure curve and its ground texture,
+two contained jobs, it would take the set outright on content alone, because
+Temple has no answer to a densely dressed street."
+
+A separate delta judge confirmed the interrupted lighting lane DID land: washed
+sky fixed, exterior ambient fixed, interior crush fixed, gate blowout contained,
+far-plane separation partial, door slab untouched. It also independently
+confirmed the static merge is picture-safe: "prop for prop identical."
+
+## IN FLIGHT at 2026-07-29 12:50
+
+- **AO fix, UNCOMMITTED**: `src/core/post.js` and `test/ao-ab.mjs`. Verified by
+  the agent (economy, enemies green); my own isolated run had shot clean and was
+  still going. Commit once green.
+- **A FORKED SESSION is editing this same checkout** - adding a pause menu and a
+  settings panel (mouse sensitivity, FOV slider). It will touch `index.html`,
+  `src/main.js`, `src/ui/*`, `src/player/camera.js`.
+  **CONSEQUENCE FOR VERIFICATION: do NOT build isolated trees by copying every
+  dirty file.** That sweeps the other session's half-written work into your test
+  tree. Copy only the files your lane owns, by name.
+  **AND WARN IT**: sensitivity is scaled by `fovNormalized`, which is computed
+  against the BASE_FOV constant. A slider that changes base FOV must recompute
+  against the player's chosen value or it reintroduces the sprint-sensitivity
+  bug fixed in 67fa127.
+- **Queued, in the owner's stated order**: (3) distant background structures
+  render as flat untextured pale boxes, made MORE conspicuous by the better sky;
+  (4) the enemies - four judges across four rounds have called them the ceiling,
+  and the last was explicit that "no lighting pass will fix this, that is a
+  material and silhouette problem."
+
 ## Open items, in priority order
 
 1. **The unpowered Great Gallery emits almost no light of its own** - 16.1 luma
@@ -273,6 +321,30 @@ Round 3 has not been run.
   enemies readability gate, the grenades smoke gate and the powerups spread gate
   had all been calibrated against weather leaking indoors. When a gate that has
   always passed suddenly fails after an unrelated change, suspect the gate.
+- **VSYNC HIDES THE COST OF EVERYTHING.** I profiled the post chain by disabling
+  passes and reported "GTAO 15.4 -> 15.4, bloom 15.4, SMAA 15.3, so the chain is
+  free." It is not. GTAOPass re-renders the WHOLE SCENE through
+  MeshNormalMaterial to fill its own G-buffer: 832 draw calls and 503,723
+  triangles with it, 582 and 258,489 without. Wall-clock was identical because
+  the frame is vsync-bound at 60Hz. Measure `renderer.info` with `autoReset`
+  off, or measure uncapped; never conclude anything from wall-clock rAF deltas
+  on a machine that is hitting vsync.
+- **A PORT CAN LIE.** A leftover `python3 -m http.server` held IPv4 on a port; a
+  new server silently bound the IPv6 wildcard instead; `curl` returned 200 and
+  the harness measured the OLD TREE. Two agents lost time to this. Always
+  `lsof -ti:<port>` before binding, bind explicitly to `127.0.0.1`, and SHA the
+  SERVED bytes against the file on disk before trusting a capture.
+- **TUNE A SAMPLER TO THE SIZE OF THE THING IT MUST SEE.** The AO pass ran, cost
+  a full extra scene render, and grounded nothing: at radius 0.85m its six steps
+  landed at 4.9, 14, 26, 41, 59 and 85cm, and a potsherd is FOUR centimetres. It
+  was tuned for architecture-scale creases while the things that read as
+  floating were pebbles. Rendering the AO buffer as a mask showed a LINE
+  DRAWING - a 1px rim on brick joints, white everywhere else, mean 0.971.
+- **A GATE BELOW ITS OWN NOISE FLOOR PROVES NOTHING.** `test/ao-ab.mjs` had no
+  control, a verdict threshold of 1.0 against a measured same-build noise floor
+  of 1.17, and live film grain. It would have passed with the AO pass DELETED.
+  That is why a useless AO config shipped. Any A/B gate needs a same-build
+  control measured first, and the threshold set above it.
 - **A metric can REWARD the defect.** The mystery box fixture was clipping to
   white, which made it unreadable, and the findability check scored it on mean
   luminance - so blowing out the highlights made the number go UP. Fixing the
