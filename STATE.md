@@ -185,6 +185,49 @@ sky fixed, exterior ambient fixed, interior crush fixed, gate blowout contained,
 far-plane separation partial, door slab untouched. It also independently
 confirmed the static merge is picture-safe: "prop for prop identical."
 
+## THE HARNESS LIED. Fixed 2026-07-29 in 516937e — read this before trusting any past verification
+
+Seven of nine suites hardcoded port 4177 TWICE, as a default AND as a literal
+inside `page.goto(...)`. Every `node test/x.mjs <url>` silently ignored the
+argument and tested whatever was listening on 4177 - usually the live working
+tree, which is the most contaminated thing on the machine.
+
+So every "verified on an isolated tree" claim in this repo's history, for gun,
+interior, economy, enemies, mysterybox, grenades and powerups, was FALSE,
+including in commit messages. The runs passed and were real signals about a real
+build; they were never about the build they claimed.
+
+All eight now resolve `process.argv[2] || process.env.SANDS_URL`. ALWAYS PASS THE
+URL EXPLICITLY. Proven, not asserted: with 4177 empty a suite now fails loudly;
+with a URL it reaches that tree.
+
+Two traps that go with it:
+- **A port can lie.** A leftover server holding IPv4 while a new one silently
+  binds the IPv6 wildcard; `curl` returns 200 from the OLD tree. `lsof -ti:<port>`
+  first, bind explicitly to `127.0.0.1`, and SHA the SERVED bytes against disk.
+- **Fixing it partially looks identical to fixing it.** I added a BASE constant,
+  parsed clean, declared it fixed - and it still went to 4177 because there were
+  two occurrences per file. Found only by emptying the port and watching it
+  connect anyway.
+
+## AO: caused, measured, being fixed
+
+  pristine HEAD        enemy-07-interior  luma 20.88  lit 64.8%  PASSED
+  HEAD + the AO fix    enemy-07-interior  luma 17.31  lit 48.7%  FAILED (gate 18/55)
+
+The AO retune is otherwise GOOD and must survive: the old pass was tuned to 0.85m
+radius when the floating props are 4cm, its AO buffer rendered as a line drawing
+at mean 0.971, and it moved the ground frame by 0.03 of 255 while costing 832
+draw calls against 582. The new numbers (radius 0.60, distanceExponent 2.0,
+thickness 0.8, scale 2.5, samples held at 16) give real contact cores.
+
+THE FIX IN FLIGHT: replace GTAOPass's fixed-function blend `dst * mix(1, ao,
+intensity)` - which cannot see what it is darkening - with a composite in post.js
+that scales AO by scene luminance in linear HDR. AO attenuates ambient light;
+where almost none arrives there is almost nothing to attenuate. A 16-luma chamber
+should be barely touched, a 110-luma courtyard fully. DO NOT lower `scale` to
+clear the gate; that trades the grounding for the number.
+
 ## IN FLIGHT at 2026-07-29 12:50
 
 - **AO fix, UNCOMMITTED**: `src/core/post.js` and `test/ao-ab.mjs`. Verified by
