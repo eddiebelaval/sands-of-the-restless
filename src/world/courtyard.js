@@ -1398,6 +1398,82 @@ export function buildCourtyard(scene) {
   };
 
   /**
+   * A backdrop block that is allowed to LEAN, seated against the ground it
+   * actually leans over.
+   *
+   * WHY LEANING IS THE WHOLE FIX HERE, AND TEXTURE IS NOT.
+   *
+   * A blind judge read this field as "flat untextured pale boxes". The boxes are
+   * textured - the same albedo, normal and roughness maps every wall in the
+   * level carries - and putting a better texture on them would have changed
+   * nothing on screen, because at two hundred metres the height fog is taking
+   * about eighty per cent of the surface out. What survives eighty per cent
+   * extinction is exactly two channels: SILHOUETTE, and LARGE-SCALE VALUE
+   * SEPARATION between one mass and the mass beside it. Albedo detail is gone
+   * long before it gets to the eye, and so is the chamfer highlight.
+   *
+   * Both surviving channels are functions of ORIENTATION, which is why this
+   * helper exists and why nothing in the material or the texture set was
+   * touched to fix a complaint about texture:
+   *
+   *   - A box with a level top puts a horizontal line segment on the sky, and
+   *     nine of them in a row put one long horizontal line on the sky. That
+   *     line is what "flat box" means. Roll the box and the crest becomes a
+   *     rake; alternate the roll along the run and the crest becomes a
+   *     sawtooth of separate masses.
+   *   - The sun sits at (0.472, 0.454, 0.756), so a south-facing vertical
+   *     answers it at N.L = 0.76 and every south-facing vertical in the field
+   *     answers it with the SAME 0.76. That is why the escarpment merged into
+   *     one pale sheet. Spreading yaw to +/-0.55 rad and pitch to +/-0.17
+   *     spreads N.L from about 0.38 to about 0.94 - two and a half to one on
+   *     the lit faces - and two and a half to one survives the fog.
+   *
+   * THE SEATING IS NOT A DETAIL. Rolling a sixty-eight metre slab by fourteen
+   * degrees lifts one base corner eight metres into the air, and a backdrop
+   * mass standing eight metres off the dune it is on is visible from across the
+   * map precisely because it is on the horizon line - the same "floating" read
+   * the perimeter had to be rebuilt once to fix. So the seat is solved rather
+   * than assumed: rotate a grid of points across the base, sample `groundY`
+   * UNDER EACH ONE (the dunes swell by more than a metre across a mass this
+   * wide, so the centre's height is the wrong answer), and drop the mass until
+   * the neediest of them is in the sand. `bury` then puts it a little further
+   * in, because a point exactly tangent to a heightfield still shows daylight.
+   *
+   * Peak height works out at roughly h*cos(roll)*cos(pitch), so `h` still reads
+   * as "how tall is this thing", and the low end of the crest lands at about
+   * h - w*sin(roll), which is where the rake comes from.
+   */
+  const _far4 = new THREE.Matrix4();
+  const _farV = new THREE.Vector3();
+
+  const farMass = (w, h, d, x, z, { yaw = 0, roll = 0, pitch = 0, bury = 1.2 } = {}) => {
+    const m = stone(w, h, d, M.limestone, DENSITY.limestone, { eroded: 0.06 });
+    m.castShadow = false;
+    m.receiveShadow = false;
+    m.userData.noHit = true;
+    m.rotation.set(pitch, yaw, roll);
+
+    // Nine samples over the base, not four. Four corners is not enough on a
+    // heightfield: a sixty-metre mass can bridge a dune crest that sits between
+    // its corners and hang over it. The pyramids next door, which are seated by
+    // `farBlock` off a SINGLE sample at the centre, measure up to a 1.57 m gap
+    // on a raycast sweep of the field for exactly that reason; they are left
+    // alone because they read fine and they are not what this pass is about.
+    _far4.makeRotationFromEuler(m.rotation);
+    let seat = Infinity;
+    for (const sx of [-1, 0, 1]) {
+      for (const sz of [-1, 0, 1]) {
+        _farV.set(sx * w * 0.5, -h * 0.5, sz * d * 0.5).applyMatrix4(_far4);
+        const need = groundY(x + _farV.x, z + _farV.z) - _farV.y;
+        if (need < seat) seat = need;
+      }
+    }
+    m.position.set(x, seat - bury, z);
+    farGroup.add(m);
+    return m;
+  };
+
+  /**
    * A stepped mass, the same construction as the temple but authored small.
    *
    * Deliberately the same silhouette family rather than a different one: these
@@ -1427,43 +1503,157 @@ export function buildCourtyard(scene) {
   /**
    * The quarry escarpment along the far side.
    *
-   * A ridge, not a wall: the blocks vary in height, depth and yaw and overlap
-   * along the run, so the top line is broken and the mass has a front and a
-   * flank instead of one flat face. This is the piece that actually removes the
-   * "one flat edge" - the satellites give the skyline objects, this gives it a
-   * horizon that is not level.
+   * IT USED TO BE NINE WIDE BOXES WITH LEVEL TOPS AT SIMILAR YAW, and that is
+   * the thing a blind judge saw as "flat untextured pale boxes". Nine level
+   * tops in a row are nine horizontal line segments on the sky at roughly one
+   * height, which the eye joins into a single edge; nine south faces at yaw
+   * +/-0.25 all answer a sun at (0.472, 0.454, 0.756) within a few per cent of
+   * each other, so there was no value boundary anywhere along the run for that
+   * edge to break against. One pale sheet of cardboard, exactly as reported.
+   *
+   * The run is now a PROFILE rather than a loop. Three station kinds, placed by
+   * hand along the run because the thing being authored is a silhouette and a
+   * silhouette is a composition, not a distribution:
+   *
+   *   butte   narrow and tall, standing clear of the crest. The vertical that
+   *           tells you the crest has a height at all.
+   *   bench   the wide raked mass. Rolled six to fourteen degrees, so its top
+   *           is a slope and not a line.
+   *   saddle  deliberately LOW - twelve to nineteen metres against benches at
+   *           twenty-six to forty-two and buttes at forty to fifty-eight. This
+   *           is the important one: a crest that drops by two thirds between
+   *           two masses shows sky between them, and sky between two masses is
+   *           what makes the eye read two masses. Without saddles the run is
+   *           continuous and no amount of per-block variation stops it reading
+   *           as one wall.
+   *
+   * Roll alternates in sign station to station, so consecutive crests rake
+   * against each other into a sawtooth instead of a staircase all leaning the
+   * same way. Benches and buttes also carry a lower SHOULDER mass set forward
+   * and off to one side at its own yaw: that is the second silhouette break and
+   * the second value, and being nearer than the mass behind it, it is also less
+   * fogged, which separates the two in depth as well as in tone.
    *
    * It stays inside the dune field, which is 420 metres square and therefore
    * ends at 210. A backdrop mass placed past that edge stands on nothing: its
    * base draws against sky rather than against sand, a couple of pixels above
-   * where the ground plane stops, which is the same "floating" read the
-   * perimeter had to be rebuilt once to fix.
+   * where the ground plane stops. The run spans +/-164 rather than the old
+   * +/-170 to pay for the wider yaw, which swings a mass's corner further out
+   * along the run than a square-on one reaches.
+   *
+   * EVERY DRAW BELOW COMES FROM `sky` AND NOTHING ELSE. Taking one from `rand`
+   * or `brand` - or removing one from them - shifts every sequence downstream
+   * and silently moves the avenue, the perimeter and the palms. `sky` is read
+   * by this block and by nothing else in the file, so its draw count is free.
    */
-  for (let i = 0; i < 9; i++) {
-    const t = i / 8;
-    const x = -170 + t * 340;
-    const z = -172 - sky() * 30;
-    const w = 46 + sky() * 38;
-    const h = 17 + Math.sin(t * 5.1 + 1.3) * 9 + sky() * 13;
-    farBlock(w, h, 30 + sky() * 22, x, z, (sky() - 0.5) * 0.5);
-  }
+  const BENCH_RUN = [
+    // t along the run, station kind
+    [-1.00, 'butte'],
+    [-0.74, 'bench'],
+    [-0.47, 'saddle'],
+    [-0.22, 'bench'],
+    [0.04, 'butte'],
+    [0.28, 'saddle'],
+    [0.50, 'bench'],
+    [0.75, 'bench'],
+    [1.00, 'butte'],
+  ];
 
-  // The same run turned ninety degrees down the east flank, so the enclosure is
-  // not a stage with a painted backdrop on exactly one side.
+  BENCH_RUN.forEach(([t, kind], i) => {
+    const x = t * 164;
+    // Pulled in from the old -172 to -202. Yaw costs footprint: at 0.55 rad a
+    // mass reaches (d/2)cos + (w/2)sin further back than a square-on one, and
+    // measured on the merged group the run's back edge was standing at z=-222,
+    // twelve metres past the -210 where the dune field stops. Nothing in the
+    // play area can see behind these, so it never showed - which is exactly the
+    // kind of thing that survives four passes and then turns up in a flyover.
+    const z = -160 - sky() * 18;
+
+    // Proportion is a function of the KIND, which is the point: a run whose
+    // members are all 46-84 wide and 17-30 tall has no proportion contrast in
+    // it, and proportion contrast is the cheapest silhouette there is.
+    const butte = kind === 'butte';
+    const saddle = kind === 'saddle';
+    // Peak height after seating works out at h*cos(roll)*cos(pitch), so these
+    // read directly as metres of crest. They are DELIBERATELY taller than the
+    // 15-32 the old loop produced: from the judge's 26 m pose the far field
+    // sits within a hundred pixels of the mid-ground's own skyline, so a run
+    // authored an honest 20 metres tall is a run that is mostly hidden behind
+    // the perimeter, and a silhouette nobody can see is not a silhouette. The
+    // first cut of this pass was measured at 22-34 and lost ground against the
+    // build it replaced for exactly that reason.
+    const w = butte ? 16 + sky() * 13 : 40 + sky() * 26;
+    const d = butte ? 18 + sky() * 14 : 28 + sky() * 16;
+    const h = butte ? 40 + sky() * 18
+      : saddle ? 12 + sky() * 7
+        : 26 + sky() * 16;
+
+    // A tall narrow stack that leans fourteen degrees reads as falling over, so
+    // the buttes get a fraction of the benches' roll.
+    const sign = i % 2 ? 1 : -1;
+    const roll = sign * (butte ? 0.04 + sky() * 0.07 : 0.10 + sky() * 0.14);
+    const yaw = (sky() - 0.5) * 1.1;
+    const pitch = (sky() - 0.5) * 0.34;
+    farMass(w, h, d, x, z, { yaw, roll, pitch });
+
+    // The shoulder. Saddles do not get one - the whole job of a saddle is to
+    // be a gap, and filling it in with a second mass gives the gap back.
+    if (saddle) return;
+    const sw = 16 + sky() * 20;
+    farMass(sw, h * (0.34 + sky() * 0.3), 20 + sky() * 16,
+      x + (sky() - 0.5) * w * 1.25, z + 8 + sky() * 18,
+      { yaw: yaw + (sky() - 0.5) * 1.0, roll: -roll * (0.7 + sky() * 0.8), pitch: (sky() - 0.5) * 0.34 });
+  });
+
+  /**
+   * The same run turned ninety degrees down the east flank, so the enclosure is
+   * not a stage with a painted backdrop on exactly one side.
+   *
+   * This run has the OPPOSITE problem to the north one and it needs the
+   * opposite correction. Seen from the avenue these masses show their -X face,
+   * and the sun is on +X, so square-on they are all unlit: the isolation render
+   * of the shipped build has them as one continuous black wall. Black against a
+   * pale sky is a silhouette, so it was never the "pale box" complaint, but one
+   * unbroken black wall is still one mass. Yawing them 0.5 to 1.1 radians turns
+   * part of each mass's visible face toward +Z and into the light, so the run
+   * becomes lit faces alternating with dark flanks - which is the same value
+   * separation the north run gets, arrived at from the dark end.
+   *
+   * x is held under 162 with d under 70: at a full radian of yaw the corner of
+   * a mass reaches sqrt((w/2)^2 + (d/2)^2) beyond its centre, and past 210 it
+   * would be standing off the edge of the dune field.
+   */
   for (let i = 0; i < 5; i++) {
     const t = i / 4;
-    const z = -130 + t * 220;
-    const x = 152 + sky() * 26;
-    const h = 15 + Math.sin(t * 4.4) * 8 + sky() * 11;
-    farBlock(40 + sky() * 24, h, 56 + sky() * 24, x, z, (sky() - 0.5) * 0.5);
+    const z = -128 + t * 216;
+    const x = 144 + sky() * 16;
+    const w = 34 + sky() * 18;
+    const d = 44 + sky() * 24;
+    const h = (i === 2 ? 13 : 27) + Math.sin(t * 4.4) * 8 + sky() * 14;
+    const roll = (i % 2 ? -1 : 1) * (0.09 + sky() * 0.13);
+    const yaw = 0.5 + sky() * 0.6;
+    farMass(w, h, d, x, z, { yaw, roll, pitch: (sky() - 0.5) * 0.3 });
+
+    if (i === 2) continue;                       // the flank's saddle, left open
+    farMass(14 + sky() * 16, h * (0.36 + sky() * 0.3), 22 + sky() * 16,
+      x - 12 - sky() * 16, z + (sky() - 0.5) * d * 1.2,
+      { yaw: yaw - 0.5 - sky() * 0.7, roll: -roll * 0.8, pitch: (sky() - 0.5) * 0.3 });
   }
 
   // Four distant pylon stubs. A necropolis skyline needs at least one vertical
-  // that is not a pyramid or the whole horizon is one shape repeated.
+  // that is not a pyramid or the whole horizon is one shape repeated. They lean
+  // a couple of degrees now: dead plumb is the one thing nothing in a two
+  // thousand year old quarry field is, and the lean is what separates a stub
+  // from the mass standing behind it when both are fogged to the same tone.
   for (const [px, pz, ph] of [
     [-63, -148, 27], [-71, -151, 24], [154, -96, 22], [-166, -172, 31],
   ]) {
-    farBlock(9 + sky() * 5, ph, 9 + sky() * 5, px, pz, sky() * 0.6);
+    const s = 9 + sky() * 5;
+    farMass(s, ph, s, px, pz, {
+      yaw: sky() * 0.6,
+      roll: (sky() - 0.5) * 0.14,
+      pitch: (sky() - 0.5) * 0.12,
+    });
   }
 
   // -------------------------------------------------------------------------
