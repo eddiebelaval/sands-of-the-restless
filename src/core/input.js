@@ -38,6 +38,29 @@ export function createInput(canvas) {
     locked: false,
     fallback: false,   // true when pointer lock was denied and we read raw moves
     active: false,     // true once the player has entered the game
+
+    /**
+     * True while the pause menu is up.
+     *
+     * Everything below reads this and does nothing, which is not the same as
+     * the frame loop skipping the simulation. A held W with the menu open would
+     * otherwise sit in `keys` and the player would walk the moment they hit
+     * Resume; a held mouse button in FALLBACK mode - where there is no pointer
+     * lock to lose - would keep accumulating look delta while they read the
+     * settings, and the whole lot would arrive in one frame on resume.
+     */
+    suspended: false,
+
+    /**
+     * How many times pointer lock has been ASKED for.
+     *
+     * A counter rather than a boolean because the interesting question is
+     * whether the request was made at all. Chrome refuses a re-lock for about a
+     * second after Esc released the last one, so "Resume asked for the mouse
+     * back" and "the browser gave it back" are two different facts and the
+     * harness has to be able to tell them apart.
+     */
+    lockRequests: 0,
   };
 
   const oneShot = new Set();   // keys consumed exactly once per press
@@ -48,6 +71,7 @@ export function createInput(canvas) {
 
   const onKeyDown = (e) => {
     if (e.repeat) return;
+    if (state.suspended) return;
     keys.add(e.code);
     oneShot.add(e.code);
     // Space scrolls the page, and the number row can trigger browser UI.
@@ -74,7 +98,7 @@ export function createInput(canvas) {
   // -------------------------------------------------------------------------
 
   const onMouseMove = (e) => {
-    if (!state.active) return;
+    if (!state.active || state.suspended) return;
     // In fallback mode only look while a button is held, otherwise the camera
     // spins whenever the cursor crosses the page.
     if (state.fallback && e.buttons === 0) return;
@@ -85,7 +109,7 @@ export function createInput(canvas) {
   };
 
   const onMouseDown = (e) => {
-    if (!state.active) return;
+    if (!state.active || state.suspended) return;
     if (e.button === 0) state.fire = true;
     if (e.button === 2) state.ads = true;
   };
@@ -117,6 +141,20 @@ export function createInput(canvas) {
   // Releasing focus should not leave the player sprinting forever.
   window.addEventListener('blur', () => { keys.clear(); syncAxes(); });
 
+  /** The lock request itself, shared by engage() and relock(). */
+  function requestLock() {
+    state.lockRequests++;
+    try {
+      const p = canvas.requestPointerLock?.({ unadjustedMovement: true });
+      // Chrome returns a promise for the options form; older paths return
+      // undefined. Swallow rejection, the probe below is the real check.
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {
+      // Older browsers throw on the options argument. Retry bare.
+      try { canvas.requestPointerLock?.(); } catch {}
+    }
+  }
+
   return {
     state,
 
@@ -124,25 +162,65 @@ export function createInput(canvas) {
      * Request pointer lock. If it has not engaged within LOCK_TIMEOUT_MS,
      * assume it was denied (iframe, permissions policy) and switch to reading
      * raw mouse deltas so the game stays playable either way.
+     *
+     * `probe` is that timeout, and it is now optional for ONE reason: a RE-lock
+     * is not evidence about whether pointer lock is available. Chrome refuses
+     * requestPointerLock for roughly a second after Esc released the last one,
+     * so a Resume button that called the probing form would time out on a
+     * perfectly healthy browser, flip `fallback` true, and tell the player to
+     * hold a mouse button to look for the rest of the session. The probe is a
+     * decision made once, at boot, about whether the API works here at all;
+     * every re-acquisition after that goes through relock().
+     *
+     * @param {{probe?: boolean}} opts
      */
-    engage() {
+    engage(opts = {}) {
+      const probe = opts.probe !== false;
       state.active = true;
 
-      try {
-        const p = canvas.requestPointerLock?.({ unadjustedMovement: true });
-        // Chrome returns a promise for the options form; older paths return
-        // undefined. Swallow rejection, the timeout below is the real check.
-        if (p && typeof p.catch === 'function') p.catch(() => {});
-      } catch {
-        // Older browsers throw on the options argument. Retry bare.
-        try { canvas.requestPointerLock?.(); } catch {}
-      }
+      requestLock();
+
+      if (!probe) return;
 
       setTimeout(() => {
         if (document.pointerLockElement !== canvas) {
           state.fallback = true;
         }
       }, LOCK_TIMEOUT_MS);
+    },
+
+    /**
+     * Ask for the mouse back after the menu let it go.
+     *
+     * Never probes, and never runs in fallback mode - there is no lock to
+     * re-acquire there, and asking would only re-arm a decision that has
+     * already been made.
+     */
+    relock() {
+      if (state.fallback) return false;
+      state.active = true;
+      requestLock();
+      return true;
+    },
+
+    /**
+     * Freeze the input layer while the pause menu is up.
+     *
+     * Clears rather than merely gates: a key that was down when the menu opened
+     * must not still be down when it closes, and any look delta accumulated on
+     * the way in must not arrive as one enormous frame on the way out. This is
+     * the input-side twin of the frame loop's delta clamp.
+     */
+    setSuspended(on) {
+      state.suspended = !!on;
+      if (!state.suspended) return state.suspended;
+      keys.clear();
+      oneShot.clear();
+      syncAxes();
+      state.dx = state.dy = 0;
+      state.fire = false;
+      state.ads = false;
+      return state.suspended;
     },
 
     /** Drain accumulated mouse movement. Call once per frame. */

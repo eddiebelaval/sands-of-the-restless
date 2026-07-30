@@ -689,6 +689,245 @@
     border: 1px solid #35291a; padding: 6px 12px; cursor: pointer;
   }
   #settings button[aria-pressed="true"] { color: var(--gold); border-color: var(--gold-dim); }
+
+  /* ---- THE PAUSE MENU ----
+
+     OUTSIDE #hud, and that is not a layout convenience. #hud is
+     `pointer-events: none` by construction - it is a set of readouts nothing
+     clicks - and this is the one surface in the game that has to be clicked.
+     It also sits at a higher z than #settings, so the fidelity buttons in the
+     corner cannot be reached through the scrim while the game is stopped.
+
+     The visual language is the one the rest of this file already established:
+     the plate, a gilded top edge, gold labels and bone figures on a near-opaque
+     dark ground. The scrim under the sheet is deliberately heavier than any
+     plate in the game - the courtyard behind it runs to luma 190 and the panel
+     is text-dense, so it earns its own darkness rather than borrowing the
+     HUD's. Measured the way test/hud.mjs measures: every label on it clears
+     4.5 to one against the ground it stands on. */
+  #pause {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    background: radial-gradient(ellipse at center,
+      rgba(14,10,5,.90), rgba(4,3,1,.975));
+  }
+  #pause[hidden] { display: none; }
+
+  .pause-sheet {
+    width: min(720px, 94vw);
+    max-height: min(84vh, 720px);
+    display: flex; flex-direction: column;
+    /* Nothing may paint outside the sheet. Belt to the min-height braces
+       below: the plate's gold hairline is the edge of the object, and a row of
+       key bindings hanging past it is not a panel, it is a leak. */
+    overflow: hidden;
+    /* Darker than the HUD plate. This one is never over the game - it is over
+       the scrim - so there is nothing to be translucent for. */
+    background: linear-gradient(180deg, rgba(9,6,3,.985), rgba(4,3,1,.97));
+  }
+
+  .pause-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 22px 14px;
+    border-bottom: 1px solid rgba(217,178,106,.18);
+  }
+  .pause-head .ico { width: 15px; height: 15px; stroke: var(--gold); }
+  .pause-head h2 {
+    font-weight: normal;
+    font-size: 15px; letter-spacing: .38em; text-transform: uppercase;
+    color: var(--gold);
+  }
+  /* The one line that says what the state IS, rather than what the panel is
+     for. A player who opened this by alt-tabbing needs to know the game is
+     stopped before they need to know it has sliders. */
+  .pause-head .said {
+    margin-left: auto;
+    font-size: 9px; letter-spacing: .24em; text-transform: uppercase;
+    color: var(--gold-mid);
+  }
+
+  #pause-tabs {
+    display: flex; gap: 0;
+    padding: 0 22px;
+    border-bottom: 1px solid rgba(217,178,106,.18);
+  }
+  .pause-tab {
+    font-family: inherit;
+    font-size: 10px; letter-spacing: .26em; text-transform: uppercase;
+    color: var(--gold-mid);
+    background: none; border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 12px 16px 10px;
+    margin-bottom: -1px;
+    cursor: pointer;
+  }
+  .pause-tab:hover { color: var(--gold); }
+  .pause-tab[aria-pressed="true"] {
+    color: var(--bone);
+    border-bottom-color: var(--gold);
+  }
+
+  /* THE min-height: 0 IS NOT A TIDY-UP. It is the whole reason this scrolls.
+     A flex item defaults to min-height:auto, which refuses to shrink below its
+     content - so on the Controls tab, which is the tallest, the body kept its
+     full height, the sheet's max-height clipped nothing, and the footer was
+     laid out BELOW the sheet and off the bottom of the screen. The Resume
+     button was still "visible and enabled" to every state assertion and could
+     not be clicked: Playwright reported #pause intercepting the pointer at the
+     button's own coordinates. Found by trying to click Resume, which is the
+     only way this class of bug is ever found. See the layout check in
+     test/settings.mjs, which now measures every tab against the sheet. */
+  .pause-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 22px 4px; }
+  .pause-panel[hidden] { display: none; }
+
+  /* ---- one setting ----
+
+     Label left, VALUE RIGHT AND IN BONE, control under both, and the derived
+     consequence under that. The value is the largest thing in the row on
+     purpose: this panel exists because the owner asked for "sensitivity for
+     mouse, and FOV degrees slider", and a slider whose number you have to
+     squint at is a slider you cannot report back. */
+  .set-row { padding: 15px 0 16px; border-bottom: 1px solid rgba(217,178,106,.10); }
+  .set-row:last-child { border-bottom: 0; }
+
+  .set-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  }
+  .set-label {
+    font-size: 11px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--gold);
+  }
+  .set-value {
+    font-size: 19px; letter-spacing: .06em; color: var(--bone);
+    white-space: nowrap;
+  }
+
+  .set-control { margin-top: 11px; display: flex; gap: 8px; align-items: center; }
+
+  /* The slider. Authored end to end rather than left to the platform, because
+     the platform's is a blue iOS control in the middle of a gold Egyptian
+     interface. The track is the same hairline the HUD bars are; the thumb is
+     the same rotated square the boon chips and the power-up marks are, so it
+     reads as part of the same set of objects. */
+  .set-range {
+    -webkit-appearance: none; appearance: none;
+    flex: 1; height: 22px; background: none; cursor: pointer;
+  }
+  .set-range::-webkit-slider-runnable-track {
+    height: 3px;
+    background: linear-gradient(90deg, rgba(217,178,106,.45), rgba(217,178,106,.16));
+    border: 0;
+  }
+  .set-range::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 13px; height: 13px; margin-top: -5px;
+    background: var(--gold);
+    border: 1px solid #2a1d0d;
+    box-shadow: 0 0 8px rgba(217,178,106,.4);
+    transform: rotate(45deg);
+  }
+  .set-range::-moz-range-track {
+    height: 3px; background: rgba(217,178,106,.30); border: 0;
+  }
+  .set-range::-moz-range-thumb {
+    width: 12px; height: 12px; border-radius: 0;
+    background: var(--gold); border: 1px solid #2a1d0d;
+  }
+
+  .set-btn {
+    font-family: inherit;
+    font-size: 10px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--gold-mid);
+    background: rgba(18,12,6,.94);
+    border: 1px solid rgba(217,178,106,.28);
+    padding: 8px 20px; cursor: pointer;
+    min-width: 82px;
+  }
+  .set-btn:hover { color: var(--gold); border-color: rgba(217,178,106,.55); }
+  .set-btn[aria-pressed="true"] {
+    color: var(--bone);
+    border-color: rgba(217,178,106,.85);
+    background: linear-gradient(180deg, rgba(217,178,106,.16), rgba(217,178,106,.05));
+  }
+
+  /* The consequence line. --gold-mid and not --gold-dim, for the reason stated
+     at the top of this file: dim measures 3.70 to one and this is where the
+     FOV slider says what it just did to the sight picture. */
+  .set-note {
+    margin-top: 9px;
+    font-size: 10px; letter-spacing: .12em;
+    color: var(--gold-mid);
+  }
+
+  /* ---- the controls list ---- */
+  .bind-block { padding: 14px 0 4px; }
+  .bind-block + .bind-block { border-top: 1px solid rgba(217,178,106,.10); }
+  .bind-group {
+    font-size: 9px; letter-spacing: .28em; text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 10px;
+  }
+  .bind-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 5px 0;
+  }
+  .bind-keys {
+    display: flex; align-items: center; gap: 4px;
+    flex: none; min-width: 132px;
+  }
+  .bind-sep {
+    font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--gold-mid);
+  }
+  .bind-what {
+    font-size: 11px; letter-spacing: .1em;
+    color: var(--bone);
+  }
+
+  .pause-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 14px 22px 16px;
+    border-top: 1px solid rgba(217,178,106,.18);
+  }
+  /* Says what does NOT survive a reload, in the place a player would find out
+     the hard way. The project constraint is no browser storage; that is a
+     documented decision and not a bug, so it is stated rather than hidden. */
+  .pause-foot .fine {
+    font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--gold-mid);
+  }
+  #pause-resume {
+    border: 1px solid var(--gold-dim);
+    background: linear-gradient(180deg, rgba(217,178,106,.14), rgba(217,178,106,.04));
+    color: var(--gold);
+    padding: 11px 32px;
+    letter-spacing: .28em; text-transform: uppercase;
+    font-size: 12px; font-family: inherit;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #pause-resume:hover { background: rgba(217,178,106,.2); border-color: var(--gold); }
+  #pause-resume .ico { stroke: var(--gold); }
+
+  /* ---- focus ----
+
+     The panel focuses Resume when it opens so the keyboard can reach it, and
+     the default focus ring for that is Chrome's, which is a 2px SATURATED BLUE
+     rectangle. On a warm gold interface over sunlit sand it is the brightest
+     and coldest object on the screen, and it was the first thing visible in the
+     first screenshot of this menu - a defect no contrast number could have
+     reported, because it passes every one of them.
+
+     Replaced rather than removed. A focus ring is how a keyboard player knows
+     where they are, and deleting it to make a screenshot tidy would trade an
+     ugly affordance for no affordance. Gold, offset, in the same hairline the
+     plates use. */
+  #pause :focus-visible {
+    outline: 1px solid var(--gold);
+    outline-offset: 3px;
+  }
+  #pause :focus:not(:focus-visible) { outline: none; }
 </style>
 
 <script type="importmap">
@@ -736,6 +975,16 @@
       <circle cx="5.5" cy="7.7" r="3.2"/>
       <path d="M4.1 4.8V3.3h2.8v1.5"/>
       <path d="M7.3 3.7c1.3.5 1.8 1.5 1.8 2.7v1.5"/>
+    </symbol>
+    <!-- the pause mark: two standing stones, which is the universal sign and
+         also, at this scale and in this stroke, a doorway with its lintel
+         removed. Drawn like every other mark here and never a glyph. -->
+    <symbol id="i-pause" viewBox="0 0 12 12">
+      <path d="M4.3 1.9v8.2M7.7 1.9v8.2"/>
+    </symbol>
+    <!-- the way back in: an arrow returning through the gap between them -->
+    <symbol id="i-resume" viewBox="0 0 12 12">
+      <path d="M3.4 2.3v7.4l6-3.7z"/>
     </symbol>
   </defs>
 </svg>
@@ -851,7 +1100,7 @@
     <b>WASD</b> move &nbsp;&middot;&nbsp; <b>Shift</b> sprint &nbsp;&middot;&nbsp; <b>Space</b> jump<br>
     <b>Mouse</b> look &nbsp;&middot;&nbsp; <b>LMB</b> fire &nbsp;&middot;&nbsp; <b>RMB</b> aim<br>
     <b>R</b> reload &nbsp;&middot;&nbsp; <b>1-7</b> weapons &nbsp;&middot;&nbsp; <b>F</b> buy<br>
-    <b>G</b> hold to cook a grenade, release to throw &nbsp;&middot;&nbsp; <b>Esc</b> release cursor
+    <b>G</b> hold to cook a grenade, release to throw &nbsp;&middot;&nbsp; <b>Esc</b> pause and settings
   </div>
 
   <!-- Assets stream in after the game is already playable, so this reports
@@ -866,6 +1115,37 @@
   <span>Fidelity</span>
   <button id="fid-high" aria-pressed="true">High</button>
   <button id="fid-low"  aria-pressed="false">Low</button>
+</div>
+
+<!-- THE PAUSE MENU.
+
+     Outside #hud on purpose - see the #pause block in the stylesheet: #hud is
+     pointer-events:none and this is the one surface in the game that is
+     clicked. The shell only is authored here; every tab and every row is built
+     by src/ui/pause.js from one table, so the label, the range, the unit and
+     the effect of a control cannot drift apart from each other.
+
+     Starts `hidden`, and the frame loop reads pause.paused rather than this
+     attribute: an overlay is not a pause, and the thing that stops the game has
+     to be the thing that runs it. -->
+<div id="pause" hidden>
+  <div class="pause-sheet plate">
+    <div class="pause-head">
+      <svg class="ico"><use href="#i-pause"/></svg>
+      <h2>Paused</h2>
+      <span class="said">The sands are still</span>
+    </div>
+
+    <nav id="pause-tabs" data-pause-tabs></nav>
+    <div class="pause-body" data-pause-body></div>
+
+    <div class="pause-foot">
+      <span class="fine">Settings last for this run</span>
+      <button id="pause-resume" data-pause-resume type="button">
+        <svg class="ico"><use href="#i-resume"/></svg>Resume
+      </button>
+    </div>
+  </div>
 </div>
 
 <script type="module" src="./src/main.js"></script>

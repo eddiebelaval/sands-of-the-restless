@@ -41,6 +41,7 @@ import { createMinimap } from './ui/minimap.js';
 import { createObjectives, createObjectivePanel } from './ui/objective.js';
 import { createGrenades } from './systems/grenades.js';
 import { createPowerups } from './systems/powerups.js';
+import { createPauseMenu } from './ui/pause.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
@@ -502,6 +503,42 @@ function boot() {
   setFidelity(true);
 
   // -------------------------------------------------------------------------
+  // pause, and the settings panel behind it
+  // -------------------------------------------------------------------------
+  //
+  // The menu decides WHEN the game is stopped. The frame loop below decides
+  // what stopping means, and it means the simulation does not advance at all -
+  // see the guard at the top of frame(). An overlay over a running game would
+  // leave a cooked grenade counting down while the player reads about mouse
+  // sensitivity, and the wave director sending into an empty crosshair.
+
+  const pause = createPauseMenu({
+    root: document.getElementById('pause'),
+    rig,
+    audio,
+    input,
+    // Handed as an accessor pair rather than as the flag, because `high` is a
+    // binding in this scope and the panel has to see the value AFTER the corner
+    // buttons change it. Both surfaces write through the same function, so the
+    // two can never disagree about which fidelity is live.
+    fidelity: { get: () => high, set: (v) => setFidelity(!!v) },
+    onResume: () => {
+      // NEVER the probing form. input.engage() arms a 400ms timer that declares
+      // pointer lock unavailable if it has not engaged, and Chrome refuses a
+      // re-lock for about a second after Esc released the last one - so calling
+      // engage() here would flip a healthy browser into the iframe fallback and
+      // tell the player to hold a mouse button to look for the rest of the
+      // session. See input.relock(), which is that decision left alone.
+      input.relock();
+    },
+  });
+
+  // Keep the corner fidelity buttons and the panel in step. setFidelity is the
+  // one writer; this is the panel finding out about a write it did not make.
+  btnHigh.addEventListener('click', () => pause.refresh());
+  btnLow.addEventListener('click', () => pause.refresh());
+
+  // -------------------------------------------------------------------------
   // entering the game
   // -------------------------------------------------------------------------
 
@@ -535,8 +572,14 @@ function boot() {
   }
 
   // --- weapon bindings -----------------------------------------------------
+  //
+  // `pause.paused` as well as `started`, and this listener is the reason
+  // input.setSuspended() is not the whole of the freeze. These bindings do not
+  // go through core/input.js at all - they read the event directly - so
+  // suspending the input layer would leave a paused player still able to
+  // reload, inspect, swap weapons and buy whatever the crosshair was left on.
   window.addEventListener('keydown', (e) => {
-    if (!started) return;
+    if (!started || pause.paused) return;
 
     if (e.code === 'KeyR') { weapons.reload(); return; }
     if (e.code === 'KeyV') { viewmodel.inspect(); return; }
@@ -559,8 +602,9 @@ function boot() {
     if (n) weapons.equip(SLOTS[Number(n[1]) - 1]);
   });
 
+  // Scrolling the settings panel must not swap the weapon underneath it.
   window.addEventListener('wheel', (e) => {
-    if (!started) return;
+    if (!started || pause.paused) return;
     weapons.cycle(e.deltaY > 0 ? 1 : -1);
   }, { passive: true });
 
@@ -569,9 +613,67 @@ function boot() {
     if (!started && (e.code === 'Enter' || e.code === 'Space')) start();
   });
 
-  // Re-acquire lock after Esc, without going back through the title card.
+  // Re-acquire lock after the menu let it go, without going back through the
+  // title card. relock() rather than engage(), for the reason in onResume.
   canvas.addEventListener('click', () => {
-    if (started && !input.state.locked && !input.state.fallback) input.engage();
+    if (started && !pause.paused && !input.state.locked) input.relock();
+  });
+
+  // -------------------------------------------------------------------------
+  // what opens the menu
+  // -------------------------------------------------------------------------
+
+  /**
+   * LOSING THE MOUSE IS THE SIGNAL, not the keystroke.
+   *
+   * Pointer lock exits on Esc natively, before any handler here is consulted,
+   * and Chrome does not reliably deliver a keydown for the Esc that did it.
+   * Fighting that - swallowing the key, re-requesting lock, re-binding to a
+   * different key - is an argument with the browser that the browser wins.
+   *
+   * It is also the more complete signal. Alt-tab, a system dialog and a click
+   * outside the canvas all drop the lock with no keystroke at all, and every
+   * one of those is a moment the player has stopped playing and the simulation
+   * should stop with them.
+   */
+  document.addEventListener('pointerlockchange', () => {
+    if (!started) return;
+    if (document.pointerLockElement === canvas) return;
+    // In fallback mode there is no lock, so its absence says nothing. Esc below
+    // is the only path in that case.
+    if (input.state.fallback) return;
+    pause.open();
+  });
+
+  /**
+   * Esc, as the second path.
+   *
+   * Carries the fallback case, where there is no pointer lock to lose, and
+   * closes the menu from the keyboard. open() is idempotent, so this firing
+   * alongside the pointerlockchange the same key produced is a no-event.
+   */
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape' || !started) return;
+    if (pause.paused) pause.resume();
+    else pause.open();
+  });
+
+  /**
+   * A tab that is not on screen is paused, and `hidden` is the signal rather
+   * than `blur`.
+   *
+   * blur fires when devtools takes focus, when a notification steals it, and
+   * when a second monitor is clicked - all cases where the player is still
+   * looking at the game and would find it frozen for no reason they can see.
+   * document.hidden is the honest one. The alt-tab case, which is the one that
+   * matters, is already covered by the lock loss above; this catches the rest.
+   *
+   * MAX_DELTA is untouched by all of it. A tab can be backgrounded without ever
+   * being hidden and without ever holding the lock, and the clamp is the only
+   * thing standing between that and the player teleporting.
+   */
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && started) pause.open();
   });
 
   let noticeTimer = 0;
@@ -627,12 +729,46 @@ function boot() {
   // in the frame loop: a monotonic counter is the event source for going down.
   let downsSeen = combat.state.downs;
 
+  // How many times frame() has run. Monotonic, and it counts PAUSED frames as
+  // well - which is the point of it: "the loop kept running and the simulation
+  // did not" is the claim the pause has to support, and it takes two numbers to
+  // state. test/settings.mjs reads this against `elapsed`.
+  let frameNo = 0;
+
   function frame() {
     requestAnimationFrame(frame);
+    frameNo++;
 
     const now = performance.now();
     const raw = (now - last) / 1000;
     last = now;
+
+    // -----------------------------------------------------------------------
+    // THE PAUSE, AND IT IS HERE BECAUSE THIS IS THE ONLY PLACE IT CAN BE
+    // -----------------------------------------------------------------------
+    //
+    // Every clock in this game is the delta this loop hands out. The wave
+    // director's breather, a grenade's 3.4 second fuse, a power-up's remaining
+    // seconds, twenty-four actors' walk cycles, the reload animation, the fog
+    // drift and the cloud field are all downstream of the calls below, so not
+    // making them is the whole of stopping the game. There is no per-system
+    // pause flag anywhere and there should not be: one of them would be missed,
+    // and the one that gets missed is always the fuse.
+    //
+    // `last` was rewritten above before this return, so the frame after Resume
+    // measures from now and not from when the menu opened. MAX_DELTA would have
+    // caught it anyway; belt and braces, on the number that teleports the
+    // player when it is wrong.
+    //
+    // The frame is still RENDERED, at delta zero. The scene behind the panel has
+    // to be there - it is what the player is deciding about - and re-rendering
+    // rather than trusting the last committed buffer is the difference between a
+    // menu over the game and a menu over whatever the compositor happened to
+    // keep. Nothing advances: post.update and the composer are handed 0.
+    if (pause.paused) {
+      post.composer.render(0);
+      return;
+    }
 
     const dt = Math.min(raw, MAX_DELTA);
     elapsed += dt;
@@ -868,8 +1004,12 @@ function boot() {
     director, combat,
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
+    pause,
     setFidelity, start,
     get elapsed() { return elapsed; },
+    // Frames the loop has run, INCLUDING paused ones. Against `elapsed`, which
+    // only moves when the simulation does, the pair is the whole claim.
+    get frameNo() { return frameNo; },
   };
 }
 
