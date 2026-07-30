@@ -4,6 +4,10 @@
  * Order matters and is not arbitrary:
  *
  *   RenderPass       scene -> HDR linear buffer
+ *   GTAOPass         fills its own G-buffer and the denoised AO term. It does
+ *                    NOT composite; see AOCompositePass below for why
+ *   AOCompositePass  applies the AO term, scaled by how much light is actually
+ *                    arriving at each point of the linear HDR buffer
  *   UnrealBloomPass  bloom must happen in linear HDR, before tone mapping,
  *                    or bright areas are already clipped and there is nothing
  *                    left to bloom
@@ -69,6 +73,215 @@ class ViewmodelPass extends Pass {
     renderer.render(this.viewmodel.scene, this.viewmodel.camera);
 
     renderer.autoClear = prevAutoClear;
+  }
+}
+
+/**
+ * Composites the ambient occlusion term onto the linear HDR beauty buffer,
+ * SCALED BY HOW MUCH LIGHT IS ARRIVING THERE.
+ *
+ * GTAOPass composites with a fixed-function blend - `dst * mix(1, ao,
+ * intensity)`, DstColorFactor times ZeroFactor - which is to say it multiplies
+ * the frame by the AO term and has no access to what it is darkening. That is
+ * fine in a scene with one exposure. This game has two: an open courtyard and an
+ * unpowered stone room, and the room is the darkest surface in the build.
+ *
+ * WHY THIS IS PHYSICS AND NOT A WORKAROUND. Ambient occlusion is a visibility
+ * term on the AMBIENT hemisphere: it says what fraction of the sky a point can
+ * see, and its job is to attenuate the light that arrives from everywhere at
+ * once. Where almost no ambient light is arriving there is almost nothing for
+ * it to attenuate, and multiplying a near-black surface by 0.4 removes light
+ * that was never there. The Great Gallery with its braziers unlit emits 16.1
+ * luma of its own, measured with the fog pass disabled - it is low because an
+ * outdoor sky-haze pass used to leak into it and was removed - and a flat
+ * multiply took the interior capture pose from 20.88 luma to 17.31 and 64.8 per
+ * cent lit to 48.7. A sunlit courtyard at 110 luma should take the full effect;
+ * a room that dark should be barely touched.
+ *
+ * WHY THE WEIGHT IS A NEIGHBOURHOOD AND NOT THE PIXEL. Weighting by the pixel's
+ * own value is the obvious implementation and it is subtly self-defeating: the
+ * contact core under a rock is the darkest pixel in its neighbourhood, so a
+ * per-pixel weight would take strength out of exactly the place the whole pass
+ * exists to darken. What the weight has to describe is the LIGHTING LEVEL OF THE
+ * REGION, not the albedo of the pixel, so it is a five-tap cross over a radius
+ * wide enough to straddle a contact shadow and narrow enough not to halo across
+ * a doorway.
+ *
+ * THE RANGE IS MEASURED, NOT CHOSEN. See uLumaRange.
+ *
+ * It also costs one fullscreen blit LESS than what it replaces: GTAOPass's
+ * Default output does two (a NoBlending copy of the read buffer into the write
+ * buffer, then the blend on top of it). This does the copy and the blend in one.
+ */
+const AOCompositeShader = {
+  uniforms: {
+    tDiffuse:   { value: null },
+    tAO:        { value: null },
+    // One texel of the beauty buffer, so the neighbourhood radius below is
+    // expressed in pixels rather than in UV and does not change with the
+    // window size.
+    uTexel:     { value: new THREE.Vector2(1 / 1920, 1 / 1080) },
+
+    // Radius of the irradiance estimate, in texels. Wide enough to straddle a
+    // contact shadow (which is what must NOT be allowed to weaken itself) and
+    // narrow enough that a bright doorway does not lift the AO strength of the
+    // wall beside it.
+    uSampleRadius: { value: 6.0 },
+
+    // Global strength. 1.0 means "where there is plenty of light, apply exactly
+    // what GTAOPass would have applied". This is NOT the lever for clearing an
+    // exposure gate - lowering it trades grounding for a number, which is the
+    // mistake that shipped the useless AO config in the first place.
+    uIntensity: { value: 1.0 },
+
+    // --- the measured range ------------------------------------------------
+    // Linear-HDR luminance. NOT chosen, READ OUT OF THIS BUFFER: uDebug 1 writes
+    // the irradiance estimate straight to the canvas with every pass after this
+    // one disabled, so a screenshot decoded in node is the linear value times
+    // 255. Proved linear rather than sRGB-encoded by taking the same frame at
+    // uDebugGain 1 and 8 and checking the percentiles scale by exactly eight
+    // (pose 5 p1: 0.0784 at gain 1, 0.6118 at gain 8, against 0.627 predicted,
+    // inside the 1/255 quantisation of the gain-1 read).
+    //
+    // The whole-frame distributions overlap and are NOT the right thing to set
+    // this from - what matters is where the OCCLUDED pixels sit, because those
+    // are the only ones this weight changes. Restricting to ao < 0.85:
+    //
+    //     pose                       share of frame   p5     p25    p50    p95
+    //     5 ground-fill (courtyard)      1.24%      0.055  0.094  0.118  0.165
+    //     7 interior                     6.21%      0.017  0.028  0.034  0.072
+    //
+    // Two facts in that table. The interior has FIVE TIMES as much of its frame
+    // occluded, because a closed room occludes in every direction at once - so
+    // a flat multiply hits it five times as hard as it hits the courtyard. And
+    // the two populations separate at about 0.06 with a clean gap, so a weight
+    // that is off below 0.03 and on above 0.09 lands almost entirely inside it.
+    //
+    // Swept live on hardware, one uniform pair on a page that is never reloaded,
+    // so every row is the same two frames through a different weight. The
+    // interior column is a replica of the enemies.mjs enemy-07-interior shot
+    // measured with that suite's own metric. The ground columns are pose 5
+    // scored with test/ao-ab.mjs's statistic - a pixel counts as darkened at 4
+    // of 255, deep% is the share that dropped 15 or more - against the AO-off
+    // frame off the same page, whose same-build control is 0.000 exactly, which
+    // is to say two renders of one state are BIT IDENTICAL and every difference
+    // in the table is the uniform pair and nothing else:
+    //
+    //     lo / hi        interior luma / lit    ground darkPct  darkMean  deep%
+    //      AO off           23.14   79.7%           0.000        0.00     0.000
+    //      flat (w = 1)     16.85   48.5%  FAIL     2.399       18.62     1.015
+    //      0.030 / 0.090    22.43   79.7%  <-       2.350       18.40     0.979
+    //      0.035 / 0.110    22.79   79.7%           2.267       18.18     0.926
+    //      0.045 / 0.115    22.98   79.7%           2.204       18.05     0.891
+    //      0.050 / 0.130    23.06   79.7%           2.087       17.40     0.823
+    //      0.060 / 0.150    23.11   79.7%           1.830       16.19     0.685
+    //
+    // The chosen row gives back 91 per cent of what the flat multiply took from
+    // the interior while keeping 98 per cent of what it bought on the ground,
+    // and the deepest contact is untouched: the maximum single-pixel drop is
+    // 113.9 of 255 on both. Rows below it buy a further half a luma of interior
+    // that is not needed - the gate is 18 and this clears it by four - and pay
+    // for it in the only thing this pass was ever for.
+    uLumaRange: { value: new THREE.Vector2(0.030, 0.090) },
+
+    // Weight floor. Zero on purpose: a surface with no light arriving gets no
+    // occlusion, because occlusion of nothing is nothing.
+    uFloor:     { value: 0.0 },
+
+    // 0 normal, 1 irradiance estimate, 2 the weight, 3 the raw AO term.
+    // Modes 1-3 write greyscale straight to whatever target this pass has, and
+    // are meant to be read with the passes after this one disabled. Every
+    // instance of this project's defining bug class was found by rendering a
+    // buffer in isolation and looking at it; this is that tool, kept.
+    uDebug:     { value: 0 },
+    uDebugGain: { value: 1.0 },
+  },
+
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform sampler2D tAO;
+    uniform vec2  uTexel;
+    uniform float uSampleRadius;
+    uniform float uIntensity;
+    uniform vec2  uLumaRange;
+    uniform float uFloor;
+    uniform int   uDebug;
+    uniform float uDebugGain;
+    varying vec2 vUv;
+
+    const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
+    float lum(vec2 uv) {
+      return dot(max(texture2D(tDiffuse, uv).rgb, 0.0), LUMA);
+    }
+
+    void main() {
+      vec4 texel = texture2D(tDiffuse, vUv);
+
+      // GTAOShader writes vec4(vec3(ao), 1.0), 1.0 being fully unoccluded, and
+      // has already applied its own scale exponent as pow(ao, scale).
+      float ao = texture2D(tAO, vUv).r;
+
+      // Local irradiance. Five taps, not one: see the note above the shader for
+      // why the pixel's own value is the wrong quantity.
+      vec2 r = uTexel * uSampleRadius;
+      float e = lum(vUv)
+              + lum(vUv + vec2(r.x, 0.0)) + lum(vUv - vec2(r.x, 0.0))
+              + lum(vUv + vec2(0.0, r.y)) + lum(vUv - vec2(0.0, r.y));
+      e *= 0.2;
+
+      // smoothstep rather than a clamp, so there is no value of the frame at
+      // which the AO strength has a corner in it. A corner would be visible as a
+      // band wherever a wall crosses the threshold.
+      float w = mix(uFloor, 1.0, smoothstep(uLumaRange.x, uLumaRange.y, e));
+
+      vec3 c = texel.rgb * mix(1.0, ao, uIntensity * w);
+
+      if (uDebug == 1) c = vec3(e * uDebugGain);
+      else if (uDebug == 2) c = vec3(w);
+      else if (uDebug == 3) c = vec3(ao);
+
+      gl_FragColor = vec4(c, texel.a);
+    }
+  `,
+};
+
+/**
+ * ShaderPass that keeps its AO input pointed at GTAOPass's denoise target.
+ *
+ * Bound per frame rather than once at construction because setSize() is free to
+ * hand back a different texture, and a stale binding would be an AO term from a
+ * different resolution - which reads as a soft misregistered smear rather than
+ * as an error anything would report.
+ */
+class AOCompositePass extends ShaderPass {
+  constructor(shader, gtao) {
+    super(shader);
+    this.gtao = gtao;
+  }
+
+  render(renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
+    this.uniforms.tAO.value = this.gtao.pdRenderTarget.texture;
+    super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+  }
+
+  /**
+   * Pass.setSize is a no-op and ShaderPass does not override it, so without
+   * this the neighbourhood radius stays pinned to the window size the game
+   * started at. The failure is silent and directional - resize the window
+   * larger and the irradiance estimate quietly narrows - which is exactly the
+   * shape of defect this project keeps shipping.
+   */
+  setSize(width, height) {
+    this.uniforms.uTexel.value.set(1 / width, 1 / height);
   }
 }
 
@@ -430,17 +643,135 @@ export function createPost(renderer, scene, camera) {
   // onto the scene instead of sitting in it, and every crease reads flat.
   // It runs immediately after the beauty pass, before bloom, so occluded
   // creases do not glow.
+  //
+  // THIS PASS RAN FOR WEEKS AND DREW ALMOST NOTHING, and it is the ninth
+  // instance of this project's defining bug class. It was not disabled, it was
+  // not misconfigured in any way an error would report, and it was not cheap -
+  // GTAOPass re-renders the entire scene through MeshNormalMaterial every frame
+  // to fill its own G-buffer. It was simply TUNED TO A SCALE NOTHING IN THE
+  // FRAME OCCUPIES.
+  //
+  // How it was caught, because reading the code would never have done it: set
+  // `gtao.output = GTAOPass.OUTPUT.AO`, disable every pass after it, and look
+  // at the AO buffer itself. It came back as a LINE DRAWING - a one-pixel rim on
+  // brick joints and pyramid step edges, and pure white everywhere else. Mean
+  // 0.971 of 1.0 over the lower half of the frame. That is a mask render, and it
+  // is the same tool that found the inside-out chamfer and the sight behind the
+  // racking hook.
+  //
+  // Then measured on the final image, hardware renderer, film grain frozen at
+  // zero so the only variable is the pass, at three of the seven capture poses:
+  //
+  //     pose                  AO off    shipped 0.85m    delta
+  //     5 ground-fill         109.25       109.22        -0.03   <- nothing
+  //     1 spawn-hip           104.81       103.87        -0.94
+  //     7 interior             29.64        27.79        -1.85
+  //
+  // Pose 5 is the one that matters and the one the judges complained about: a
+  // rock and three potsherds lying on open sand, three metres from the eye. The
+  // pass moved it by 0.03 of 255. Two independent blind judges wrote "rocks,
+  // crates and braziers float on the sand with no grounding" and "every prop
+  // sits on the ground with zero grounding darkening", and they were reading a
+  // build with a screen-space AO pass switched on.
+  //
+  // WHY THE RADIUS WAS THE WHOLE BUG. The shader takes DIRECTIONS x STEPS
+  // samples out to `radius`, spaced by pow(j/STEPS, distanceExponent). At 16
+  // samples that is 3 directions of 6 steps, and at radius 0.85 with exponent
+  // 1.6 those six land at 4.9, 14, 26, 41, 59 and 85 cm. A potsherd is four
+  // centimetres tall. Exactly ONE step in six is close enough to see it, so the
+  // horizon barely rises and the AO term comes back at 0.99. The radius was
+  // chosen for "architecture-scale creases" and the comment said so, but the
+  // props that read as floating are not architecture, and the eye looks at the
+  // ground it is walking on.
+  //
+  // WHAT REPLACED IT, swept on hardware at poses 1, 5 and 7 and chosen BY EYE on
+  // 4x crops of a rock on sand and a brazier stem meeting its plinth, not by
+  // the numbers - the numbers are here to prove it landed, not that it is good:
+  //
+  //   radius/exp/thick/scale  pose5    pose1    pose7   pose7 nearBlack%
+  //    off                    109.25   104.81   29.64      16.75
+  //    0.85/1.6/1.0/1.1 (was) 109.22   103.87   27.79      18.65
+  //    1.20/2.6/1.0/2.0       109.34   100.63   27.68      21.10
+  //    0.60/2.0/0.8/2.5 <-    109.09   101.80   28.57      19.07
+  //    1.20/2.6/1.0/2.0 @32   109.34    99.72   22.59      35.51   REJECTED
+  //
+  // The last row is why `samples` stays at 16. Above 30 the shader switches from
+  // 3 sampling directions to 5, which in a closed room finds occlusion in every
+  // direction at once: the Great Gallery lost a quarter of its light and more
+  // than a third of the frame went near-black. The interior is the darkest
+  // surface in this game, it is separately under repair for exactly this, and
+  // the lighting pass that fixed it was signed off blind. AO is not allowed to
+  // take it back.
+  //
+  // The chosen row costs NOTHING it did not already cost - same sample count,
+  // same G-buffer, same two blits - and it is the mildest of the three
+  // candidates on the interior while being the strongest of them on the ground.
+  // Its six steps land at 1.7, 6.7, 15, 27, 42 and 60 cm, so four of six are
+  // inside the height of the props that were floating.
+  //
+  // `thickness` at 0.8 is what keeps this from becoming a halo pass: a sample
+  // whose view-space depth differs by more than 0.8 m is rejected outright, so a
+  // wall three metres behind a column cannot darken the silhouette in front of
+  // it. It is a rejection radius, not a strength, and it moves with the sampling
+  // radius rather than independently of it.
   const gtao = new GTAOPass(scene, camera, size.x, size.y);
   gtao.blendIntensity = 1.0;
   gtao.updateGtaoMaterial({
-    radius: 0.85,            // world units. Architecture-scale creases.
-    distanceExponent: 1.6,
-    thickness: 1.0,
-    scale: 1.1,
+    // World units, and CONTACT scale rather than architecture scale. See above:
+    // at 0.85 only one of six steps fell inside the height of a potsherd.
+    radius: 0.60,
+    // Squared spacing, so the near steps cluster where contact actually happens
+    // instead of spreading evenly out to the radius.
+    distanceExponent: 2.0,
+    // View-space depth rejection. Below the radius on purpose; this is what
+    // stops a distant surface from painting a dark rim around a near silhouette.
+    thickness: 0.8,
+    // Contrast on the AO term itself (ao = pow(ao, scale)). The occlusion this
+    // pass finds is real but shallow, and this is what takes a 0.93 crease to
+    // 0.83 where the eye can see it.
+    scale: 2.5,
+    // NOT 32. Above 30 the shader goes to five sampling directions and the
+    // unpowered interior loses a quarter of its light. See the sweep above.
     samples: 16,
+    // World-space, not screen-space. Contact is a physical scale: a rock's
+    // grounding should not grow as the player backs away from it.
     screenSpaceRadius: false,
   });
+
+  // GTAOPass does not get to composite. Its Default output runs two fullscreen
+  // blits - a NoBlending copy of the read buffer into the write buffer, then
+  // `dst * mix(1, ao, intensity)` on top - and that blend is fixed-function, so
+  // it cannot see what it is darkening. OUTPUT.Off makes the pass do only the
+  // work that is actually hard: the normal G-buffer, the horizon search and the
+  // Poisson denoise, all of which land in `gtao.pdRenderTarget`.
+  //
+  // needsSwap MUST go with it. In Off mode the pass writes nothing to
+  // writeBuffer, and EffectComposer swaps read and write after any pass whose
+  // needsSwap is true - so leaving it set would hand the next pass an
+  // uninitialised buffer and the frame would come back as whatever was in that
+  // target two frames ago.
+  gtao.output = GTAOPass.OUTPUT.Off;
+  gtao.needsSwap = false;
   composer.addPass(gtao);
+
+  const aoComposite = new AOCompositePass(AOCompositeShader, gtao);
+  aoComposite.uniforms.uTexel.value.set(1 / size.x, 1 / size.y);
+
+  // Tied to the GTAO pass rather than toggled separately. If the AO computation
+  // is off and this stays on, it keeps multiplying the frame by the LAST AO
+  // buffer that was filled - which, with a frozen camera, is bit-identical to a
+  // live one. The A/B in test/ao-ab.mjs disables `post.gtao` and would then
+  // measure a zero delta against a pass that is still fully applied, and report
+  // "GTAO HAS NO VISIBLE EFFECT" about a working chain. A getter is used rather
+  // than a setter pair so that every caller - the fidelity switch, the harness,
+  // anything added later - gets the interlock for free.
+  Object.defineProperty(aoComposite, 'enabled', {
+    get() { return this._on && gtao.enabled; },
+    set(v) { this._on = v; },
+  });
+  aoComposite.enabled = true;
+
+  composer.addPass(aoComposite);
 
   // --- height fog -----------------------------------------------------------
   // This slot is load-bearing three ways. AFTER GTAO, because it borrows the
@@ -527,6 +858,7 @@ export function createPost(renderer, scene, camera) {
     grade,
     smaa,
     gtao,
+    aoComposite,
     fog,
     viewmodelPass,
 
@@ -552,6 +884,7 @@ export function createPost(renderer, scene, camera) {
       smaa.enabled = high;
       grade.enabled = high;
       gtao.enabled = high;   // AO is the most expensive pass in the chain
+      aoComposite.enabled = high;  // and its composite follows it either way
       fog.enabled = high;    // borrows GTAO's depth, so it goes with it
       // The viewmodel pass always stays on: disabling it would remove the gun.
 

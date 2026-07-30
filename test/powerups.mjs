@@ -136,15 +136,35 @@ function stats({ data, w, h }) {
  */
 function diff(a, b) {
   let n = 0, changed = 0, gain = 0;
+  // Histogram of the CHANGED pixels only, for markSpread below.
+  const hist = new Uint32Array(256);
   for (let i = 0; i < a.data.length; i += 3) {
     const la = (a.data[i] + a.data[i + 1] + a.data[i + 2]) / 3;
     const lb = (b.data[i] + b.data[i + 1] + b.data[i + 2]) / 3;
     n++;
-    if (la - lb >= 12) { changed++; gain += la - lb; }
+    if (la - lb >= 12) { changed++; gain += la - lb; hist[la | 0]++; }
   }
+  const at = (q) => {
+    const want = q * changed;
+    let acc = 0;
+    for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= want) return i; }
+    return 255;
+  };
   return {
     changedPct: +((changed / n) * 100).toFixed(2),
     lift: changed ? +(gain / changed).toFixed(1) : 0,
+    /**
+     * Interdecile range of THE FIXTURE'S OWN PIXELS - the same statistic as
+     * stats().spread, over the mask above instead of the whole patch.
+     *
+     * This is the direct form of the question `spread` was asking as a proxy:
+     * does the thing that appeared have a bright mark on a darker ground. The
+     * whole-patch version answers it by accident, because it also contains the
+     * room and the weapon, and it has now been moved twice by changes that had
+     * nothing to do with legibility. This cannot be moved by the room's
+     * exposure, because the room is not in it.
+     */
+    markSpread: changed ? at(0.90) - at(0.10) : 0,
   };
 }
 
@@ -1217,6 +1237,41 @@ const stage = await page.evaluate(async () => {
 const KINDS = opening.kinds;
 const framed = [];
 
+/**
+ * UNHOOK THE WEAPON for the framed measurement.
+ *
+ * The measured patch is CENTRE, and the weapon viewmodel is drawn inside it -
+ * roughly a fifth of it, in metal with specular highlights, so it sets both tails
+ * of the patch histogram and a chunk of the changed-pixel mask.
+ *
+ * IT IS NOT THE SAME WEAPON FROM RUN TO RUN. The sections above this one buy and
+ * roll from the mystery box, which is random, so by the time the drops are
+ * photographed the player is holding whatever the dice gave: three runs of this
+ * file were verified holding an Apis LMG, a Sekhmet Bolt and a Wadjet SMG, which
+ * are different models at different sizes in different poses. That is not sway,
+ * it is a different object in the frame, and it is the largest single source of
+ * variance in this section - larger than any change these gates exist to catch.
+ * The Crowns measured 64 and 77 in two consecutive runs of ONE unchanged build,
+ * against gates whose whole margin is three units.
+ *
+ * The corollary is the useful one: when the viewmodel contribution is held equal,
+ * the numbers here are stable to a hundredth. Two runs that happened to roll the
+ * same Apis LMG, on two trees differing only in the AO composite, agreed on the
+ * fire sale's home-plinth changedPct at 3.19 and 3.20; the runs holding different
+ * weapons ranged 3.26 to 4.02 and flipped `the live one is left alone` between
+ * pass and fail on an unchanged build.
+ *
+ * The drops are what is under test here, not the gun. Scoped to the measurement
+ * and re-hooked below; the shipped frame still has the weapon in it.
+ */
+const gunOff = await page.evaluate(() => {
+  for (const p of window.__SANDS__.post.composer.passes) {
+    if (p.constructor.name === 'ViewmodelPass') { p.__vm = p.viewmodel; p.viewmodel = null; return true; }
+  }
+  return false;
+});
+if (!gunOff) throw new Error('ViewmodelPass not found - the framed measurement cannot be trusted with the weapon in shot');
+
 /** The two cameras: where you buy from, and where you notice. */
 const NEAR = 4.0;
 const FAR = 12.0;
@@ -1263,9 +1318,16 @@ for (const dist of [NEAR, FAR]) {
       peak: shot.patch.peak,
       changedPct: changed.changedPct,
       lift: changed.lift,
+      markSpread: changed.markSpread,
     });
   }
 }
+
+await page.evaluate(() => {
+  for (const p of window.__SANDS__.post.composer.passes) {
+    if (p.constructor.name === 'ViewmodelPass' && p.__vm) { p.viewmodel = p.__vm; p.__vm = null; }
+  }
+});
 
 // The same measurement in the worst case for a lit object: full sun, where an
 // additive halo clips all three channels and the glyph disappears into it.
@@ -1871,8 +1933,92 @@ const checks = {
    * the fixture to clear it. An earlier halo on these very drops scored WELL on
    * mean luminance precisely because it had swallowed every glyph into a white
    * blob.
+   *
+   * ---------------------------------------------------------------------------
+   * MOVED A SECOND TIME, AND THIS TIME REPLACED RATHER THAN RE-FLOORED.
+   *
+   * The AO composite (AOCompositePass, src/core/post.js) moved it again. Same
+   * shape of event as the fog: a legitimate lighting change with no legibility
+   * cost. The Feather at four metres, HEAD against the same commit plus that one
+   * pass:
+   *
+   *     measure        HEAD        with AO     gate
+   *     spread         43 43 44    41 42 42 43 42   > 40   <- the proxy, and only this
+   *     peak           243         241              > 150
+   *     changedPct     20.57       20.45            > 8
+   *     lift           21.6        21.5             > 18
+   *     clip           0           0                < 0.5
+   *
+   * Every direct measure is unmoved to three significant figures. Side by side
+   * with the viewmodel unhooked, the glyph is identically crisp in both frames -
+   * that is the evidence that settled it; the numbers alone could not have.
+   *
+   * AND THE MARGIN IS NOW SMALLER THAN THE NOISE. Those are five runs of the AO
+   * tree: 41, 42, 42, 42, 43, against a floor of 40. An earlier session measured
+   * 40 exactly and read it as a regression. It was not a regression and it was
+   * not a stale tree - a tree one commit older measures 42 as well. It was the
+   * low tail of a distribution that now sits one unit off the floor. This gate
+   * had begun failing intermittently on nobody's change at all.
+   *
+   * TWO MOVES FOR TWO UNRELATED REASONS IS NOT A FLOOR PROBLEM, IT IS A
+   * STATISTIC PROBLEM. The whole-patch interdecile range is a measure of the
+   * FRAME. Everything in the patch moves it: the room's exposure (the fog), the
+   * ambient occlusion term (this pass), and the weapon viewmodel, which is a
+   * randomly rolled model drawn inside CENTRE - see the note above the framed
+   * loop, where the Crowns swings thirteen units between two runs of one build.
+   *
+   * So the statistic is now `markSpread`: the SAME interdecile range and THE SAME
+   * FLOOR OF 40, computed over the pixels the fixture itself changed - the mask
+   * diff() already builds - instead of over the whole patch. Nothing about the
+   * threshold is being relaxed; what changes is what it is measured on. It asks
+   * the question directly, does the thing that appeared have a bright mark on a
+   * darker ground, and the room is not in it, so a change to the room cannot move
+   * it.
+   *
+   * Measured with the viewmodel unhooked on both trees, at four metres, one HEAD
+   * run and three of the AO tree:
+   *
+   *     drop          markSpread                whole-patch spread
+   *                   HEAD   AO AO AO           HEAD   AO AO AO
+   *     Feather        65     66 64 61           44     42 43 44
+   *     Hapi           67     69 68 68           59     59 56 57
+   *     Crowns         87     87 75 72           71     67 50 49
+   *     Second Death   69     68 67 70           57     56 54 55
+   *     Hoard          76     51 74 74           59     50 55 56
+   *     Nameless       74     75 70 67           65     63 60 55
+   *
+   *     worst of all   51                        42
+   *     margin over 40 11                         2
+   *
+   * That is the whole argument. The floor does not move; the margin over it goes
+   * from two units to eleven, on a statistic that a change to the room's exposure
+   * cannot reach. Note that markSpread is NOT claimed to be insensitive to this
+   * pass - the Feather reads 61 to 66 with it on against 65 without, which is
+   * inside the run-to-run range of either measure and is not resolvable at these
+   * sample counts. The claim is narrower and is the one that matters: whatever
+   * this pass does to the drops is smaller than the noise, every DIRECT measure of
+   * legibility is unmoved, the glyph is identically crisp on screen, and the gate
+   * now has enough margin to say so without flickering.
+   *
+   * WHAT THIS DOES NOT FIX. The Hoard swings 51 to 76 between runs on its own,
+   * and its whole-patch figure swings with it, so that one is spin phase rather
+   * than lighting - the drops are photographed on the mechanism's own clock with
+   * an 0.08 radian tolerance and the Hoard is a pile of separate gold pieces
+   * whose self-shadowing depends on facing. Forty clears its low tail with room
+   * to spare, but if the Hoard is ever the drop that fails this gate, tighten
+   * spinFaceOn for it rather than touching the floor. Two samples per tree is
+   * also not a calibration; the floor is being kept where it was precisely so
+   * that no new number has to be defended on two samples.
+   *
+   * It still catches what the old gate existed for, and more directly. A fixture
+   * clipped to a white blob has almost no range WITHIN ITSELF, so markSpread
+   * collapses toward zero - whereas the old gate could be propped up to 40 by a
+   * dark room standing behind a blown-out blob.
+   *
+   * The original warning carries over and applies to this floor too: do not move
+   * it to make a number look better. If markSpread falls, look at the drop.
    */
-  'each has shape on it':            nearFrames.every((f) => f.spread > 40),
+  'each has shape on it':            nearFrames.every((f) => f.markSpread > 40),
   'they survive full sun':           sunlit.every((s) => s.changedPct > 1.0 && s.clip < 0.5),
   'a warning drop still photographs': warnFrames.every((w) => w.patch > 8),
   /**
