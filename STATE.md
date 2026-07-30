@@ -18,8 +18,8 @@ Suites:
 ```bash
 npm install     # playwright and sharp, for the harness only
 npm start       # serve on 4177
-npm test        # EIGHT of the THIRTEEN files in test/: shot gun interior
-                # economy enemies mysterybox grenades powerups
+npm test        # TEN of the thirteen files in test/: shot gun interior economy
+                # enemies mysterybox grenades powerups hud probe
 ```
 
 Those eight are green as of 2026-07-29, verified on an ISOLATED tree rather than
@@ -38,13 +38,35 @@ sat undetected, and it is the root cause of both.
 | file | in `npm test` | state |
 |---|---|---|
 | shot gun interior economy enemies mysterybox grenades powerups | yes | green |
-| **hud.mjs** | **no** | **205 checks, 8 FAILING at HEAD** |
-| **probe.mjs** | **no** | passes, but nothing runs it routinely |
+| hud.mjs | **yes, now** | **211 checks, green** |
+| probe.mjs | **yes, now** | green |
 | ao-ab.mjs | no | a measurement tool; correctly not a gate |
 | settings.mjs | no | new, from the pause/settings work |
 | chrome.mjs | n/a | helper, not a suite |
 
-Because nothing ran `hud.mjs` routinely, two things rotted inside it:
+**hud and probe were wired into `npm test` once hud went green**, which is the
+durable half of the fix. The eight failures were three separate faults and none of
+them were in the game:
+
+- **Seven** were one harness bug counted once per pose. `walkTest()` sampled the
+  minimap wedge along m0's spine AFTER a second `mark()` call had cleared the
+  canvas and redrawn the wedge 18-29 px away. It could never have scored anything
+  but zero, on any build. Two earlier fixes had already attacked it and both read
+  "no pixels" as a question about WHERE to sample, building better instruments
+  while the frame under test was already gone.
+- **One** was a stage that walked up to the SMG wall and asserted a prompt
+  appeared, after its own earlier stages had bought the SMG. A wall whose weapon
+  you own but are not holding is deliberately silent - `offerFor()` returns 'idle'
+  so that a wall does not become a universal ammo box. It now picks a wall by the
+  condition that produces text.
+- That last one was **hiding a weaker assertion**: the overlap check above it,
+  "no two HUD elements overlap with a boss, a prompt and gold popups all live",
+  was passing against a frame with no prompt in it. It now runs on ten elements
+  including the prompt rather than nine.
+
+Because nothing ran `hud.mjs` routinely for as long as it existed, two things
+rotted inside it. Both are fixed, and both are recorded here because the mechanism
+matters more than the fix:
 
 1. **It ignored the URL argument** until 5fb40a5 - it read only `SANDS_URL`, so
    every `node test/hud.mjs http://127.0.0.1:PORT/index.html` silently tested
@@ -63,8 +85,9 @@ Because nothing ran `hud.mjs` routinely, two things rotted inside it:
    worst-case frame really had all three up: boss true prompt false".
    **UNRESOLVED**, under investigation in the minimap lane.
 
-**hud is NOT a green gate right now.** Do not read a hud run as pass or fail
-except against the 197-pass / 8-fail baseline.
+**hud is green as of 2026-07-29 at 211 checks and is now in `npm test`.** The
+197-pass / 8-fail baseline it had to be read against is history; a failure there is
+now a real failure.
 
 `test/settings.mjs` has the SAME defect hud.mjs had - reads only `SANDS_URL`,
 ignores `argv[2]`. It is uncommitted work owned by another session and was left
@@ -79,9 +102,9 @@ a script happens to invoke. The audit that found both defects was a loop over
 `ao-ab.mjs`, which looks broken to a naive grep because it navigates via a
 template literal.
 
-Adding hud and probe to `npm test` is the obvious durable fix and is deliberately
-NOT done yet: hud is red, so wiring it in now would make `npm test` red while
-several lanes are in flight. Do it as soon as the wedge question is settled.
+Still outside the gate on purpose: `ao-ab.mjs` is a measurement tool, not an
+assertion suite. `settings.mjs` belongs to in-flight work and should be added when
+that lands - and given the one-line URL fix first.
 
 `node test/ao-ab.mjs` separately measures whether the AO pass contributes.
 

@@ -1648,7 +1648,38 @@ await page.evaluate(async () => {
   for (let i = 0; i < 40 && !g.director.boss; i++) g.director.update(1 / 30, i / 30);
 
   window.__H__.goRoom('chamber-of-ascent');
-  const wall = g.interacts.records.find((r) => r.type === 'wallbuy');
+
+  /**
+   * PICK A WALL THAT WILL ACTUALLY SAY SOMETHING.
+   *
+   * This used to take records.find(type === 'wallbuy'), the first wall in the
+   * list, and then assert a prompt was up. It was the SMG wall, and by the time
+   * this stage runs the suite's own earlier stages have already bought the SMG.
+   *
+   * A wall whose weapon you OWN BUT ARE NOT HOLDING is deliberately silent -
+   * offerFor() in systems/wallbuy.js returns kind 'idle' and describe() returns
+   * empty text, because standing at the shotgun wall topping up a carbine you
+   * are not holding would turn every wall in the map into a universal ammo box.
+   * That is correct game behaviour with a comment explaining itself, and the
+   * harness was walking up to the one fixture guaranteed to have nothing to say.
+   *
+   * Diagnosed rather than guessed: the candidate WAS live (interacts.candidate
+   * === 'wallbuy'), the player WAS placed correctly, and the prompt element had
+   * display block and visibility visible with empty text at opacity 0 - because
+   * prompt.js toggles the 'on' class on !!text. My first hypothesis, that the
+   * chosen wall was in another room, was wrong and the instrumentation said so.
+   *
+   * So choose by the condition that produces text. An unowned wall offers 'take'
+   * and quotes a price; failing that, equip the wall's own weapon so it offers
+   * 'refill' or 'full', both of which speak.
+   */
+  const walls = g.interacts.records.filter((r) => r.type === 'wallbuy' && r.config);
+  let wall = walls.find((r) => !g.weapons.owns(r.config.weapon));
+  if (!wall) {
+    wall = walls[0];
+    g.weapons.equip(wall.config.weapon);
+  }
+
   window.__H__.place(wall.x, wall.z + 3.2, Math.PI);
   window.__H__.aimAt(wall.x, 2.3, wall.z);
   g.interacts.update();
