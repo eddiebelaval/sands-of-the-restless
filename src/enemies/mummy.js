@@ -62,7 +62,7 @@ const STRIPS = new Map();
 function stripGeo(w, h, cut = 0) {
   const key = `${w}|${h}|${cut}`;
   let g = STRIPS.get(key);
-  if (!g) { g = tornStrip(w, h, cut, 5, WRAP_TILES); STRIPS.set(key, g); }
+  if (!g) { g = tornStrip(w, h, cut, 7, WRAP_TILES); STRIPS.set(key, g); }
   return g;
 }
 
@@ -663,6 +663,37 @@ function makeMaterials(spec) {
     normalMap: linen.normalMap,
     normalScale: new THREE.Vector2(0.85, 0.85),
     roughnessMap: linen.roughnessMap,
+    /**
+     * HELD AT 0.96, AND THAT IS A MEASURED DECISION RATHER THAN AN UNTOUCHED ONE.
+     *
+     * The obvious answer to "the actors sit in the same value band as the wall
+     * behind them" is a specular lobe: at 0.96 times a roughness map averaging
+     * 0.92 the effective roughness is 0.88, which for a dielectric leaves almost
+     * no lobe, and this build has already shipped that exact defect once on metal
+     * at roughness 1 that rendered as flat colour.
+     *
+     * So it was tried, at 0.78 with wrapDark at 0.88, and A/B'd against a TRUE
+     * control - same tree, same pose, same pixels, one number different, with the
+     * HDRI environment loaded and prefiltered so there was something for a lobe
+     * to reflect. Against a control pair that came back at exactly 0.000:
+     *
+     *     figure luma          0.96 / 0.98      0.78 / 0.88
+     *     median                    113.3            113.2
+     *     p90                       173.2            172.1
+     *     p99                       189.5            190.2
+     *     max                       192.4            196.6
+     *     mean abs frame delta                       0.005
+     *
+     * Four luma on the single brightest pixel and five thousandths of a luma on
+     * the mean. A dielectric's F0 is 0.04, so the whole lobe is worth four per
+     * cent of incident radiance before roughness spreads it, and the difference
+     * between 0.88 and 0.70 effective is inside the tone curve's rounding. It is
+     * not a legibility change and shipping it would have been a comment claiming
+     * a highlight that is not there.
+     *
+     * What DOES separate these actors from the wall is the value RANGE the
+     * trailing linen adds - see tornStrip - not a change to the linen's shading.
+     */
     roughness: 0.96,
     metalness: 0.0,
     emissive: CHAMBER_FLOOR.clone(),
@@ -709,14 +740,37 @@ function makeMaterials(spec) {
     metalness: spec.palette.accentMetal ?? 0.7,
   });
 
+  /**
+   * The trailing linen.
+   *
+   * THE VALUE BREAK IS IN THE GEOMETRY, NOT IN THIS COLOUR, and that is the
+   * whole change. The material this replaces was painted at the wrapDark value
+   * and left flat: one value on a rag that hangs sometimes against sunlit
+   * limestone and sometimes against an unlit chamber will always match one of
+   * them. tornStrip bakes a colour attribute with three bands - about 0.26 of
+   * this value at the bind, 0.86 where the cloth hangs slack, 0.44 at the torn
+   * hem - so one strip has an internal edge whatever is behind it, and no part of
+   * it is ever brighter than the limb it hangs on.
+   *
+   * The base colour here is the BODY's linen rather than the shadow under it, and
+   * that is not a brightening: every band is under one, so the rag renders between
+   * 0.26 and 0.96 of the limbs. Painting the material at wrapDark and multiplying
+   * again would put the slack band at 0.86 of a value that is already a third of
+   * the body's, which is a black rag and no internal range at all.
+   *
+   * `vertexColors` obliges every geometry this material is ever put on to carry
+   * a `color` attribute. That is safe by construction: the only meshes that
+   * take mats.tatter come from stripGeo, and stripGeo is tornStrip.
+   */
   const tatter = new THREE.MeshStandardMaterial({
-    color: jitter(spec.palette.wrapDark, dh, -0.05 + ds, dl),
+    color: jitter(spec.palette.wrap, dh, -0.06 + ds, dl),
     map: linen.map,
     normalMap: linen.normalMap,
     normalScale: new THREE.Vector2(0.6, 0.6),
     roughness: 1.0,
     metalness: 0.0,
     side: THREE.DoubleSide,
+    vertexColors: true,
     emissive: CHAMBER_FLOOR.clone(),
   });
 
@@ -801,6 +855,25 @@ export function buildHumanoid(spec, mats, actor) {
     reach: (R() - 0.5) * 0.38,     // one arm further out than the other
   };
 
+  /**
+   * WHICH SIDE LEADS, and it is derived rather than drawn.
+   *
+   * A mirrored actor reads as a toy: a real body has a strong side, and a dead
+   * one has a side that stopped working first. The previous pass owned a droop
+   * and a reach, both small, and left the SKELETON perfectly symmetrical - so
+   * the outline was still a mirror about the spine at every distance where a
+   * seven-degree shoulder droop is under a pixel.
+   *
+   * The sign comes off `asym.reach`, which is already drawn, instead of taking a
+   * new sample. That is not a micro-optimisation: `Math.random()` here is a
+   * SHARED stream, and adding or removing a draw silently moves every later
+   * consumer of it. The pool happens to be built after the courtyard so nothing
+   * in the level would move today, but "happens to be" is not a contract, and
+   * the correct habit is to derive per-instance variation from samples the rig
+   * already owns.
+   */
+  const lead = asym.reach >= 0 ? 1 : -1;
+
   // Gait, per instance. Twenty-four bodies walking on the same stride length at
   // the same rate is a chorus line, and it is the one variation that only shows
   // once they are MOVING - which is when the player actually looks at them.
@@ -835,7 +908,13 @@ export function buildHumanoid(spec, mats, actor) {
   const legs = [];
   for (const side of [-1, 1]) {
     const hip = new THREE.Group();
-    hip.position.set(side * P.legX * j.chestW, 0, 0);
+    // NOT A SQUARE STANCE. Both feet on one line is a shop mannequin on a stand;
+    // a body that has been standing in a tomb for three thousand years has one
+    // foot planted and one trailing, and the offset survives at any distance
+    // where the feet are more than a pixel apart because it changes the shape
+    // the two legs make against the sand rather than a shading detail.
+    hip.position.set(side * P.legX * j.chestW, 0,
+      side === lead ? P.legX * 0.42 : -P.legX * 0.26);
     hips.add(hip);
 
     add(hip, G.thigh, bare.leg === side ? mats.wrapDark : mats.wrap, 'body')
@@ -855,6 +934,15 @@ export function buildHumanoid(spec, mats, actor) {
   torso.position.y = P.torsoY;
   hips.add(torso);
 
+  // A permanent twist in the spine, so the chest and the hips do not face the
+  // same way. The animator owns torso.rotation.x and .z and hips.rotation.y; .y
+  // on the torso is free, which is why the twist lives here rather than being
+  // folded into the walk.
+  // asym.reach runs +/-0.19, so this is up to ten degrees of twist. A third of
+  // that would have been arithmetically present and visually absent, which is
+  // the failure mode every asymmetry pass on this file has hit so far.
+  torso.rotation.y = asym.reach * 0.85;
+
   add(torso, G.torsoLinen, mats.wrap, 'body').scale.set(j.chestW, j.chest, j.chestW);
   add(torso, G.torsoDark, mats.wrapDark, 'body').scale.set(j.chestW, j.chest, j.chestW);
   add(torso, G.torsoAccent, mats.accent, 'body')?.scale.set(j.chestW, j.chest, j.chestW);
@@ -863,8 +951,14 @@ export function buildHumanoid(spec, mats, actor) {
   const arms = [];
   for (const side of [-1, 1]) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(side * P.shoulderX * j.chestW,
-      P.shoulderY * j.chest + side * asym.droop, 0);
+    // The lead shoulder sits further out and further forward, the trailing one
+    // pulls in. A droop of four degrees is invisible past a few metres; a span
+    // difference changes the width of the outline itself, which is the thing that
+    // is still legible when the whole figure is forty pixels tall.
+    const w = side === lead ? 1.11 : 0.93;
+    shoulder.position.set(side * P.shoulderX * j.chestW * w,
+      P.shoulderY * j.chest + side * asym.droop,
+      side === lead ? P.shoulderX * 0.20 : -P.shoulderX * 0.12);
     torso.add(shoulder);
 
     add(shoulder, G.upper, bare.arm === side ? mats.wrapDark : mats.wrap, 'body')
@@ -884,6 +978,13 @@ export function buildHumanoid(spec, mats, actor) {
   const neck = new THREE.Group();
   neck.position.y = P.headY * j.chest;
   neck.scale.setScalar(j.head);
+  // Turned off the axis of travel, permanently, and against the spine's twist so
+  // the two do not cancel. The animator writes the neck's x and z; .y is free.
+  // Against the spine, so the two do not cancel, but smaller than the twist plus
+  // the twist: the net head bearing stays within about five degrees of the
+  // direction of travel, because an enemy whose skull is turned away from the
+  // player reads as unaware rather than as broken.
+  neck.rotation.y = -asym.reach * 1.15;
   torso.add(neck);
 
   // Four meshes, all region 'head'. A hit on the bandaged jaw of a mummy is a
@@ -904,34 +1005,61 @@ export function buildHumanoid(spec, mats, actor) {
   add(neck, G.headAccent, mats.accent, 'head');
 
   // --- trailing wraps --------------------------------------------------------
-  // Thin geometry is what breaks a silhouette into readable depth layers, and a
-  // mummy with none is a stack of boxes. These hang from pivots and lag the
-  // body, so they trail on the move and settle when it stops.
+  //
+  // THE ONE THING ON THIS BODY THAT IS NOT A BOX, and for four rounds of blind
+  // comparison it was not on screen. See tornStrip in anatomy.js for what was
+  // wrong with the shape; what is wrong HERE is where the pivots sat. A rag
+  // hung plumb from a point inboard of the chest can only ever draw over the
+  // torso, and painting the inside of a silhouette does not change the
+  // silhouette. So the anchors go OUTBOARD - `x` is now scaled by the same
+  // chest-width jitter the torso is, so a narrow corpse's rags follow it in -
+  // and every strip gets a permanent outward tilt so its hem hangs clear of the
+  // body edge rather than against it.
+  //
+  // THE DRAW COUNT IS UNCHANGED. Three strips is three meshes is seventy-two
+  // draw calls at the live cap of twenty-four, exactly as before; the strips are
+  // wider and longer, which costs a handful of triangles and nothing else.
   const tatters = [];
   for (const t of P.tatters) {
     // Not every corpse still has every wrap. Dropping one at random varies both
     // the outline and the draw call count, which is the rare variation that
     // costs less than none.
-    if (P.tatters.length > 1 && R() < 0.18) continue;
+    //
+    // Down from 0.18. With three rags that was a better than one in two chance
+    // of an actor missing at least one of them, and at gameplay distance the
+    // rags ARE the outline - a shambler with one left is most of the way back to
+    // the mannequin this pass exists to end. The draw sample stays exactly where
+    // it was in the sequence; only the threshold moved.
+    if (P.tatters.length > 1 && R() < 0.10) continue;
 
     const pivot = new THREE.Group();
-    pivot.position.set(t.x, t.y * j.chest, t.z);
+    pivot.position.set(t.x * j.chestW, t.y * j.chest, t.z);
     // A strip lies in its own XY plane, so an unrotated one is edge-on from the
     // side and a flat billboard from the front. Distributing them around Y is
     // what turns four rags into a ragged OUTLINE rather than four flags.
     pivot.rotation.y = (t.yaw || 0) + (R() - 0.5) * 0.5;
+    // Tilted AWAY from the midline, on whichever side of it the anchor sits.
+    // Positive rotation.z carries a hanging strip toward +x, so the sign has to
+    // follow the anchor or the rag lies back down against the limb it came off
+    // - which is what `tatterRest` at 0.10 did before it was raised, one axis
+    // over.
+    const restZ = (t.out || 0) * (t.x < 0 ? -1 : 1);
+    pivot.rotation.z = restZ;
     (t.on === 'arm' ? arms[t.side > 0 ? 1 : 0].elbow : torso).add(pivot);
 
     const m = new THREE.Mesh(stripGeo(t.w, t.h, t.cut || 0), mats.tatter);
     m.scale.set(0.82 + R() * 0.4, 0.8 + R() * 0.45, 1);
     // Wraps are decoration. Left hittable they sit in front of the skull at
     // certain angles and silently convert a headshot into a body hit, which is
-    // a 40 gold bug the player would never be able to diagnose.
+    // a 40 gold bug the player would never be able to diagnose. They are wider
+    // now, so this matters more than it did: the weapon's pick drops every
+    // noHit intersection outright, so a rag across the face cannot take a
+    // headshot no matter how much of it there is.
     m.userData.noHit = true;
     m.castShadow = false;
     pivot.add(m);
 
-    tatters.push({ pivot, phase: R() * 6.283, swing: (t.swing ?? 1) * gait.swing });
+    tatters.push({ pivot, restZ, phase: R() * 6.283, swing: (t.swing ?? 1) * gait.swing });
     triangles += m.geometry.attributes.position.count / 3;
   }
 
@@ -946,7 +1074,7 @@ export function buildHumanoid(spec, mats, actor) {
 
   return {
     group, body, hips, torso, neck, legs, arms, tatters, meshes, triangles,
-    asym, gait, blob,
+    asym, gait, lead, blob,
   };
 }
 
@@ -978,12 +1106,26 @@ function animateHumanoid(rig, spec, s) {
   // rotation.x therefore swings a hanging limb BACKWARD. Reaching forward is
   // negative; a bending knee, which carries the foot backward, is positive.
 
+  /**
+   * THE DRAG, and it is what makes this a lurch rather than a march.
+   *
+   * The two legs were a half cycle apart on identical amplitudes, which is a
+   * WALK: symmetric, even, and the thing a chorus line does. Undead motion is
+   * unequal. The trailing leg swings about two thirds as far, stays a little
+   * behind the hip through the whole cycle, and keeps a permanent bend in the
+   * knee - so it is pulled after the body instead of carrying it, and the figure
+   * has a good side and a bad one from any angle.
+   */
+  const lead = rig.lead || 1;
   for (const leg of rig.legs) {
     const o = leg.side < 0 ? 0 : Math.PI;
-    leg.hip.rotation.x = Math.sin(p + o) * amp;
+    const drag = leg.side === lead ? 1 : 0.64;
+    leg.hip.rotation.x = Math.sin(p + o) * amp * drag
+      + (leg.side === lead ? 0 : 0.07 * drive);
     // The knee only bends on the recovery half of the stride. A knee that bends
     // both ways is the classic backwards-leg artefact.
-    leg.knee.rotation.x = Math.max(0, -Math.cos(p + o)) * amp * 1.5 + 0.06;
+    leg.knee.rotation.x = Math.max(0, -Math.cos(p + o)) * amp * 1.5 * drag
+      + (leg.side === lead ? 0.06 : 0.17);
   }
 
   // The wind-up and the strike own the arms outright. A telegraph the player
@@ -1035,8 +1177,15 @@ function animateHumanoid(rig, spec, s) {
 
   // One dip per footfall, one sway per stride. Damped hard when staggered so a
   // hit visibly interrupts the gait rather than only tinting the material.
+  //
+  // THE HITCH. |sin| is two identical dips per stride, which is a metronome, and
+  // a metronome is the loudest "this is a puppet" cue in a walk cycle. Once per
+  // full cycle - as the DRAG foot takes weight - the body drops a little further
+  // and catches. Raised to the eighth power so it is a short catch rather than a
+  // second bob: the whole point is that the rhythm is uneven.
   const bob = Math.abs(Math.sin(p)) * g.bob * drive;
-  rig.body.position.y = bob - s.stagger * 0.06;
+  const hitch = Math.pow(Math.max(0, Math.sin(p + 0.9)), 8) * g.bob * 0.85 * drive;
+  rig.body.position.y = bob - hitch - s.stagger * 0.06;
   rig.body.rotation.z = s.staggerRoll;
   rig.body.rotation.x = s.staggerPitch;
 
@@ -1048,7 +1197,11 @@ function animateHumanoid(rig, spec, s) {
     // from, which is the whole read of a trailing wrap.
     const lag = Math.sin(p - 0.8 + t.phase) * t.swing;
     t.pivot.rotation.x = lag * 0.30 * drive + P.tatterRest;
-    t.pivot.rotation.z = Math.sin(p * 0.7 + t.phase) * 0.16 * drive;
+    // ADDED to the permanent outward tilt, not written over it. Assigning here
+    // is how the splay set at build time would have been silently erased on the
+    // first animated frame, which is the shape of half the defects in this file's
+    // history: a value written once, believed, and overwritten by the frame loop.
+    t.pivot.rotation.z = t.restZ + Math.sin(p * 0.7 + t.phase) * 0.20 * drive;
   }
 }
 
@@ -1668,8 +1821,11 @@ export const MUMMY = {
     shoulderX: 0.285, shoulderY: 0.50, armW: 0.14, upperL: 0.40, foreL: 0.42,
     headY: 0.66, headW: 0.225, headH: 0.275, headD: 0.255,
     // Hanging well clear of the body, so the rags are OUTLINE rather than
-    // texture. At 0.10 they lay flat against the limbs and did nothing.
-    tatterRest: 0.30,
+    // texture. At 0.10 they lay flat against the limbs and did nothing; 0.30
+    // moved them off the surface but left them inside the outline, because a
+    // pitch backward only ever swings a rag behind the body it hangs on. The
+    // sideways clearance is `out`, per strip, below.
+    tatterRest: 0.42,
 
     /**
      * THE THING THAT STOPS IT BEING A BOX-MAN.
@@ -1685,11 +1841,21 @@ export const MUMMY = {
      * the spine. Three different cuts, three different yaws, and nothing
      * mirrored - a body that has been unravelling for three thousand years has
      * not unravelled evenly.
+     *
+     * THE WIDTHS ARE THE PART THAT WAS WRONG FOR FOUR ROUNDS. These were 34, 13
+     * and 12 cm, and tornStrip then tapered the hem to as little as a third of
+     * that. At the fifteen metres an enemy is fought at, a metre is about 47 px
+     * in a 1000 px frame, so a 5 cm hem is two pixels: authored, believed, never
+     * on screen. The hem is now half a metre across and falls past the pelvis
+     * over both thighs; the spine wrap is anchored outboard of the chest and
+     * falls to the knee; the arm wrap streams off the forearm well outside the
+     * body from every angle. `out` is the permanent sideways clearance, in
+     * radians, and it is what makes each one part of the OUTLINE.
      */
     tatters: [
-      { on: 'torso', x: 0.0, y: -0.04, z: -0.02, w: 0.34, h: 0.44, yaw: 0.10, cut: 0, swing: 0.7 },
-      { on: 'torso', x: -0.13, y: 0.20, z: -0.13, w: 0.13, h: 0.74, yaw: 0.42, cut: 1, swing: 1.1 },
-      { on: 'arm', side: 1, x: 0, y: -0.26, z: 0, w: 0.12, h: 0.52, yaw: 1.10, cut: 2, swing: 1.6 },
+      { on: 'torso', x: -0.03, y: -0.06, z: -0.04, w: 0.34, h: 0.58, yaw: -0.34, cut: 0, swing: 0.7, out: 0.12 },
+      { on: 'torso', x: -0.23, y: 0.26, z: -0.15, w: 0.21, h: 0.90, yaw: 0.62, cut: 1, swing: 1.1, out: 0.26 },
+      { on: 'arm', side: 1, x: 0.02, y: -0.28, z: 0, w: 0.17, h: 0.62, yaw: 1.05, cut: 2, swing: 1.6, out: 0.20 },
     ],
   },
 

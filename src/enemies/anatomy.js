@@ -214,16 +214,53 @@ export function parts(tilesPerUnit = 2.6) {
 /**
  * A torn wrap.
  *
- * Unchanged in spirit from the strip this replaces: a flat quad hanging off a
- * box-man is another box-man edge, so the strip tapers as it falls, its hem is
- * torn at three lengths, and it curls out of its own plane so it still reads
- * from the side rather than vanishing edge-on.
+ * WHAT THE STRIP THIS REPLACES GOT WRONG, MEASURED
  *
- * `cut` seeds the tear, so a shape is stable across a run and shareable between
- * every instance that asks for the same one.
+ * The wraps were modelled, believed, and never rendered. Photographed in
+ * isolation at three angles they contributed ONE dark sliver at the hip and
+ * nothing at all from the front or the side, and the figure read as an
+ * articulated wooden mannequin. Four blind judges in four rounds named the
+ * actors as the build's ceiling; the last said no lighting pass would fix it,
+ * it was a material and silhouette problem. Three separate things were wrong
+ * and every one of them alone was enough:
+ *
+ *   TOO NARROW. Authored at 12 to 13 cm and then multiplied by a taper that
+ *   took the hem to as little as 36 per cent of that. At the fifteen metres an
+ *   enemy is fought at, one metre is about 47 px in a 1000 px frame, so a 5 cm
+ *   hem is TWO PIXELS. Under the mip chain that is not thin cloth, it is
+ *   nothing.
+ *
+ *   INSIDE THE OUTLINE. Every strip hung plumb from a pivot inboard of the body
+ *   it was attached to, so it could only ever draw over the torso and the
+ *   thighs. A silhouette is the thing that identifies a figure at distance, and
+ *   decoration painted inside one does not change it.
+ *
+ *   NO VALUE BREAK ALONG ITS LENGTH. One flat colour on a rag that hangs
+ *   sometimes against sunlit limestone and sometimes against an unlit chamber
+ *   will match one of them. What survives both is a strip carrying more than one
+ *   value along its own length, so whatever is behind it, some part of the cloth
+ *   is separated from it.
+ *
+ * SO: the profile widens rather than tapers and its two edges are cut
+ * independently, the centre line WALKS SIDEWAYS as it falls so the hem finishes
+ * clear of the vertical band the root occupies, a fold runs down the strip so it
+ * has two faces to the sun instead of one, the out-of-plane curl is scaled off
+ * the strip's LENGTH rather than its width, and three value bands are baked into
+ * a colour attribute the tatter material reads.
+ *
+ * PER ROW, NOT PER VERTEX. Width, drift and curl are properties of a height on
+ * a ribbon. The strip this replaces drew all three per vertex, which is what
+ * turned a hanging wrap into torn confetti that averaged back out to a straight
+ * edge. Only the hem tear stays per vertex, because each strand of a tear does
+ * have its own length.
+ *
+ * `cut` seeds every decision, so a shape is stable across a run and shareable
+ * between every instance that asks for the same one - which is what keeps the
+ * pool at one BufferGeometry per (w, h, cut) no matter how deep it is.
  */
-export function tornStrip(w, h, cut = 0, segments = 5, tilesPerUnit = 2.6) {
-  const g = new THREE.PlaneGeometry(w, h, 2, segments);
+export function tornStrip(w, h, cut = 0, segments = 7, tilesPerUnit = 2.6) {
+  const COLS = 3;
+  const g = new THREE.PlaneGeometry(w, h, COLS, segments);
 
   let seed = (cut + 1) * 9301 + 49297;
   const rnd = () => {
@@ -231,16 +268,114 @@ export function tornStrip(w, h, cut = 0, segments = 5, tilesPerUnit = 2.6) {
     return seed / 4294967296;
   };
 
+  const rows = segments + 1;
+  const stride = COLS + 1;
+  const widthL = new Float32Array(rows);
+  const widthR = new Float32Array(rows);
+  const driftX = new Float32Array(rows);
+  const driftZ = new Float32Array(rows);
+  const fold = new Float32Array(rows);
+  const value = new Float32Array(rows);
+
+  // The sideways walk of the centre line, integrated so it is smooth. `lean`
+  // biases the whole walk one way, which is what makes the hem finish OUTSIDE
+  // the band the root hangs in instead of wandering back to plumb. This is the
+  // entire mechanism by which a rag breaks an outline.
+  const lean = (rnd() - 0.5) * 2;
+  let dx = 0, dz = 0;
+  for (let r = 0; r < rows; r++) {
+    const t = r / segments;
+    dx += (lean * 0.62 + (rnd() - 0.5) * 0.9) * h * 0.085;
+    dz += (rnd() - 0.5) * h * 0.13;
+    driftX[r] = dx;
+    driftZ[r] = dz;
+    // Narrow where the wrap is still bound, widest around two thirds down.
+    // Loose cloth is WIDER than its binding; a triangle is a pennant.
+    //
+    // The two EDGES are independent, and that is what makes the outline read as
+    // torn. A single width scales both edges about the centre line, so however
+    // ragged the profile is the strip stays a symmetrical leaf - and a
+    // symmetrical leaf is a shape a machine cut.
+    const base = 0.74 + 0.58 * Math.sin(Math.PI * t * 0.86);
+    widthL[r] = base * (0.70 + rnd() * 0.62);
+    widthR[r] = base * (0.70 + rnd() * 0.62);
+    // THE FOLD ACROSS THE WIDTH, and it is what separates cloth from cardboard.
+    // The first pass at this widened the strips and left them planar, and three
+    // angles of the result photographed as a cape cut from board: a flat plane
+    // takes exactly one value from the sun no matter how ragged its outline is.
+    // A fold running down the strip gives it two faces at different angles to
+    // the light, which is the whole reason a real rag reads as fabric.
+    fold[r] = (0.55 + rnd() * 0.9) * (r % 2 ? -1 : 1);
+    // Per ROW, not per vertex. Cloth discolours in bands along its length -
+    // per-vertex noise here just averages back to the mean one mip level up.
+    value[r] = (rnd() - 0.5) * 0.20;
+  }
+
   const pos = g.attributes.position;
   const uv = g.attributes.uv;
+  const col = new Float32Array(pos.count * 3);
 
   for (let i = 0; i < pos.count; i++) {
+    const r = Math.floor(i / stride);
+    const c = i % stride;
+    const t = r / segments;
     const x = pos.getX(i), y = pos.getY(i);
-    const t = (h / 2 - y) / h;                   // 0 at the top, 1 at the hem
 
-    pos.setX(i, x * (1 - t * (0.30 + rnd() * 0.34)));
-    if (t > 0.66) pos.setY(i, y + (rnd() - 0.55) * h * 0.34);
-    pos.setZ(i, (rnd() - 0.5) * w * 0.6 * t);    // the curl, growing downward
+    pos.setX(i, x * (x < 0 ? widthL[r] : widthR[r]) + driftX[r]);
+    // The fold is a V across the width, deepest in the middle and pinned at the
+    // torn edges, scaled off the strip's own width so a narrow rag creases
+    // proportionally rather than absolutely.
+    pos.setZ(i, driftZ[r] + Math.sin((c / COLS) * Math.PI) * fold[r] * w * 0.30);
+
+    // Ragged, and only ever SHORTER than authored: lengthening a row can carry
+    // it past the row below and fold the strip inside out.
+    if (r === segments) pos.setY(i, y - rnd() * h * 0.30);
+    else if (r === segments - 1) pos.setY(i, y - rnd() * h * 0.05);
+
+    // THE VALUE, BAKED IN: a multiplier on the material colour, so one strip of
+    // cloth carries more than one value along its length.
+    //
+    // THREE BANDS, ALL BELOW THE BODY, and every number here was set by a
+    // measurement that contradicted the previous one.
+    //
+    // Round one, a monotonic t^0.78 ramp: past the body's own value a third of
+    // the way down, so the strip photographed as a uniformly pale cloak. A value
+    // SHIFT rather than a value RANGE.
+    //
+    // Round two, t^1.4 topping out at 1.38: the hem became the brightest thing on
+    // the actor, brighter than the sunlit skull, and the eye went to the cloth
+    // instead of to the figure.
+    //
+    // Round three, peak 1.06, measured against a flat limestone-value wall: the
+    // share of figure pixels landing WITHIN SIX LUMA OF THE WALL went from 3.8
+    // per cent to 9.3, and the figure's median luma rose 24 toward the wall's
+    // 144. The cloth is a third of the silhouette now, so wherever its value
+    // sits is where a third of the actor sits - and a bleached hem sits exactly
+    // where limestone and sand do.
+    //
+    // So no part of the strip is ever BRIGHTER than the limbs it hangs on, and
+    // the internal range is kept: 0.26 at the bind, 0.86 where it hangs slack,
+    // 0.44 at the torn hem, with a per-row wobble of a tenth on top - so the
+    // slack band peaks at 0.96 on a lucky row and no higher.
+    // That is also the physical truth the material this replaces was
+    // right about and the geometry was wrong about - dragged, buried linen is
+    // DIRTIER than the wrapped body, not cleaner. Every background in this game
+    // is mid to bright, sunlit limestone through brazier-lit stone, so a dark rag
+    // separates from all of them and a pale one separates from none.
+    const up = Math.min(1, t / 0.62);
+    const dn = Math.max(0, (t - 0.62) / 0.38);
+    const k = Math.max(0.08,
+      0.26 + 0.60 * (up * up * (3 - 2 * up)) - 0.42 * dn * dn + value[r]);
+    // Barely any hue in it, and that is a correction. A 16 per cent blue lift at
+    // the hem looked right in a neutral studio and rendered BLUE-GREY in situ:
+    // a rag hanging in a wall's shade is lit almost entirely by the cool
+    // hemisphere fill, so a cool tint in the albedo compounds with a cool light
+    // instead of reading as bleach. Weathering is a VALUE change here, not a hue
+    // one. Four per cent is enough to keep the slack band from being an exact
+    // multiple of the limb behind it and no more.
+    col[i * 3] = k;
+    col[i * 3 + 1] = k * (1 + 0.015 * t);
+    col[i * 3 + 2] = k * (1 + 0.04 * t);
   }
 
   // Texel density in the same units as everything else, so a hanging wrap wears
@@ -249,6 +384,7 @@ export function tornStrip(w, h, cut = 0, segments = 5, tilesPerUnit = 2.6) {
     uv.setXY(i, uv.getX(i) * w * tilesPerUnit, uv.getY(i) * h * tilesPerUnit);
   }
 
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   pos.needsUpdate = true;
   uv.needsUpdate = true;
   g.computeVertexNormals();

@@ -139,13 +139,19 @@ const COLOSSUS = {
   headY: 0.70, headW: 0.30, headH: 0.32, headD: 0.30,
   plate: { w: 0.56, h: 0.34 },
   shoulderSlab: { w: 0.34, h: 0.16, d: 0.50 },
-  tatterRest: 0.06,
-  // Narrow and low, for the same reason the shambler's are: a wide rag on a
-  // shoulder photographs as a flag, and a god does not need help being seen.
+  tatterRest: 0.20,
+  // WIDE, and the note this replaces had it backwards. It argued narrow, because
+  // "a wide rag on a shoulder photographs as a flag, and a god does not need
+  // help being seen". Being SEEN was never the question - a four metre body
+  // fills the frame either way. What a god needs is to not be a stack of boxes
+  // four times the size, and at 15 cm on a 4 m figure these were relatively
+  // thinner than the shambler's already-invisible ones. Two long ceremonial
+  // wraps off the shoulder blades and one off the striking arm, each anchored
+  // outboard of the chest and tilted clear of it.
   tatters: [
-    { on: 'torso', x: -0.30, y: 0.20, z: -0.21, w: 0.15, h: 0.95, yaw: 0.28, swing: 0.7 },
-    { on: 'torso', x: 0.30, y: 0.14, z: -0.21, w: 0.13, h: 0.80, yaw: -0.28, swing: 0.7 },
-    { on: 'arm', side: 1, x: 0, y: -0.34, z: 0, w: 0.11, h: 0.52, yaw: 1.1, swing: 1.2 },
+    { on: 'torso', x: -0.42, y: 0.24, z: -0.22, w: 0.27, h: 1.30, yaw: 0.36, cut: 1, swing: 0.7, out: 0.22 },
+    { on: 'torso', x: 0.42, y: 0.18, z: -0.22, w: 0.24, h: 1.08, yaw: -0.40, cut: 2, swing: 0.7, out: 0.20 },
+    { on: 'arm', side: 1, x: 0.02, y: -0.36, z: 0, w: 0.21, h: 0.80, yaw: 1.1, cut: 3, swing: 1.2, out: 0.24 },
   ],
 };
 
@@ -474,11 +480,16 @@ function createGod(god, effects) {
       color: god.palette.accent, roughness: 0.3, metalness: 0.85,
       emissive: god.palette.eye, emissiveIntensity: 0,
     }),
+    // Painted at the BODY's linen, not at the shadow under it, because the value
+    // break now lives in the strip's own colour attribute: three bands, 0.26 of
+    // this at the bind, 0.86 slack, 0.44 at the hem, all UNDER one. See tornStrip.
+    // A god that kept the flat wrapDark rag would be the one figure in the frame
+    // whose cloth still matched the wall behind it.
     tatter: new THREE.MeshStandardMaterial({
-      color: compensate(god.palette.wrapDark, linen.gain),
+      color: compensate(god.palette.wrap, linen.gain),
       map: linen.map, normalMap: linen.normalMap,
       normalScale: new THREE.Vector2(0.7, 0.7),
-      roughness: 1.0, side: THREE.DoubleSide,
+      roughness: 1.0, side: THREE.DoubleSide, vertexColors: true,
     }),
   };
 

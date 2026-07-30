@@ -306,14 +306,19 @@ export const HUSK = extend(MUMMY, {
     // a toy. At 0.175 over 0.54 it is 32, which is a starved human.
     shoulderX: 0.195, shoulderY: 0.46, armW: 0.095, upperL: 0.50, foreL: 0.52,
     headY: 0.60, headW: 0.175, headH: 0.34, headD: 0.225,
-    tatterRest: 0.34,
+    tatterRest: 0.46,
     // Two rags, both trailing off the spine and one arm, and no hem. Desiccated
     // rather than wrapped: the husk has burned out of most of its bindings, and
     // the near-bare outline is half of why it does not read as a small
     // shambler. What is left streams behind it when it runs.
+    //
+    // Widened from 12 and 9 cm, which at the range a husk is first seen at was
+    // sub-pixel, on the one enemy whose whole budget is being READ EARLY. The
+    // spine is already pitched 26 degrees forward, so a long rag off the
+    // shoulder blade streams behind the run on its own.
     tatters: [
-      { on: 'torso', x: 0.0, y: 0.24, z: -0.10, w: 0.12, h: 0.78, yaw: 0.18, cut: 1, swing: 1.7 },
-      { on: 'arm', side: -1, x: 0, y: -0.30, z: 0, w: 0.09, h: 0.44, yaw: -1.0, cut: 2, swing: 1.9 },
+      { on: 'torso', x: -0.06, y: 0.28, z: -0.13, w: 0.25, h: 0.96, yaw: 0.26, cut: 1, swing: 1.7, out: 0.20 },
+      { on: 'arm', side: -1, x: -0.02, y: -0.32, z: 0, w: 0.20, h: 0.62, yaw: -1.0, cut: 2, swing: 1.9, out: 0.26 },
     ],
   },
 
@@ -395,13 +400,16 @@ export const BOUND = extend(MUMMY, {
     plate: { w: 0.52, h: 0.30 },
     shoulderSlab: { w: 0.26, h: 0.14, d: 0.42 },
     headdress: { w: 0.17, h: 0.40 },
-    tatterRest: 0.22,
+    tatterRest: 0.30,
     // A heavy hem and two long ceremonial wraps. Slower and wider than the
-    // shambler's, so the rags read as weight rather than as decay.
+    // shambler's, so the rags read as weight rather than as decay - and wide
+    // enough now to be the thing that tells a Bound from a shambler at the far
+    // end of a gallery, where the shoulder slabs have already merged with the
+    // torso and the height difference is a guess.
     tatters: [
-      { on: 'torso', x: 0.0, y: -0.06, z: -0.02, w: 0.46, h: 0.50, yaw: 0.06, cut: 0, swing: 0.5 },
-      { on: 'torso', x: -0.24, y: 0.18, z: -0.21, w: 0.16, h: 0.86, yaw: 0.30, cut: 1, swing: 0.6 },
-      { on: 'torso', x: 0.24, y: 0.14, z: -0.21, w: 0.15, h: 0.72, yaw: -0.34, cut: 2, swing: 0.6 },
+      { on: 'torso', x: -0.04, y: -0.08, z: -0.04, w: 0.50, h: 0.66, yaw: 0.10, cut: 0, swing: 0.5, out: 0.08 },
+      { on: 'torso', x: -0.36, y: 0.22, z: -0.22, w: 0.25, h: 1.04, yaw: 0.40, cut: 1, swing: 0.6, out: 0.24 },
+      { on: 'torso', x: 0.36, y: 0.16, z: -0.22, w: 0.22, h: 0.86, yaw: -0.44, cut: 2, swing: 0.6, out: 0.22 },
     ],
   },
 
