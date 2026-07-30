@@ -678,7 +678,22 @@ function boot() {
         // Damage first: the payout needs to know whether the round finished
         // what it hit, and only the damage system can answer that.
         combat.applyHits(hits);
-        readouts.hitmarker(hits.some((h) => h.enemy && h.region === 'head'));
+
+        // A HITMARKER IS A PROMISE THAT YOU HIT SOMETHING ALIVE.
+        //
+        // This used to fire on `hits.length`, and `hits` contains scenery - which
+        // is why payout() below has to filter it and why the enemies suite has a
+        // "scenery pays nothing" check. The head test was only choosing crit red
+        // over normal white, never whether to show the mark at all, so a round
+        // into a wall confirmed a kill-in-progress that was never happening.
+        // Verified by probe: aimed at bare sand, zero enemies hit, marker on.
+        //
+        // In a shooter that is worse than a missing marker. A missing one costs
+        // you information; a false one makes you stop firing at something you
+        // never touched.
+        const live = hits.filter((h) => h.enemy);
+        if (live.length) readouts.hitmarker(live.some((h) => h.region === 'head'));
+
         payout(hits);
       }
 

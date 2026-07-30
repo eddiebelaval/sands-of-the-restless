@@ -235,6 +235,50 @@ function animateScarab(rig, spec, s) {
     - s.stagger * 0.03;
 
   rig.neck.rotation.x = -Math.sin(p * 0.6) * 0.08;
+
+  /**
+   * THE HIT REACTION, in the one vocabulary a six-legged shell has.
+   *
+   * The humanoid's version throws a shoulder and whips a rag. A carapace has
+   * neither, and the reaction it does have is the one an actual beetle has when
+   * something hits it: the shell SLAMS on the struck side, the legs on that side
+   * collapse under it, and the whole thing skids a few centimetres. Written
+   * against the same fields the humanoid uses, so the actor never has to know
+   * which animator it got.
+   *
+   * The scarab dies in two body shots, which is exactly why this matters: almost
+   * every round the player puts into one is either the killing shot or the shot
+   * immediately before it, so if a hit on a scarab does not read, hitting
+   * scarabs does not read at all.
+   */
+  const hk = s.hit || 0;
+  // Assigned every frame, not only while reacting, so a recoiled head returns to
+  // straight instead of being left wherever the last hit put it. Nothing else in
+  // this animator writes this axis.
+  rig.neck.rotation.y = 0;
+  if (hk === 0) return;
+
+  const lx = s.hitLX || 0;
+  const f = s.hitF || 0;
+  const side = s.hitS || 0;
+
+  // The shell drops and rolls away from the impulse. A low wide body has almost
+  // no lever arm to pitch on, so most of the reaction is in the vertical.
+  rig.body.position.y -= hk * 0.055;
+  rig.body.rotation.z += (-side * 0.34 + lx * 0.16) * hk;
+  rig.body.rotation.x += -f * hk * 0.22;
+
+  // The legs on the struck side splay out from under it.
+  for (const leg of rig.legs) {
+    const w = Math.max(0, leg.side * lx);
+    if (w <= 0) continue;
+    leg.hip.rotation.z += leg.side * w * hk * 0.30;
+    leg.knee.rotation.x += w * hk * 0.45;
+  }
+
+  // And the head recoils, which on this rig is the only fine motion available.
+  rig.neck.rotation.x += -f * hk * (0.14 + (s.hitHead || 0) * 0.40);
+  rig.neck.rotation.y += lx * hk * (0.18 + (s.hitHead || 0) * 0.45);
 }
 
 // ---------------------------------------------------------------------------

@@ -173,10 +173,29 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       const dx = h.enemy.position.x - player.position.x;
       const dz = h.enemy.position.z - player.position.z;
 
-      h.killed = h.enemy.hurt(damage, h.region, dx, dz);
+      // THE POINT, and it is the difference between a stagger and a REACTION.
+      //
+      // Everything downstream of hurt() used to know which way the shot came
+      // from and nothing at all about where it landed, so a round through the
+      // left shoulder and a round through the right hip produced the same
+      // generic shiver. The hit point is the one fact that turns that into an
+      // actor moving the part of itself that was struck, and it is already in
+      // the record: the hitscan wrote it. It is optional at the far end, so a
+      // blast - which has a direction and no meaningful single point - passes
+      // nothing and keeps the whole-body reaction it should have.
+      h.killed = h.enemy.hurt(damage, h.region, dx, dz, h.point);
       state.dealt += damage;
       connected++;
       if (h.killed) announceKill(h.enemy, h.region);
+
+      // The ejecta, region-aware.
+      //
+      // The weapon spawns a region-BLIND burst of its own at the same point,
+      // because the region travels on the hit record to this file rather than
+      // to the impact system. This is the call that knows a skull was hit, and
+      // impacts.spawnEnemyHit is written so the two never double up. See the
+      // note above it.
+      if (h.point) impacts?.spawnEnemyHit?.(h.point, h.region);
 
       // Two distinct sounds, because the two payouts are distinct. A player who
       // cannot hear the difference between 60 and 100 has no feedback loop on

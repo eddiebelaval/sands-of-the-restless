@@ -1203,6 +1203,147 @@ function animateHumanoid(rig, spec, s) {
     // history: a value written once, believed, and overwritten by the frame loop.
     t.pivot.rotation.z = t.restZ + Math.sin(p * 0.7 + t.phase) * 0.20 * drive;
   }
+
+  reactToHit(rig, spec, s);
+}
+
+/**
+ * THE HIT REACTION, and it is the whole of why a shot lands or does not.
+ *
+ * Everything above this line is the walk. This is the part that answers the one
+ * question a player asks a thousand times in a run: did that connect. Particles
+ * answer it at the impact point; the ACTOR has to answer it with its body, and
+ * until this existed the answer was a scalar shiver that looked identical
+ * whichever shoulder you put the round through.
+ *
+ * WHY IT IS ADDITIVE AND WHY IT RUNS LAST. Every joint above is ASSIGNED from
+ * the gait, so a reaction written anywhere else in the file would be erased on
+ * the next frame - which is the exact shape of the tatter-splay defect recorded
+ * twenty lines up. Running last and adding means the flinch rides on whatever
+ * pose the body was in, and a body caught mid-stride flinches out of a stride.
+ *
+ * WHAT IT DRIVES, in descending order of how much it contributes:
+ *
+ *   1. the STRUCK LIMB. A round through the left shoulder swings the left arm
+ *      back and out. This is the single largest contributor to a hit feeling
+ *      real, and it is animation - there is no particle system that substitutes
+ *      for it.
+ *   2. the SPINE TWIST. The struck side goes back and takes the chest with it,
+ *      which is what carries the read at fifteen metres where an arm is four
+ *      pixels wide but the whole outline is thirty.
+ *   3. the TATTERS. They are the outline at range - see the note on the
+ *      anchors - so whipping them is the cheapest distance-legible motion on
+ *      the body.
+ *   4. the HEAD, hard on a skull hit and slight otherwise.
+ *   5. the WHOLE BODY, rocking off the impulse. This is what the old stagger
+ *      did, kept, and now signed by the direction of the shot.
+ *
+ * Nothing here reads world space. `s.hitLX`, `s.hitF` and the rest arrive in the
+ * actor's own frame, resolved at the moment of the hit; see registerHit.
+ */
+function reactToHit(rig, spec, s) {
+  // Captured on the first animated frame, not at build. The animator does not
+  // otherwise write either of these axes - the build sets a permanent spine
+  // twist on one and a permanent head bearing on the other - so the first read
+  // here is the authored value, and everything after is base plus reaction. Read
+  // any later and the reaction would be measured from a pose that already
+  // contained a reaction, which is how a flinch turns into a drift.
+  if (rig.twistBase === undefined) {
+    rig.twistBase = rig.torso.rotation.y;
+    rig.neckBase = rig.neck.rotation.y;
+  }
+
+  const hk = s.hit || 0;
+
+  // Written every frame rather than only when reacting, so the twist returns to
+  // the authored value instead of being left wherever the last flinch put it.
+  rig.torso.rotation.y = rig.twistBase;
+  rig.neck.rotation.y = rig.neckBase;
+
+  if (hk === 0) return;
+
+  const P = spec.proportions;
+  const lx = s.hitLX || 0;
+  const ly = s.hitLY ?? 0.55;
+  const f = s.hitF || 0;
+  const side = s.hitS || 0;
+  const head = s.hitHead || 0;
+
+  // Where the shoulders are as a fraction of standing height, so "was this a
+  // shoulder hit" is a question about this spec rather than a magic number.
+  const shoulderN = ((P.hipY || 0.9) + (P.torsoY || 0.12) + (P.shoulderY || 0.46))
+    / (spec.height || 1.8);
+
+  // --- the whole body ---------------------------------------------------------
+  //
+  // THE SIGNS ARE WORTH STATING, because every one of them is a chance to build
+  // a reaction that is present in the numbers and backwards on the screen.
+  // Positive rotation.x rears the body back - the wind-up above uses it for
+  // exactly that. Positive rotation.z carries a mass ABOVE its own origin
+  // toward -x, which is the opposite of what it does to a hanging rag, and the
+  // rags below are the only thing in this function that hangs.
+  //
+  // The lateral push comes off the IMPULSE, not off where the round landed: a
+  // bullet travelling toward the actor's +x pushes it toward +x whichever
+  // shoulder it went through. Location contributes a tenth of it, so a shot
+  // taken square in the front still rolls slightly toward the side it hit.
+  rig.body.rotation.x += -f * hk * 0.15;
+  rig.body.rotation.z += (-side * 0.26 + lx * 0.10) * hk;
+  // A hit low on the body drops it. A hit high does not.
+  rig.body.position.y -= hk * 0.06 * Math.max(0, 0.55 - ly);
+
+  // --- the spine --------------------------------------------------------------
+  // The struck side goes BACK, which under Ry means the same sign as lx, and it
+  // drops, which under Rz means the opposite.
+  rig.torso.rotation.y = rig.twistBase + lx * hk * 0.34;
+  rig.torso.rotation.x += -f * hk * 0.26 * Math.max(0.25, ly);
+  rig.torso.rotation.z += -lx * hk * 0.16;
+
+  // --- the struck arm ---------------------------------------------------------
+  // Weighted by BOTH facts: which side of the spine the round landed, and how
+  // close to shoulder height it was. A round through the hip does not move an
+  // arm, and a round through the right shoulder does not move the left one.
+  const nearShoulder = Math.max(0, 1 - Math.abs(ly - shoulderN) * 3.4);
+  if (nearShoulder > 0) {
+    for (const arm of rig.arms) {
+      const w = Math.max(0, arm.side * lx) * nearShoulder;
+      if (w <= 0) continue;
+      // Back if it came from the front, forward if it came from behind, and a
+      // small unconditional swing so a shot taken from directly beside the body
+      // still moves the arm it went through.
+      arm.shoulder.rotation.x += w * hk * (0.12 - f * 0.55);
+      arm.shoulder.rotation.z += arm.side * w * hk * 0.42;    // and out
+      arm.elbow.rotation.x += w * hk * 0.34;
+    }
+  }
+
+  // --- the struck leg ---------------------------------------------------------
+  const low = Math.max(0, 1 - ly / 0.42);
+  if (low > 0) {
+    for (const leg of rig.legs) {
+      const w = Math.max(0, leg.side * lx) * low;
+      if (w <= 0) continue;
+      leg.hip.rotation.x += w * hk * 0.30;
+      leg.knee.rotation.x += w * hk * 0.55;
+    }
+  }
+
+  // --- the head ---------------------------------------------------------------
+  // Four times the gain on a skull hit. This, the bone ejecta and the crit cue
+  // are the three channels that say 100 rather than 60, and a player should not
+  // need any two of them.
+  // The skull is a mass above the neck joint, so it throws the OPPOSITE way to
+  // the torso under Rz and the same way under Ry.
+  const hg = 0.16 + head * 0.58;
+  rig.neck.rotation.x += -f * hk * hg;
+  rig.neck.rotation.z += lx * hk * hg * 0.8;
+  rig.neck.rotation.y = rig.neckBase + lx * hk * hg;
+
+  // --- the rags ---------------------------------------------------------------
+  for (const t of rig.tatters) {
+    t.pivot.rotation.x += -f * hk * 0.55;
+    t.pivot.rotation.z += -lx * hk * 0.45;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1219,10 +1360,31 @@ const TOPPLE_S = 0.62;
 const LIE_S = 0.45;
 const CRUMBLE_S = 0.9;
 
-/** Eased fall progress, 0..1, squared so it accelerates like a real one. */
-function k0(t) {
-  const k = t / TOPPLE_S;
+/**
+ * Eased fall progress, 0..1, squared so it accelerates like a real one.
+ *
+ * The duration is a PARAMETER now rather than the module constant, because a
+ * skull hit and a knee hit are not the same fall. See beginDeath.
+ */
+function k0(t, dur = TOPPLE_S) {
+  const k = t / dur;
   return k * k;
+}
+
+/**
+ * The hit-reaction envelope: one hard snap and one small counter-swing.
+ *
+ * A flinch that only decays reads as a body being pushed. A real one is a mass
+ * on a spine: it goes, it comes back past the rest pose, and it settles - and
+ * the whole thing is over in a third of a second, which is why the amplitude is
+ * carried separately from the phase. Both terms are driven by the clamped
+ * delta, so the shape is identical at three frames a second and three hundred.
+ */
+const HIT_DECAY = 7.5;      // per second
+const HIT_RATE = 15.5;      // radians per second of the counter-swing
+
+function hitEnvelope(k, age) {
+  return k * Math.cos(age * HIT_RATE);
 }
 
 /**
@@ -1279,9 +1441,43 @@ export function createEnemy(spec, index) {
     staggerPitch: 0,
     flash: 0,
 
+    /**
+     * WHERE THE LAST ROUND LANDED, AND WHICH WAY IT WAS GOING.
+     *
+     * The stagger above this is a scalar: one number, one canned shiver, and
+     * `staggerPitch = stagger * 0.18` rears the body back by the same amount
+     * whether it was shot in the chest from the front or in the spine from
+     * behind. It is a HIT INDICATOR, not a hit reaction.
+     *
+     * These six are the reaction. All of them are in the actor's OWN frame, so
+     * the animator can act on them without knowing anything about world space:
+     *
+     *   hitK   amplitude, 0..1, decaying
+     *   hitAge seconds since it landed, for the counter-swing
+     *   hitLX  where across the body, -1 (its own -x side) to +1
+     *   hitLY  where up the body, 0 at the feet to 1 at the crown
+     *   hitF   forward component of the impulse: -1 straight in the chest,
+     *          +1 straight in the back
+     *   hitS   lateral component of the same
+     *   hitHead 1 if it was the skull
+     *   hitLoc 1 if a point was supplied at all - a blast has a direction and
+     *          no meaningful single point, and gets the whole-body reaction
+     */
+    hitK: 0,
+    hitAge: 0,
+    hitLX: 0,
+    hitLY: 0.55,
+    hitF: 0,
+    hitS: 0,
+    hitHead: 0,
+    hitLoc: 0,
+
     deathT: 0,
     toppleAxisX: 0,
     toppleAxisZ: 0,
+    toppleS: TOPPLE_S,
+    sag: 0,
+    deathHead: 0,
     spinY: 0,
 
     groanIn: 0,
@@ -1304,7 +1500,24 @@ export function createEnemy(spec, index) {
   const anim = {
     phase: 0, speed: 0, windup: 0, strike: 0,
     stagger: 0, staggerRoll: 0, staggerPitch: 0,
+    // The hit reaction, handed to the animator in the actor's own frame. See
+    // the block in `st` for what each one means.
+    hit: 0, hitLX: 0, hitLY: 0.55, hitF: 0, hitS: 0, hitHead: 0,
   };
+
+  /**
+   * Half the shoulder span, in rig units, for normalising a hit across the body.
+   *
+   * A shot at `x = shoulderX` should read as a shoulder hit and a shot on the
+   * spine as a centre hit, so the divisor is the span itself rather than an
+   * arbitrary radius. The scarab has no shoulders and brings its own shell
+   * width; anything with neither falls back to a quarter metre, which is about
+   * a human half-span.
+   */
+  const P0 = spec.proportions || {};
+  const HALF_W = (P0.shoulderX ? P0.shoulderX * 1.15
+    : P0.shellW ? P0.shellW * 0.5
+      : 0.25);
 
   // -------------------------------------------------------------------------
   // lifecycle
@@ -1322,7 +1535,13 @@ export function createEnemy(spec, index) {
     st.struck = false;
     st.stagger = st.staggerRoll = st.staggerPitch = 0;
     st.flash = 0;
+    st.hitK = st.hitAge = st.hitLX = st.hitF = st.hitS = 0;
+    st.hitHead = st.hitLoc = 0;
+    st.hitLY = 0.55;
     st.deathT = 0;
+    st.toppleS = TOPPLE_S;
+    st.sag = 0;
+    st.deathHead = 0;
     st.spinY = 0;
     st.speedScale = speedScale;
     st.groanIn = 1.5 + Math.random() * 4;
@@ -1376,31 +1595,109 @@ export function createEnemy(spec, index) {
   }
 
   /**
+   * Resolve a hit into the actor's own frame.
+   *
+   * Everything the animator needs is a local quantity, and the conversion has to
+   * happen HERE rather than in the animator because the yaw at the moment of
+   * the hit is the yaw that matters: an actor that turns to face the player
+   * afterwards was still shot in the back.
+   *
+   * @param {string} region  'head' or 'body'
+   * @param {number} dirX    world direction of the impulse, away from the shooter
+   * @param {number} dirZ
+   * @param {object|null} point  world impact point, or null for a blast
+   * @param {number} share   fraction of maximum health this removed
+   */
+  function registerHit(region, dirX, dirZ, point, share) {
+    const th = rig.group.rotation.y;
+    const c = Math.cos(th), sn = Math.sin(th);
+
+    // Local = Ry(-yaw) applied to the world vector. The actor faces its own +Z,
+    // so a round taken square in the chest arrives as hitF near -1.
+    const len = Math.hypot(dirX, dirZ) || 1;
+    const ix = dirX / len, iz = dirZ / len;
+    st.hitS = c * ix - sn * iz;
+    st.hitF = sn * ix + c * iz;
+
+    if (point) {
+      const ox = point.x - rig.group.position.x;
+      const oy = point.y - rig.group.position.y;
+      const oz = point.z - rig.group.position.z;
+      // Out of world metres and into rig units, because the whole rig is under
+      // this instance's scale jitter and a Bound is a quarter larger than a
+      // shambler. Without this a Bound's shoulder would read as a chest hit.
+      const inv = 1 / (actor.scale || 1);
+      const lx = (c * ox - sn * oz) * inv;
+      st.hitLX = Math.max(-1, Math.min(1, lx / HALF_W));
+      st.hitLY = Math.max(0, Math.min(1, (oy * inv) / (spec.height || 1.8)));
+      st.hitLoc = 1;
+    } else {
+      // A blast, or any caller that only knows a direction. Centre of mass, and
+      // the height the region implies.
+      st.hitLX = 0;
+      st.hitLY = region === 'head' ? 0.92 : 0.55;
+      st.hitLoc = 0;
+    }
+
+    st.hitHead = region === 'head' ? 1 : 0;
+    st.hitAge = 0;
+
+    /**
+     * HOW HARD IT FLINCHES, AND WHY IT IS NOT THE STAGGER TAKE ON ITS OWN.
+     *
+     * `staggerTake` is a resistance to being MOVED, and it is right that a
+     * Bound at 0.25 barely rocks: it is the wave's wall and a player is meant
+     * to have to change weapon rather than expect to interrupt it. But a
+     * monolith that is struck still flinches WHERE it was struck, and at 0.25
+     * of a pistol's share that reaction came to two degrees on a shoulder -
+     * about a pixel at gameplay distance, which is the same as nothing.
+     *
+     * So the local reaction takes the resistance at a floor of 0.35 and a
+     * ceiling of 1.5, and the drive itself starts at 0.42 rather than at zero.
+     * A Bound still moves a quarter as much as a shambler; it no longer moves
+     * an invisible amount.
+     */
+    const drive = Math.min(1, 0.42 + share * 2.2);
+    const take = 0.35 + 0.65 * Math.min(1.5, spec.staggerTake ?? 1);
+    st.hitK = Math.min(1, Math.max(st.hitK * 0.6, drive * take));
+  }
+
+  /**
    * Take a hit.
    *
    * Returns whether this shot finished it, which is the single fact the economy
    * needs: a hit pays 10, a body kill 60, a headshot 100.
+   *
+   * `point` is optional and additive: every existing caller that passes four
+   * arguments still gets exactly the reaction it got before, resolved from the
+   * direction alone.
    */
-  function hurt(damage, region, dirX = 0, dirZ = 0) {
+  function hurt(damage, region, dirX = 0, dirZ = 0, point = null) {
     if (!actor.live || actor.dying) return false;
 
     actor.health -= damage;
-    st.flash = 1;
+    // A skull hit lights the body harder. Not a different colour - the flash is
+    // one warm ramp across every material and splitting it would read as a
+    // rendering fault - just further up it, so the two payouts differ in the
+    // silhouette as well as in the ejecta and the cue.
+    st.flash = region === 'head' ? 1.35 : 1;
 
     // Stagger scales with the fraction of max health removed, so a pistol round
     // nudges a Bound and a slug folds a husk. Heavy variants resist it outright.
     const share = damage / actor.maxHealth;
     st.stagger = Math.min(1, st.stagger + share * spec.staggerTake * 3.2);
 
+    registerHit(region, dirX, dirZ, point, share);
+
     if (actor.health <= 0) {
       actor.health = 0;
-      beginDeath(dirX, dirZ);
+      beginDeath(dirX, dirZ, region);
       return true;
     }
     return false;
   }
 
-  function beginDeath(dirX, dirZ) {
+  function beginDeath(dirX, dirZ, region) {
     actor.dying = true;
     st.deathT = 0;
     st.vx = st.vz = 0;
@@ -1414,12 +1711,62 @@ export function createEnemy(spec, index) {
     st.toppleAxisZ = -nx;
     st.spinY = (Math.random() - 0.5) * 2.4;
 
+    /**
+     * WHICH DEATH THIS IS.
+     *
+     * The direction was already honest - the body goes down away from the shot -
+     * but the SHAPE of the fall was one canned topple for every kill in the
+     * game. Three shots that read as three different deaths:
+     *
+     *   the skull   - the string is cut. Fastest fall, least spin, and the head
+     *                 stays thrown back through the whole of it.
+     *   the chest   - what it always was.
+     *   a leg       - it goes DOWN before it goes over. Slowest fall, deepest
+     *                 sag, because the thing that failed was the thing holding
+     *                 it up.
+     *
+     * And an off-centre round spins the body about its own axis on the way down
+     * in proportion to how far from the spine it landed, which is the one part
+     * of this that is straight mechanics.
+     */
+    const head = region === 'head';
+    const low = st.hitLoc === 1 && st.hitLY < 0.42;
+
+    st.toppleS = TOPPLE_S * (head ? 0.72 : low ? 1.18 : 1);
+    st.spinY += st.hitLX * (head ? 2.2 : 3.4);
+    st.sag = low ? 0.34 : head ? 0.14 : 0.05;
+    st.deathHead = head ? 1 : 0;
+
     actor.emitter?.play('deathRattle', { pitch: spec.voicePitch });
   }
 
   // -------------------------------------------------------------------------
   // frame
   // -------------------------------------------------------------------------
+
+  /**
+   * Advance the flinch. Delta-driven, and it lands on exactly zero.
+   *
+   * A purely multiplicative decay is asymptotic: it never reaches zero, so the
+   * counter-swing term would oscillate forever at an amplitude of a millionth of
+   * a radian and the reaction branch in the animator would never switch off. The
+   * cut-off is what makes "no hit" a real state rather than a limit.
+   */
+  function decayHit(dt) {
+    if (st.hitK <= 0) return;
+    st.hitAge += dt;
+    st.hitK -= st.hitK * Math.min(1, dt * HIT_DECAY);
+    if (st.hitK < 0.004) { st.hitK = 0; st.hitAge = 0; }
+  }
+
+  function publishHit() {
+    anim.hit = st.hitK > 0 ? hitEnvelope(st.hitK, st.hitAge) : 0;
+    anim.hitLX = st.hitLX;
+    anim.hitLY = st.hitLY;
+    anim.hitF = st.hitF;
+    anim.hitS = st.hitS;
+    anim.hitHead = st.hitHead;
+  }
 
   function update(dt, ctx) {
     if (!actor.live) return;
@@ -1588,7 +1935,16 @@ export function createEnemy(spec, index) {
 
     st.stagger = Math.max(0, st.stagger - dt * 2.6);
     st.staggerRoll = Math.sin(st.phase * 23) * st.stagger * 0.22;
-    st.staggerPitch = st.stagger * 0.18;
+
+    // THE PITCH IS DIRECTIONAL NOW. It was `stagger * 0.18`, which rears every
+    // body backward whichever side the round came in on - so a shot in the spine
+    // pitched the chest away from the shooter, up the hill of its own back. The
+    // stagger keeps its magnitude; the SIGN comes off the impulse.
+    // `|| -1` is the legacy fallback, not a guard: a caller that supplied no
+    // usable direction gets the rear-back this line always used to do.
+    st.staggerPitch = st.stagger * 0.18 * -(st.hitF || -1);
+
+    decayHit(dt);
 
     anim.phase = st.phase;
     anim.speed = speed;
@@ -1597,6 +1953,7 @@ export function createEnemy(spec, index) {
     anim.stagger = st.stagger;
     anim.staggerRoll = st.staggerRoll;
     anim.staggerPitch = st.staggerPitch;
+    publishHit();
     spec.animate(rig, spec, anim);
 
     // --- voice --------------------------------------------------------------
@@ -1627,8 +1984,9 @@ export function createEnemy(spec, index) {
   function updateDeath(dt, ctx) {
     st.deathT += dt;
     const t = st.deathT;
+    const dur = st.toppleS || TOPPLE_S;
 
-    if (t < TOPPLE_S) {
+    if (t < dur) {
       // Limbs go slack over the fall. This runs FIRST because every animator
       // writes the body group's rotation as part of its stagger term, and the
       // topple has to be the last word on it.
@@ -1636,23 +1994,36 @@ export function createEnemy(spec, index) {
       anim.speed = 0;
       anim.windup = 0;
       anim.strike = 0;
-      anim.stagger = 1 - k0(t);
+      anim.stagger = 1 - k0(t, dur);
       anim.staggerRoll = 0;
       anim.staggerPitch = 0;
+      // The flinch keeps running into the fall. A body that snaps back from the
+      // killing round and THEN goes down is a body that was killed by that
+      // round; one that switches instantly from standing to toppling is a
+      // ragdoll being dropped. On a headshot the reaction is held rather than
+      // decayed for the first part of the fall, which is what "the string was
+      // cut" looks like.
+      decayHit(dt);
+      if (st.deathHead && st.hitK > 0) st.hitK = Math.max(st.hitK, 0.55 * (1 - k0(t, dur)));
+      publishHit();
       spec.animate(rig, spec, anim);
 
       // Accelerating rotation, not a linear one. A body falls under gravity and
       // an eased fall reads as a lowered mannequin.
-      const k = k0(t);
+      const k = k0(t, dur);
       rig.body.rotation.x = st.toppleAxisX * k * (Math.PI / 2);
       rig.body.rotation.z = st.toppleAxisZ * k * (Math.PI / 2);
+      // The buckle. Subtracted from whatever the animator left on the body, so
+      // the bob and the stagger dip are still under it. A leg shot drops the
+      // whole mass a third of a metre before the topple has taken it anywhere.
+      rig.body.position.y -= st.sag * Math.min(1, k * 2.2);
       rig.group.rotation.y += st.spinY * dt * (1 - k);
       return;
     }
 
-    if (t < TOPPLE_S + LIE_S) return;    // a beat on the floor before it goes
+    if (t < dur + LIE_S) return;    // a beat on the floor before it goes
 
-    const k = Math.min(1, (t - TOPPLE_S - LIE_S) / CRUMBLE_S);
+    const k = Math.min(1, (t - dur - LIE_S) / CRUMBLE_S);
     // Sink and taper rather than fade. Turning on transparency mid-run forces a
     // program swap on the frame the player earned the kill.
     rig.group.position.y = st.feetY - k * spec.height * baseScale * 0.9;
