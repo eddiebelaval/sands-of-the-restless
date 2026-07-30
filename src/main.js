@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 
-import { createRenderer, bindResize } from './core/renderer.js';
+import { createRenderer, bindResize, resolutionScale } from './core/renderer.js';
 import { createPost } from './core/post.js';
 import { createInput } from './core/input.js';
 import { createSky } from './world/sky.js';
@@ -490,7 +490,11 @@ function boot() {
     altar.setFidelity(high);
     audio.setFidelity(high);
     renderer.shadowMap.enabled = high;
-    renderer.setPixelRatio(high ? Math.min(window.devicePixelRatio, 2) : 1);
+    // High asks for the budgeted ratio rather than the raw device ratio. On a
+    // Retina display the old line rendered four times the fragments and took the
+    // frame from 60 fps to 7; see resolutionScale() in core/renderer.js for the
+    // table. Low still pins 1, so the toggle remains a real lever.
+    renderer.setPixelRatio(high ? resolutionScale() : 1);
     renderer.setSize(window.innerWidth, window.innerHeight);
     post.composer.setSize(window.innerWidth, window.innerHeight);
 
