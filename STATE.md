@@ -151,6 +151,43 @@ different name, is a genuine regression.
 
 `node test/ao-ab.mjs` separately measures whether the AO pass contributes.
 
+## IN FLIGHT as of 2026-07-30 evening - six lanes, none committed
+
+All six work in isolated trees under the session scratchpad and report back
+separately. Each was given an explicit no-touch list so they cannot collide. When one
+lands, verify it yourself, then commit ONLY its own files.
+
+| lane | port | owns | building |
+|---|---|---|---|
+| difficulty | 4531 | `ui/pause.js`, `index.html` | Easy / Normal / Hard + a real start menu |
+| melee + ammo | 4551 | `weapons.js`, `powerups.js`, `damage.js` | melee, and ammo drops that stop you getting caught empty |
+| gait | 4561 | `enemies/*` | the mummy "wobble" |
+| door | 4581 | `spaces.js`, `doors.js`, `post.js` | pyramid entry: door opens, fade to black, fade up |
+| death | 4591 | `damage.js`, new `ui/death.js`, `camera.js` | death animation, title card, gated restart |
+| perf | - | **COMMITTED** | pixel budget; see below |
+
+**`src/main.js` is the contended file.** Four of these lanes need a wiring hunk in it.
+The working method, used successfully four times already: copy the lane's other files
+in, apply ONLY its main.js hunk by hand, verify `git diff --stat src/main.js` shows just
+that hunk, commit, then restore the other lanes' in-progress main.js content. Never
+`git commit --only src/main.js` while another session has uncommitted work in it - that
+commits their work too.
+
+**Two cross-lane assumptions that must be reconciled when landing:**
+
+- **Dying mid-transition.** The door lane raises a black curtain; the death lane resets
+  the run. If the player dies while the curtain is up it must not be left up. Both were
+  told to state their assumption; check they agree.
+- **Ammo pressure.** The melee lane owns the ammo economy and was told to expose named
+  knobs. The difficulty lane was told NOT to touch ammo but that Easy should ease
+  resource pressure and Hard tighten it. Land melee first, then wire difficulty to its
+  knobs.
+
+**Owner playtest notes still open** (all from real play on real hardware, all confirmed
+real): the mummy wobble; the pyramid entry showing through walls and under the pyramid;
+no death animation or card; and the run auto-restarting so an idle player dies on a
+loop forever.
+
 ## Done and working
 
 - Processional avenue, 9-room pyramid interior, two-level gallery, buy-doors
