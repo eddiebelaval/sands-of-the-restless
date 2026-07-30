@@ -106,6 +106,44 @@ Still outside the gate on purpose: `ao-ab.mjs` is a measurement tool, not an
 assertion suite. `settings.mjs` belongs to in-flight work and should be added when
 that lands - and given the one-line URL fix first.
 
+### GATE STATUS as of 2026-07-30, measured on a clean tree at 67941f9
+
+`npm test` is RED, and it was red BEFORE hud and probe were wired in, so do not
+read the wiring as having made it green. Two known failures, neither of them
+introduced by this run of work, both reproduced on trees that predate it:
+
+| suite | result | |
+|---|---|---|
+| enemies | 52 / 0 | green |
+| gun | 17 / 0 | green |
+| economy | 100 / 0 | green |
+| hud | 211 / 0 | green |
+| interior | pass | green |
+| mysterybox | pass | green |
+| probe | exit 0 | diagnostic, asserts nothing |
+| shot | pass **when run alone** | see the load note below |
+| **grenades** | **1 FAIL** `the aftermath is a different frame` | PRE-EXISTING |
+| **powerups** | **1 FAIL** `the live one is left alone` | PRE-EXISTING, flaky |
+
+- **grenades** wants the aftermath at least 1.0 luma below the pre-blast plate. It
+  currently misses by 0.15. Before the AO composite landed it missed by 1.87 IN THE
+  WRONG DIRECTION, so AO moved this check substantially toward passing and it is
+  now the closest it has ever been. Reproduced twice on each of two trees.
+- **powerups** `the live one is left alone` is a flake, not a threshold: the patch
+  it measures contains the weapon viewmodel, and which weapon that is depends on a
+  mystery-box roll earlier in the run. Confirmed failing twice on a tree with no AO
+  change at all. The same noise source is what forced `each has shape on it` to be
+  re-based onto the fixture's own pixels; this check has not been given the same
+  treatment yet, and that is the obvious next fix.
+- **shot** fails with "the world did not render (black or near-black frame)" and
+  ZERO console errors when the machine is saturated - it captured before the first
+  frame drew. Run alone on the same tree it passes at meanLuma 44.9. Seventeen local
+  servers and several concurrent Chrome instances will do it. If you see a black
+  frame, re-run it alone before believing it.
+
+**So: two real known-red checks, one load-sensitive flake.** A third failure, or a
+different name, is a genuine regression.
+
 `node test/ao-ab.mjs` separately measures whether the AO pass contributes.
 
 ## Done and working
