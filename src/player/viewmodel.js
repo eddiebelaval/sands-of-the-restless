@@ -906,10 +906,34 @@ function palette(M) {
     // sun disc back down the sight line. A fixed mid grey cannot flare.
     rim: new THREE.MeshBasicMaterial({ color: 0x71767f }),
 
-    // Muzzle flash. Unlit and additive: it is light, not a surface.
+    // Muzzle flash, INNER. Unlit and additive: it is light, not a surface.
+    // This is the crown only - the small near-white cone sitting on the bore.
+    // Its opacity is driven per frame by the flash decay, so the authored value
+    // here is the peak rather than a constant.
     flash: new THREE.MeshBasicMaterial({
-      color: 0xffd79a, transparent: true, opacity: 0.92,
+      color: 0xffe9c4, transparent: true, opacity: 0.92,
       blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+
+    // Muzzle flash, OUTER: the petals and the halo.
+    //
+    // A separate material because a flash needs two values, and one additive
+    // material at one opacity cannot supply them. The old flash was a single
+    // 0.92 additive across a 45mm cone, two 140mm bars and a back-facing cone -
+    // every part of it identical, all of it far over the bloom threshold, and
+    // therefore a white ball with no interior. This is deeper amber and roughly
+    // half the alpha, so the star reads as flame around a hot core instead of
+    // as one saturated blob.
+    flashOuter: new THREE.MeshBasicMaterial({
+      color: 0xff9c3c, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+
+    // Powder smoke. NOT additive: smoke occludes, it does not add. Warm grey
+    // because the only thing lighting it is the flash that made it.
+    smoke: new THREE.MeshBasicMaterial({
+      color: 0x6a5b4c, transparent: true, opacity: 0,
+      depthWrite: false,
     }),
   };
 
@@ -3090,12 +3114,32 @@ function buildSmg(P) {
   });
   g.add(optic.root);
 
-  // Front iron: hood and post, kept because the hooded muzzle end is half of
-  // what makes this shape read as an SMG rather than as a pipe.
-  g.add(box(P.metal, 0.012, 0.022, 0.014, 0, 0.036, -0.360));          // front base
+  // Front iron: hood, pedestal and post, kept because the hooded muzzle end is
+  // half of what makes this shape read as an SMG rather than as a pipe.
+  //
+  // THE PEDESTAL CAME DOWN 13mm, AND THAT IS A BUG FIX, not a proportion tweak.
+  //
+  // It used to be a 22mm block centred at y 0.036, so it spanned 0.025 to 0.047
+  // and was 12mm wide. IRON_Y is 0.046. The post was a 6mm-diameter rod running
+  // 0.035 to 0.047, and the fibre bead a 2.8mm cube at y 0.0442, z -0.3596.
+  // Both of them were therefore INSIDE that block on all three axes - the post
+  // by 3mm of clearance a side, the bead by 5mm - and neither could ever draw a
+  // pixel. A flat-colour mask render of the aimed frame put P.fibre at exactly
+  // ZERO on this weapon while the shotgun's identical bead measured 18 and the
+  // LMG's 20, and the aimed screenshot backed it up: hood ring, no post, no
+  // bead. This is the fifth part in this file to be modelled inside solid
+  // geometry, and like the other four it survived every lit screenshot ever
+  // taken of it, because a lit render cannot tell you a material drew nothing.
+  //
+  // The pedestal now tops out at 0.037, ten millimetres below the sight line,
+  // so the post stands proud of it the way the LMG's already did. The bead
+  // moves onto the post's REAR face rather than into its middle - a fibre rod
+  // is read from behind - which is 1.4mm nearer the eye than the post's own
+  // surface and therefore genuinely in front of it.
+  g.add(box(P.metal, 0.012, 0.014, 0.014, 0, 0.030, -0.360));          // pedestal
   g.add(ring(P.metal, 0.011, 0.0028, 0, IRON_Y, -0.362, 12));          // hood
   g.add(rod(P.dark, 0.0026, 0.0030, 0.012, 0, IRON_Y - 0.005, -0.362, 'y', 8));
-  D(box(P.fibre, 0.0028, 0.0026, 0.0026, 0, IRON_Y - 0.0018, -0.3596));
+  D(box(P.fibre, 0.0028, 0.0026, 0.0026, 0, IRON_Y - 0.0018, -0.3572));
 
   g.add(gripHand(P, 0.000, -0.082, -0.006, -0.20));
   // Support hand on the foregrip. Its arm crosses to the left, not back to the
@@ -3864,19 +3908,35 @@ function buildSunspear(P) {
   pane.position.set(0, SIGHT_Y, -0.052);
   g.add(pane);
 
-  // The reticle: eight arc segments and a centre pip, sized in angle. The ring
-  // is 1.7 degrees, which is 25 pixels of radius - big enough to find in a
+  // The reticle: sixteen arc segments and a centre pip, sized in angle. The
+  // ring is 1.7 degrees, which is 25 pixels of radius - big enough to find in a
   // rush and small enough to sit round a mummy's head at ten metres rather
   // than round the whole mummy.
-  const dot = new THREE.Mesh(boxGeo(0.0020, 0.0020, 0.0030), P.core);
+  //
+  // P.dot, NOT P.core, and this was a real defect rather than a preference.
+  // P.core is a LIT standard material whose emissiveIntensity is driven every
+  // frame by the cell-swap track in CELL_RELOAD, which takes it to 0.12 of
+  // normal between t=0.24 and t=0.64. This reticle was built out of it, so
+  // reloading the Sunspear browned its own aim point out to an eighth for a
+  // second and a half - and being lit, it also took its value from the key
+  // light, which is the exact thing the note on P.dot says a reticle must never
+  // do. It is also the same amber as the core rod, the heat-sink slots, the
+  // cell windows, the prong tips and the emitter strip directly above it, so
+  // the one mark the player aims with was the same colour as nine decorative
+  // ones. Red separates it from every glowing part of its own weapon.
+  //
+  // Out of `detail` as well. The arc segments were detail parts, so dropping to
+  // low fidelity deleted the ring and left a bare pip. A reticle is not
+  // ornament; it is the sight.
+  const dot = new THREE.Mesh(boxGeo(0.0020, 0.0020, 0.0030), P.dot);
   dot.position.set(0, SIGHT_Y, -0.0505);
   g.add(dot);
   for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2;
-    const seg = box(P.core, 0.0022, 0.0009, 0.0022,
+    const seg = box(P.dot, 0.0022, 0.0009, 0.0022,
       Math.cos(a) * 0.0060, SIGHT_Y + Math.sin(a) * 0.0060, -0.0505);
     seg.rotation.z = a + Math.PI / 2;
-    g.add(seg); detail.push(seg);
+    g.add(seg);
   }
 
   // Rear ghost ring, so the eye still has two elements to line up on. Carried
@@ -3884,16 +3944,25 @@ function buildSunspear(P) {
   // up to within a millimetre of the sight line, and at 170mm from the eye
   // that millimetre is a grey slab filling the bottom half of the aperture.
   //
-  // The ring is 32mm across now rather than 17. At 183mm from the eye the old
-  // one subtended 2.7 degrees, which made it - not the holographic window
-  // behind it - the narrowest thing on the sight line, so the 10 degree window
-  // this weapon carries was being looked at through a 2.7 degree hole. A ring
-  // that is WIDER than the window frames it; a ring that is narrower replaces
-  // it.
+  // A ring that is WIDER than the window frames it; a ring that is narrower
+  // replaces it. THE PREVIOUS NUMBERS DID NOT ACHIEVE THAT, and the comment
+  // that shipped with them asserted a fix that the arithmetic does not support.
+  // Measured against the solved ADS pose: the eye sits at local z = relief +
+  // sight.z = 0.205 - 0.052 = 0.153, so the ring at z = -0.030 is 183mm out.
+  // A 16mm major radius with a 1.6mm tube leaves a 14.4mm hole, which is 4.50
+  // degrees. The holographic window is 205mm out and 21mm half-height, which is
+  // 5.85. So the ring was still the narrowest thing on the sight line by a
+  // margin of a degree and a third, and the aimed frame showed exactly that: a
+  // heavy black donut with the whole sight picture squeezed inside it.
+  //
+  // 22.8mm major with a 1.3mm tube is a 21.5mm hole at 183mm, which is 6.70
+  // degrees - comfortably outside the window's 5.85 - and the band it draws
+  // narrows from 0.99 degrees to 0.80. The legs move out with it, or they cut
+  // the corners off the aperture the ring just opened.
   for (const side of [-1, 1]) {
-    g.add(box(P.dark, 0.0034, 0.028, 0.009, side * 0.0186, 0.058, -0.030));
+    g.add(box(P.dark, 0.0034, 0.028, 0.009, side * 0.0196, 0.056, -0.030));
   }
-  g.add(ring(P.dark, 0.016, 0.0016, 0, SIGHT_Y, -0.030, 24));
+  g.add(ring(P.dark, 0.0228, 0.0013, 0, SIGHT_Y, -0.030, 28));
 
   g.add(gripHand(P, 0.000, -0.070, -0.020, -0.24));
   g.add(guardHand(P, 0.000, 0.014, -0.300));
@@ -3905,7 +3974,9 @@ function buildSunspear(P) {
     reticle: new THREE.Vector3(0, SIGHT_Y, -0.0505),
     muzzle: new THREE.Vector3(0, 0.006, -0.540),
     eject: null,                       // energy weapons drop no brass
-    glowParts: [core, coreGlowA, coreGlowB, dot],
+    // The reticle is deliberately NOT in here any more: it is P.dot, unlit, and
+    // it does not brown out when the cell is swapped.
+    glowParts: [core, coreGlowA, coreGlowB],
   };
 }
 
@@ -4041,6 +4112,9 @@ const WEAPONS = {
     track: MAG_RELOAD, reloadTime: 1.85,
     kick: { back: 1.05, rise: 0.55, pitch: 0.34, yaw: 0.10, roll: 0.9 },
     camKick: 2.6, flash: 0.9, shell: 0.85, sway: 1.0,
+    // Short, tight, five even petals. A pistol crown is unremarkable and the
+    // flash should not be the loudest thing about the weapon.
+    burn: { petals: 0.82, spread: 0.82, life: 0.050, smoke: 0.55, core: 0.80 },
   },
 
   smg: {
@@ -4051,6 +4125,9 @@ const WEAPONS = {
     track: MAG_RELOAD, reloadTime: 2.05,
     kick: { back: 0.85, rise: 0.45, pitch: 0.26, yaw: 0.12, roll: 0.7 },
     camKick: 1.9, flash: 0.85, shell: 0.8, sway: 0.95,
+    // The shortest life in the armoury: at 900rpm the previous flash has to be
+    // gone before the next one starts or the burst is one continuous lamp.
+    burn: { petals: 0.70, spread: 0.72, life: 0.038, smoke: 0.35, core: 0.80 },
   },
 
   shotgun: {
@@ -4061,6 +4138,9 @@ const WEAPONS = {
     track: SHELL_RELOAD, reloadTime: 3.20,
     kick: { back: 2.30, rise: 1.30, pitch: 0.72, yaw: 0.14, roll: 1.6 },
     camKick: 5.4, flash: 1.6, shell: 1.25, sway: 1.05,
+    // Wide, brief and filthy. An unchoked 12 gauge throws a broad low star and
+    // a great deal of smoke, and the smoke is what sells the recoil.
+    burn: { petals: 1.25, spread: 1.15, life: 0.062, smoke: 1.60, core: 1.00 },
   },
 
   carbine: {
@@ -4071,6 +4151,9 @@ const WEAPONS = {
     track: MAG_RELOAD, reloadTime: 2.40,
     kick: { back: 1.05, rise: 0.58, pitch: 0.30, yaw: 0.11, roll: 0.8 },
     camKick: 2.4, flash: 1.0, shell: 1.0, sway: 1.0,
+    // A four-prong hider cuts the star down and pushes it forward, which is the
+    // whole point of fitting one.
+    burn: { petals: 0.85, spread: 0.62, life: 0.046, smoke: 0.50, core: 0.92 },
   },
 
   lmg: {
@@ -4081,6 +4164,9 @@ const WEAPONS = {
     track: MAG_RELOAD, reloadTime: 3.90,
     kick: { back: 1.35, rise: 0.72, pitch: 0.36, yaw: 0.16, roll: 1.0 },
     camKick: 3.0, flash: 1.25, shell: 1.1, sway: 1.35,
+    // Big open port, long petals, and enough smoke that sustained fire leaves a
+    // haze at the muzzle.
+    burn: { petals: 1.15, spread: 0.86, life: 0.055, smoke: 0.85, core: 1.00 },
   },
 
   bolt: {
@@ -4091,6 +4177,10 @@ const WEAPONS = {
     track: CLIP_RELOAD, reloadTime: 3.10,
     kick: { back: 2.60, rise: 1.10, pitch: 0.80, yaw: 0.10, roll: 1.2 },
     camKick: 6.0, flash: 1.4, shell: 1.15, sway: 1.25,
+    // A long barrel burns its powder inside itself. Almost no star, one long
+    // spear of gas straight down the bore, and the longest life of the seven:
+    // one shot, and you are meant to watch it.
+    burn: { petals: 1.55, spread: 0.26, life: 0.075, smoke: 0.85, core: 1.05 },
   },
 
   sunspear: {
@@ -4101,6 +4191,16 @@ const WEAPONS = {
     track: CELL_RELOAD, reloadTime: 2.30,
     kick: { back: 0.70, rise: 0.30, pitch: 0.18, yaw: 0.05, roll: 0.4 },
     camKick: 1.4, flash: 1.5, shell: 0, sway: 1.1,
+    // Not a firearm and it should not flash like one. No smoke, the longest
+    // life of the seven, and a wide EVEN spread so the petals open into a
+    // symmetrical corona rather than a directional star: this is a discharge
+    // off an emitter, not gas leaving a barrel.
+    //
+    // spread 0 was the first attempt and it was wrong - it folded the petals
+    // onto the bore, and all that was left was the core and the halo, which at
+    // 880mm from the eye is a 21 pixel orange dot. The most expensive weapon in
+    // the armoury had the least visible discharge of the seven.
+    burn: { petals: 0.72, spread: 1.05, life: 0.090, smoke: 0.00, core: 1.45 },
   },
 };
 
@@ -4189,33 +4289,144 @@ export function createViewmodel(host, materials) {
   // lift from the environment instead, below, where it actually belongs.
   scene.add(key, fill, rim, new THREE.AmbientLight(0x6a7078, 0.75));
 
-  // --- muzzle flash --------------------------------------------------------
-  // A cone pointing down the bore plus a cross-glow quad, and a real point
-  // light that is on for exactly two frames. See update() for the frame count.
+  // ---------------------------------------------------------------------------
+  // muzzle flash
+  //
+  // WHAT WAS WRONG WITH THE OLD ONE, measured rather than felt.
+  //
+  // It was four meshes at a flat 0.92 additive: a 45mm cone, a second cone
+  // facing back into the barrel, and two 140mm bars crossed at the muzzle. On
+  // screen that is a formless white ball with a hard plus-sign laid over it,
+  // and it is binary - on for two frames at full strength, then gone. Diffed
+  // against a held control frame with the grain zeroed and the RNG pinned, one
+  // MK9 shot moved 42 per cent of the frame and lifted its mean luma by 7.6.
+  // The note that came back on it was that it "relights the entire window", and
+  // the reason is not that the light is strong: it is that a big flat additive
+  // blob with no falloff, over threshold everywhere, is nothing BUT area for
+  // bloom to spread.
+  //
+  // So the brief on this rebuild is explicitly NOT "brighter". It is shape,
+  // falloff, duration and direction, at equal or lower mean luma. Five changes:
+  //
+  //   1. STRUCTURE INSTEAD OF A BALL. A tight bright core cone at the crown,
+  //      five tapered PETALS raked out from the bore, and a small flat halo
+  //      facing the eye. A real flash is a star seen down its own axis, and the
+  //      thing that makes it read as coming out of a barrel is that its parts
+  //      radiate from one point on the bore line rather than surrounding it.
+  //   2. AN INNER AND AN OUTER VALUE. The core is near-white, the petals are
+  //      amber and dimmer. One value is a blob; two is a flame.
+  //   3. REAL FALLOFF. Opacity, petal length and light intensity all decay over
+  //      the flash's life, which is now a duration in SECONDS multiplied by the
+  //      clamped delta like everything else in this file. The two-frame floor is
+  //      kept underneath it, because on the software renderer a frame is 300ms
+  //      of wall clock and a purely time-based flash would be gone before it was
+  //      ever composited.
+  //   4. SMOKE. A short-lived warm puff that outlives the light and drifts
+  //      forward off the crown. It is the part that says a round was fired, as
+  //      opposed to a lamp being switched on.
+  //   5. A LIGHT THAT COMES FROM THE BARREL. The point light ran at distance
+  //      1.6m with decay 2 - the whole viewmodel is inside 0.9m, so every part
+  //      of the weapon and both hands were inside its full-strength region and
+  //      the result was a uniform exposure step rather than a source. Pulled in
+  //      to 0.62m and moved 40mm forward of the crown, it falls off across the
+  //      length of the weapon, which is what makes the near end of the barrel
+  //      brighter than the stock.
+  //
+  // Ten meshes rather than four, and they are drawn only on the two-to-four
+  // frames a shot is on screen. Between shots the group is invisible and costs
+  // nothing.
+  // ---------------------------------------------------------------------------
   const flash = new THREE.Group();
   flash.visible = false;
 
-  const flashCone = new THREE.Mesh(coneGeo(0.045, 0.11, 12), P.flash);
-  flashCone.rotation.x = -Math.PI / 2;    // apex forward, down -Z
-  flashCone.position.z = -0.055;
-  flash.add(flashCone);
-
-  const flashCore = new THREE.Mesh(coneGeo(0.022, 0.05, 10), P.flash);
-  flashCore.rotation.x = Math.PI / 2;     // a second cone facing back into the barrel
-  flashCore.position.z = -0.012;
+  // The hot crown: short, tight, and the only near-white thing in the group.
+  //
+  // 14mm and 48mm, and the SMALLNESS is measured rather than chosen. The first
+  // build of this star used a 20mm/62mm core against 90mm petals, and on the
+  // MK9 - whose muzzle sits 654mm from the eye, the closest of the seven - the
+  // core alone subtended 5.2 degrees while the petals reached 4.4. Everything
+  // was inside one 110 pixel cluster, and bloom at radius 0.55 fused the lot
+  // into exactly the formless ball this rebuild was supposed to remove. A star
+  // only reads if its arms are longer than its core is wide.
+  const flashCore = new THREE.Mesh(coneGeo(0.014, 0.048, 12), P.flash);
+  flashCore.rotation.x = -Math.PI / 2;     // apex forward, down -Z
+  flashCore.position.z = -0.024;
   flash.add(flashCore);
 
-  const flashStar = new THREE.Mesh(boxGeo(0.14, 0.006, 0.006), P.flash);
-  flash.add(flashStar);
-  const flashStarV = new THREE.Mesh(boxGeo(0.006, 0.14, 0.006), P.flash);
-  flash.add(flashStarV);
+  // The halo. A flat annulus on the bore axis facing the eye, so there is one
+  // compact round source for bloom to bite on instead of a wide skirt. Small on
+  // purpose: this is the part that decides how much of the frame lifts.
+  const flashHalo = new THREE.Mesh(annulusGeo(0.004, 0.019, 20), P.flashOuter);
+  flashHalo.position.z = -0.004;
+  flash.add(flashHalo);
 
-  const flashLight = new THREE.PointLight(0xffcf8a, 0, 1.6, 2);
+  // Five petals, raked off the bore. Each is a cone lying along its own rake
+  // angle with its apex outward, so the star tapers away from the muzzle
+  // instead of ending in five flat caps. Held in a list because their length
+  // and their rake are re-rolled per shot and eased down over the flash's life.
+  // THREE LEVELS, and the middle one is the point. ConeGeometry is centred on
+  // its own axis, so a petal rotated in place hinges about its MIDDLE and its
+  // base swings back past the crown - five blades pivoting around a point in
+  // mid-air rather than radiating from the muzzle. The hinge group sits at the
+  // muzzle and carries the rake; the mesh is offset forward inside it, so the
+  // base stays on the bore and only the tip sweeps.
+  const FLASH_PETALS = 5;
+  const PETAL_LEN = 0.150;
+  const petals = [];
+  for (let i = 0; i < FLASH_PETALS; i++) {
+    const mesh = new THREE.Mesh(coneGeo(0.0095, PETAL_LEN, 8), P.flashOuter);
+    mesh.rotation.x = -Math.PI / 2;      // apex forward, down -Z
+    mesh.position.z = -PETAL_LEN / 2;
+    const hinge = new THREE.Group();
+    // 9mm off the bore, and this is the line that lets the star survive bloom.
+    //
+    // With every petal hinged ON the axis, five cone BASES - the fat end - all
+    // landed on the same point as the core's base. Additive blending sums, so
+    // the crown stacked seven surfaces: measured against sand at about 0.55
+    // linear the centre reached roughly 3.0, nearly double the bloom threshold
+    // of 1.60, and UnrealBloomPass turned a 30 pixel source into a 300 pixel
+    // cream ball with the star buried inside it. Rendered with bloom disabled
+    // the same geometry read as a clean five-point star, which is what proved
+    // the shape was never the problem.
+    //
+    // Hanging each petal off the crown's RIM instead spreads that sum over a
+    // ring rather than piling it on one texel, and it is also what actually
+    // happens: gas leaves round the edge of the crown, not through its centre.
+    hinge.position.y = 0.009;
+    hinge.add(mesh);
+    const pivot = new THREE.Group();
+    pivot.rotation.z = (i / FLASH_PETALS) * Math.PI * 2;
+    pivot.add(hinge);
+    flash.add(pivot);
+    petals.push({ pivot, hinge, mesh });
+  }
+
+  // Smoke: two soft puffs that outlive the light. Not additive - smoke is a
+  // thing in front of the world, not light added to it - and warm-grey rather
+  // than neutral, because it is lit by the flash that made it.
+  const smoke = [];
+  for (let i = 0; i < 2; i++) {
+    const s = new THREE.Mesh(unitBall(7), P.smoke);
+    s.position.set(0, 0, -0.05 - i * 0.03);
+    s.visible = false;
+    flash.add(s);
+    smoke.push(s);
+  }
+
+  // Distance 0.62 rather than 1.6: see note 5 above. The whole viewmodel sits
+  // inside 0.9m of the muzzle, so a 1.6m radius lit every part of it equally.
+  const flashLight = new THREE.PointLight(0xffcf8a, 0, 0.62, 2);
+  flashLight.position.z = -0.040;
   flashLight.visible = false;
   flash.add(flashLight);
   group.add(flash);
 
-  let flashFrames = 0;
+  let flashFrames = 0;         // hard floor: this many rendered frames, always
+  let flashT = 0;              // seconds remaining in the flash proper
+  let flashLife = 1;           // this shot's full duration, for the 0..1 curve
+  let smokeT = 0;              // seconds remaining on the puffs
+  let smokeLife = 1;
+  const flashShape = { petals: 1, spread: 0.5, core: 1 };
 
   // --- image-based lighting -------------------------------------------------
   // gunmetal is metalness 0.90, and a metal with nothing to reflect is black
@@ -4638,6 +4849,200 @@ export function createViewmodel(host, materials) {
       || state.phase === 'lowering';
   }
 
+  // -------------------------------------------------------------------------
+  // the flash
+  // -------------------------------------------------------------------------
+
+  /** Default character, for a weapon table entry that predates `burn`. */
+  const BURN_DEFAULT = { petals: 1, spread: 0.6, life: 0.048, smoke: 0.6, core: 1 };
+
+  /**
+   * Roll one shot's flash and start its clocks.
+   *
+   * Everything randomised here is randomised ONCE per shot and then eased, so
+   * the flash does not shimmer between the frames it is on screen. The old one
+   * re-rolled nothing and simply sat at full strength for two frames, which is
+   * why it read as a lamp rather than as an event.
+   */
+  function armFlash() {
+    const b = current.burn || BURN_DEFAULT;
+
+    flashLife = b.life;
+    flashT = flashLife;
+    flashFrames = 2;                 // the floor: see update()
+    smokeLife = b.life * 7;
+    smokeT = b.smoke > 0 ? smokeLife : 0;
+
+    flash.visible = true;
+    // The tail of the PREVIOUS shot may have left these down while its smoke
+    // ran on. On any automatic weapon that is every shot after the first, so
+    // failing to put them back is a flash that appears once and never again.
+    flashCore.visible = true;
+    flashHalo.visible = true;
+    // Roll the whole star about the bore, so consecutive shots are not the same
+    // picture. This is a rotation about -Z, which is the bore, and that is what
+    // keeps the flash reading as something leaving the barrel.
+    flash.rotation.z = Math.random() * Math.PI * 2;
+
+    const s = current.flash * (0.86 + Math.random() * 0.28);
+    flash.scale.set(s, s, s);
+
+    flashShape.petals = b.petals;
+    flashShape.spread = b.spread;
+    flashShape.core = b.core;
+
+    // Per-petal length and rake, re-rolled per shot. An even star is a cog.
+    for (let i = 0; i < petals.length; i++) {
+      const p = petals[i];
+      p.len = 0.60 + Math.random() * 0.75;
+      p.rake = b.spread * (0.62 + Math.random() * 0.55);
+      p.pivot.rotation.z = (i / petals.length) * Math.PI * 2
+        + (Math.random() - 0.5) * 0.5;
+    }
+
+    for (let i = 0; i < smoke.length; i++) {
+      const sm = smoke[i];
+      sm.visible = b.smoke > 0;
+      sm.userData.drift = 0.10 + Math.random() * 0.12;
+      sm.userData.grow = 0.9 + Math.random() * 0.9;
+      sm.userData.z0 = -0.035 - i * 0.030;
+      sm.userData.spin = (Math.random() - 0.5) * 3.0;
+      sm.position.set((Math.random() - 0.5) * 0.02, (Math.random() - 0.5) * 0.02,
+        sm.userData.z0);
+    }
+
+    if (highFidelity) {
+      flashLight.visible = true;
+      // 0.32, DOWN FROM 5.5, and this single number is the whole "the flash
+      // relights the entire window" defect. It is measured, not chosen.
+      //
+      // The formless white ball that a shot painted over a quarter of the frame
+      // was never the flash GEOMETRY. Rendered with this light forced off and
+      // everything else untouched, the same shot is a crisp five-point amber
+      // star at the muzzle with no halo at all; rendered with the geometry
+      // hidden and only the light left, the ball is still there, unchanged. It
+      // is the light, and only the light.
+      //
+      // The reason is that a three.js PointLight with decay 2 delivers
+      // intensity / d^2, and every surface this light was built to illuminate
+      // is 50 to 150mm away. At 5.5 candela the slide 80mm from the crown was
+      // receiving 860 units of irradiance. That is three orders of magnitude
+      // over the bloom threshold of 1.60 linear, so UnrealBloomPass at radius
+      // 0.55 spread it across the frame - and it did so whether or not the shot
+      // hit anything, which is why it swamped every other visual event.
+      //
+      // Swept against a held control frame with the grain zeroed and the RNG
+      // pinned, whole-frame mean luma lift on one MK9 shot:
+      //
+      //     intensity   mean lift   changed
+      //       4.4        +30.92      70.8%
+      //       1.2        +13.05      70.4%
+      //       0.40        +6.43      68.0%
+      //       0.14        +2.93      66.5%
+      //
+      // 0.32 sits just under the point where the halo starts eating the star.
+      // The barrel and the near hand still take a visible pulse - which is the
+      // part worth keeping, because light falling on the weapon is what makes a
+      // flash read as a source - and the star carries the flare.
+      //
+      // It is still per-weapon: a Sekhem 12 at flash 1.6 pulses five times as
+      // hard as a Wadjet at 0.85, which is the character the old flat value
+      // could not express because everything was clipped to white anyway.
+      flashLight.intensity = 0.32 * current.flash * b.core;
+    }
+  }
+
+  /**
+   * Ease one frame of flash. `k` runs 1 at the crown of the shot to 0 at the
+   * end of its life.
+   *
+   * Multiplied by the clamped delta like every other rate in this file. The
+   * two-frame FLOOR underneath it is deliberate and is not redundant: under the
+   * software renderer a frame is 300ms of wall clock against a delta clamped to
+   * 50ms, so a 50ms flash driven purely by time would expire inside a single
+   * frame and might never be composited at all.
+   */
+  function updateFlash(dt) {
+    // Nothing burning and nothing smoking: this is every frame the player is
+    // not shooting, so it leaves immediately.
+    if (!flash.visible && flashT <= 0 && smokeT <= 0 && flashFrames <= 0) return;
+
+    // The Altar can stow the weapon mid-burst, which clears `current` while a
+    // flash is still decaying. Read the character off a local so a stow during
+    // the tail of a shot is a fade rather than a throw.
+    const cur = current || { flash: 1, burn: BURN_DEFAULT };
+
+    if (smokeT > 0) {
+      smokeT = Math.max(0, smokeT - dt);
+      const sk = smokeT / smokeLife;              // 1 -> 0
+      const b = cur.burn || BURN_DEFAULT;
+      P.smoke.opacity = 0.30 * b.smoke * sk * sk;
+      for (const sm of smoke) {
+        if (!sm.visible) continue;
+        sm.position.z = sm.userData.z0 - (1 - sk) * sm.userData.drift;
+        const gs = (0.035 + (1 - sk) * sm.userData.grow * 0.075) * b.smoke;
+        sm.scale.set(gs, gs, gs);
+        sm.rotation.z += sm.userData.spin * dt;
+      }
+    } else {
+      for (const sm of smoke) sm.visible = false;
+    }
+
+    if (flashT > 0) flashT = Math.max(0, flashT - dt);
+
+    // The flash proper is alive while EITHER clock says so.
+    if (flashT > 0 || flashFrames > 0) {
+      if (flashFrames > 0) flashFrames--;
+
+      // Curve: hold near full for the first fifth, then fall away fast. A
+      // linear fade reads as a dimmer being turned down; this reads as a burn.
+      const t = flashLife > 0 ? flashT / flashLife : 0;
+      const k = flashFrames > 0 ? Math.max(t, 0.75) : t;
+      const fall = k * k * (0.35 + 0.65 * k);
+
+      P.flash.opacity = 0.86 * fall * flashShape.core;
+      P.flashOuter.opacity = 0.60 * fall;
+
+      // The core shortens as it burns out; the petals shorten faster and rake
+      // further out, which is what a star does as the gas expands and cools.
+      flashCore.scale.set(1, 0.55 + 0.45 * fall, 1);
+      flashHalo.scale.setScalar(0.75 + 0.55 * fall);
+
+      const open = 1 - fall;
+      for (const p of petals) {
+        const len = p.len * flashShape.petals * (0.62 + 0.38 * fall);
+        // Scale along the cone's own long axis, which is local Y before the
+        // -90 degree lay-down. The offset that puts the base on the bore has to
+        // follow it, or a short petal floats off the muzzle.
+        p.mesh.scale.set(0.8 + 0.4 * open, len, 0.8 + 0.4 * open);
+        p.mesh.position.z = -PETAL_LEN * len / 2;
+        // Rake opens as the flash decays: the star sweeps outward from the bore
+        // rather than simply growing.
+        p.hinge.rotation.x = p.rake * (0.55 + 0.75 * open);
+        p.mesh.visible = flashShape.spread > 0.001 && len > 0.15;
+      }
+
+      if (flashLight.visible) {
+        flashLight.intensity = 0.32 * cur.flash * (cur.burn || BURN_DEFAULT).core * fall;
+      }
+      flash.visible = true;
+    } else if (flash.visible) {
+      // Down, but the smoke may still be running - keep the group up for it and
+      // take the burning parts out instead.
+      const smokeAlive = smokeT > 0;
+      flashCore.visible = false;
+      flashHalo.visible = false;
+      for (const p of petals) p.mesh.visible = false;
+      flashLight.visible = false;
+      flashLight.intensity = 0;
+      if (!smokeAlive) {
+        flash.visible = false;
+        flashCore.visible = true;
+        flashHalo.visible = true;
+      }
+    }
+  }
+
   /** Returns false when the state machine refused the shot. */
   function fire() {
     if (!model || busy()) return false;
@@ -4663,16 +5068,7 @@ export function createViewmodel(host, materials) {
         (Math.random() - 0.5) * current.camKick * 0.35);
     }
 
-    // Two frames of flash, counted down in update().
-    flashFrames = 2;
-    flash.visible = true;
-    flash.rotation.z = Math.random() * Math.PI * 2;
-    const s = current.flash * (0.85 + Math.random() * 0.35);
-    flash.scale.set(s, s, s * (0.8 + Math.random() * 0.5));
-    if (highFidelity) {
-      flashLight.visible = true;
-      flashLight.intensity = 5.5 * current.flash;
-    }
+    armFlash();
 
     if (current.shell > 0 && model.eject) spawnShell();
     return true;
@@ -4775,18 +5171,10 @@ export function createViewmodel(host, materials) {
   function update(dt, ctx = {}) {
     dt = Math.min(dt, MAX_DELTA);
 
-    // Muzzle flash lifetime, counted in frames rather than seconds so it is
-    // exactly as brief as the display allows and never smears across a long
-    // frame. fire() sets the counter to 2 and turns it on; the two updates
-    // that follow leave it on and render with it, and the third turns it off.
-    // Two rendered frames, and the light is never left running.
-    if (flashFrames > 0) {
-      flashFrames--;
-    } else if (flash.visible) {
-      flash.visible = false;
-      flashLight.visible = false;
-      flashLight.intensity = 0;
-    }
+    // The flash owns its own clocks now: a duration in seconds eased against
+    // the clamped delta, with a two-rendered-frame floor underneath it so a
+    // 300ms software frame cannot skip it. See updateFlash().
+    updateFlash(dt);
 
     updateShells(dt);
     syncProjection();
