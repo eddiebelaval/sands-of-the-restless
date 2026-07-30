@@ -316,8 +316,24 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
  * committed as verified when the verification had been contaminated that way.
  *
  * Defaults to 4177, so nothing that already worked changes.
+ *
+ * ARGV FIRST, AND THIS SUITE IS WHY THE AUDIT GETS RE-RUN.
+ *
+ * 516937e fixed the eight suites that were silently ignoring the URL argument
+ * and its message said "all eight". There were NINE. This file read only
+ * SANDS_URL, so every `node test/hud.mjs http://127.0.0.1:PORT/index.html`
+ * quietly tested 4177 instead of the tree it was handed - the same class of
+ * false verification that commit exists to end, surviving inside the fix for it.
+ *
+ * It surfaced only because 4177 is deliberately kept EMPTY as a tripwire, so the
+ * ignored argument produced a connection refusal rather than a confident pass on
+ * the wrong build. Had anything been serving that port it would have lied.
+ *
+ * The lesson is not "check hud.mjs". It is that a claim of the form "all N are
+ * fixed" has to be produced by enumerating the files, not by counting the ones
+ * you happened to edit.
  */
-const BASE = process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 console.log(`testing ${BASE}`);
 
 await page.goto(BASE, { waitUntil: 'load' });
