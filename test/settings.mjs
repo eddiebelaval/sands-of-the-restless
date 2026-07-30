@@ -291,8 +291,26 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
  * WHICH TREE IS BEING TESTED. STATE.md's standing instruction is to verify on
  * an ISOLATED tree, and a hardcoded port makes that instruction impossible to
  * follow. Defaults to 4177 so nothing that already worked changes.
+ *
+ * ARGV FIRST, AND THIS IS THE THIRD TIME THIS EXACT LINE HAS BEEN WRONG.
+ *
+ * 516937e fixed the suites that silently ignored the URL argument and said "all
+ * eight". There were nine - hud.mjs read only SANDS_URL and was caught in
+ * 5fb40a5. This file was written afterwards, inherited the same shape, and was
+ * the last one left: `node test/settings.mjs http://127.0.0.1:PORT/index.html`
+ * quietly tested 4177 instead of the tree it was handed.
+ *
+ * It is harmless only because 4177 is deliberately kept EMPTY as a tripwire, so
+ * the ignored argument fails to connect rather than passing against the wrong
+ * build. Put anything on that port and this lies silently.
+ *
+ * The pattern worth naming: the defect keeps reappearing in NEW files, because
+ * each one is written by copying the shape of an existing suite and the broken
+ * shape reads exactly like the correct one. An audit that enumerates every file
+ * in test/ and reports how each resolves its URL is the only thing that has ever
+ * caught it - twice now.
  */
-const BASE = process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 console.log(`testing ${BASE}`);
 
 await page.goto(BASE, { waitUntil: 'load' });

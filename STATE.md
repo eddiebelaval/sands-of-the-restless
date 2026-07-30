@@ -41,7 +41,7 @@ sat undetected, and it is the root cause of both.
 | hud.mjs | **yes, now** | **211 checks, green** |
 | probe.mjs | **yes, now** | green |
 | ao-ab.mjs | no | a measurement tool; correctly not a gate |
-| settings.mjs | no | new, from the pause/settings work |
+| settings.mjs | **yes, now** | **212 checks, green** |
 | chrome.mjs | n/a | helper, not a suite |
 
 **hud and probe were wired into `npm test` once hud went green**, which is the
@@ -89,10 +89,15 @@ matters more than the fix:
 197-pass / 8-fail baseline it had to be read against is history; a failure there is
 now a real failure.
 
-`test/settings.mjs` has the SAME defect hud.mjs had - reads only `SANDS_URL`,
-ignores `argv[2]`. It is uncommitted work owned by another session and was left
-alone deliberately; it needs the one-line fix before anything verified through it
-means anything.
+`test/settings.mjs` had the SAME defect hud.mjs had, and was the THIRD file to carry
+it. Fixed 2026-07-30 once the pause/settings work was committed. **All twelve suites
+now honour `argv[2] || SANDS_URL`**, verified by enumeration rather than by counting.
+
+The pattern is worth naming because it keeps recurring in NEW files: each suite is
+written by copying the shape of an existing one, and the broken shape reads exactly
+like the correct one. Enumerating `test/*.mjs` and printing how each resolves its URL
+is the only thing that has ever caught it, twice now. Run that audit whenever a suite
+is added.
 
 **The lesson, because this is the second time this shape has appeared:** a claim
 of the form "all N are fixed" or "all N are green" must be produced by
