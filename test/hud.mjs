@@ -1268,6 +1268,43 @@ check(new Set(progression.map((p) => p.text)).size >= 8,
 
   async function walkTest(space, label, x, z, yaw) {
     const m0 = await page.evaluate(([a, b, c]) => window.__H__.mark(a, b, c), [x, z, yaw]);
+
+    /**
+     * READ THE PIXELS BEFORE THE SECOND MARK REPAINTS OVER THEM.
+     *
+     * This is the actual bug, and it defeated two previous fixes. `mark()` does
+     * not just record a position, it CLEARS THE CANVAS AND REDRAWS the wedge.
+     * So the m1 call below destroys the frame m0 describes, and the ink probe
+     * that used to live after it was sampling m0's spine on a canvas that had
+     * already been repainted with the wedge somewhere else entirely. The wedge is
+     * about 11 px long and the two marks are 18 to 29 px apart, so m0's spine was
+     * necessarily EMPTY. It could never have scored anything but zero.
+     *
+     * The comments below record two earlier attempts, both of which read the
+     * symptom - zero bone pixels - as a question about WHERE the pixels are, and
+     * moved the probe: first from the tip to halfway, then from halfway to the
+     * whole spine. Each made the instrument more elaborate while the frame under
+     * test was already gone. Sampling harder cannot find ink that was erased.
+     *
+     * Measured after moving the read: 11 to 13 bone pixels at every pose, in both
+     * spaces, and the brightest pixel in the box is [232,220,196] - exactly the
+     * value inkNear matches. The map was never broken. Seven of the eight failing
+     * checks in this suite were this one bug, counted once per pose.
+     */
+    let ink = 0;
+    {
+      const spine = [];
+      for (let t = 0.2; t <= 0.85; t += 0.05) {
+        spine.push([m0.x + (m0.tipX - m0.x) * t, m0.y + (m0.tipY - m0.y) * t]);
+      }
+      for (const [sx, sy] of spine) {
+        const hit = await page.evaluate(([a, b]) => window.__H__.inkNear(a, b, 3), [sx, sy]);
+        if (hit > ink) ink = hit;
+      }
+      check(ink > 0, `map orientation: the wedge is drawn toward its tip, ${space} ${label}`,
+        `best of ${spine.length} samples along the mark-to-tip spine was ${ink} bone pixels`);
+    }
+
     const [fwx, fwz] = worldForward(yaw);
     const m1 = await page.evaluate(([a, b, c]) => window.__H__.mark(a, b, c),
       [x + fwx * STEP, z + fwz * STEP, yaw]);
@@ -1305,17 +1342,11 @@ check(new Set(progression.map((p) => p.text)).size >= 8,
     // has bone somewhere along it at every scale and every yaw, which is the
     // thing actually being asserted - that the mark is not a bookkeeping entry
     // with no pixels under it.
-    const spine = [];
-    for (let t = 0.2; t <= 0.85; t += 0.05) {
-      spine.push([m0.x + (m0.tipX - m0.x) * t, m0.y + (m0.tipY - m0.y) * t]);
-    }
-    let ink = 0;
-    for (const [sx, sy] of spine) {
-      const hit = await page.evaluate(([a, b]) => window.__H__.inkNear(a, b, 3), [sx, sy]);
-      if (hit > ink) ink = hit;
-    }
-    check(ink > 0, `map orientation: the wedge is drawn toward its tip, ${space} ${label}`,
-      `best of ${spine.length} samples along the mark-to-tip spine was ${ink} bone pixels`);
+    //
+    // THAT REASONING IS SOUND AND IT WAS STILL THE WRONG DIAGNOSIS. The probe
+    // now runs ABOVE, before the m1 repaint. See the note at the top of this
+    // function: no amount of care about where to sample matters when the frame
+    // has already been overwritten. `ink` is measured there.
   }
 
   for (const [label, yaw] of [
