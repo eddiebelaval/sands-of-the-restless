@@ -46,11 +46,445 @@
  */
 
 import { BOON_LOOK } from '../world/build.js';
+import {
+  PIGMENT, ROLE, FORM, ink, incised, registerRules,
+} from './tokens.js';
 
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
+// ---------------------------------------------------------------------------
+// the material
+// ---------------------------------------------------------------------------
+
+/**
+ * THE EGYPTIAN MATERIAL PASS, as one injected stylesheet.
+ *
+ * WHY A STYLESHEET FROM HERE rather than an edit to index.html: the frame is
+ * owned by another session this hour, and a merge conflict in the one file
+ * every surface shares costs more than the feature. But the deeper reason is
+ * the one src/ui/tokens.js was written for - the language now has a single
+ * source, and a stylesheet BUILT from that source cannot drift from it the way
+ * a hand-typed rgba() in a second file can. Every colour, radius and rule below
+ * is a token; there is not one literal in it.
+ *
+ * WHAT IT CHANGES, and what it deliberately does not. Layout, hierarchy and
+ * timing are untouched: ammunition is still bottom right in the same figures at
+ * the same size, vitality is still bottom left, the centre of the screen is
+ * still empty. What changes is what the panels are MADE of - a cartouche
+ * incised into painted plaster with gold in the cut, register rules where there
+ * were borders, carved labels, and lapis wherever the game means something
+ * arcane rather than mechanical.
+ *
+ * SCOPED TO `#hud` ON PURPOSE. `.plate` is a shared object and the pause sheet
+ * is one, but that sheet belongs to another pass landing at the same time.
+ * `#hud .plate` is a tenth of a point more specific than `.plate`, applies to
+ * every plate this file owns, and reaches nothing outside the HUD.
+ *
+ * Idempotent, and called from every factory in this file and from
+ * ui/objective.js, so no wiring in main.js has to know it exists.
+ */
+
+const SHEET_ID = 'egyptian-language';
+
+/** Shorthands, so the sheet below reads as design rather than as plumbing. */
+const G = ROLE.frame;              // gold leaf: frames, rules, primary labels
+const GM = ROLE.textDim;           // gold mid: the quiet label that still reads
+const HOT = ROLE.ready;            // gold hot: the lit edge of a cut
+const LAP = ROLE.arcane;           // lapis: the arcane FILL
+const LAPT = ROLE.arcaneText;      // lapis lit: the arcane label
+const DGR = ROLE.danger;           // carnelian: the danger FILL
+const SH = PIGMENT.shadow;
+const PL = PIGMENT.plaster;
+const BONE = ROLE.textBright;
+
+/**
+ * The frieze band that runs across the top of a plate.
+ *
+ * Two hairlines with `ruleGap` between them, tapered at both ends so the rule
+ * dies into the stone rather than butting the frame - which is what an incised
+ * register line actually does, and what stops the plate reading as a box with a
+ * stripe on it. The upper line carries `goldHot` at its midpoint: that is the
+ * light catching the far wall of the groove, and it is the single mark that
+ * makes the panel read as CUT rather than as printed.
+ */
+const topRule = (colour = G, lit = HOT) => `
+    linear-gradient(90deg, transparent,
+      ${ink(colour, 0.55)} 12%, ${ink(lit, 0.95)} 50%, ${ink(colour, 0.55)} 88%,
+      transparent) 0 0 / 100% ${FORM.hairline}px no-repeat,
+    linear-gradient(90deg, transparent,
+      ${ink(colour, 0.26)} 12%, ${ink(colour, 0.42)} 50%, ${ink(colour, 0.26)} 88%,
+      transparent) 0 100% / 100% ${FORM.hairline}px no-repeat`;
+
+/** The two vertical ties that close a cartouche at each end. */
+const tieBars = (colour = G, a = 0.62) => `
+    linear-gradient(${ink(colour, a)}, ${ink(colour, a * 0.35)})
+      left center / ${FORM.hairline}px 100% no-repeat,
+    linear-gradient(${ink(colour, a)}, ${ink(colour, a * 0.35)})
+      right center / ${FORM.hairline}px 100% no-repeat`;
+
+function styleSheetText() {
+  return `
+/* ==========================================================================
+   1. THE PLATE BECOMES A CARTOUCHE
+   ========================================================================== */
+
+#hud .plate {
+  border-radius: ${FORM.cartoucheRadius};
+  /* Painted plaster over the near-black ground. The plaster only shows in the
+     top band, where light would fall on a wall, and it fades out well before
+     the numerals - the ground under a figure stays as dark as it ever was.
+
+     A MEASURED NON-CAUSE, recorded because the next person to see the number
+     move will suspect this band first, as I did, and be wrong.
+
+     test/hud.mjs gates every cluster at 4.5 to one and takes the plate's
+     luminance as the 20th PERCENTILE inside the readout's box, so a band across
+     the top of a plate is the obvious suspect for a fallen ratio. The vitality
+     plate had dropped from 5.98 to 4.79 in the fight frame, so this was halved
+     from .34 to .18 - and the ratio went to 4.74. It got very slightly WORSE.
+     The plaster is worth about a hundredth of a stop and is not the mechanism;
+     the real one is in the state block near the bottom of this sheet. Set here
+     for how it looks, which is what it was always for. */
+  background:
+    linear-gradient(180deg, ${ink(PL, 0.26)} 0, ${ink(PL, 0.05)} 22px, transparent 44px),
+    linear-gradient(180deg, ${ink(SH, 0.955)}, ${ink(SH, 0.90)});
+  border: ${FORM.hairline}px solid ${ink(G, 0.38)};
+  /* THE INCISION. A dark ring immediately inside the gold line is the cut
+     going in; the outer ring and the drop are the panel standing off the wall.
+     One pixel, per FORM.incisionDepth - at two it stops being a chisel mark
+     and becomes a bevel, which reads as nineties software. */
+  box-shadow:
+    inset 0 0 0 ${FORM.hairline}px ${ink(SH, 0.88)},
+    inset 0 ${FORM.incisionDepth * 2}px ${FORM.incisionDepth * 3}px ${ink(SH, 0.55)},
+    0 0 0 ${FORM.hairline}px ${ink(SH, 0.55)},
+    0 10px 30px ${ink(SH, 0.55)};
+}
+
+/* The gilded top edge was one flat bar. It is now the register rule, inset
+   inside the frame the way an incised line sits inside a panel's border. */
+#hud .plate::before {
+  left: ${FORM.frameInset + 3}px;
+  right: ${FORM.frameInset + 3}px;
+  top: ${FORM.frameInset - 1}px;
+  height: ${FORM.hairline * 2 + FORM.ruleGap}px;
+  background: ${topRule()};
+}
+
+/* ---- THE SINGLE-LINE PILLS ----
+   The buy prompt, the notice and the grenade hint are one line of text and
+   nothing else, which is the one shape on this HUD that can take a TRUE
+   cartouche: an oblong with semicircular ends and a tie bar at each end. There
+   are no corners to protect because there is nothing in them. */
+#hud #prompt,
+#hud #notice,
+#hud #frag-hint {
+  border-radius: ${FORM.pillRadius};
+  padding-left: 26px;
+  padding-right: 26px;
+}
+#hud #prompt::before,
+#hud #notice::before,
+#hud #frag-hint::before {
+  left: 11px; right: 11px; top: 5px; bottom: 5px;
+  height: auto;
+  background: ${tieBars()};
+}
+/* Cannot afford it, or it is not for sale at any price. Restated here because
+   index.html paints the OLD top bar red, and that rule would otherwise put a
+   carnelian gradient across the whole interior of the pill - over the text,
+   because a positioned pseudo-element paints above in-flow content. */
+#hud #prompt.deny { border-color: ${ink(DGR, 0.60)}; }
+#hud #prompt.deny::before { background: ${tieBars(DGR, 0.85)}; }
+
+/* ==========================================================================
+   2. CARVED TEXT ON LABELS, PRINTED TEXT ON NUMBERS
+   ========================================================================== */
+
+#hud .readout .cap,
+#hud .card-head,
+#hud #boss-name,
+#hud .map-foot,
+#hud .obj-where,
+#hud #r-ammo .wave,
+#hud .power u,
+#hud .ws-take b {
+  text-shadow: ${incised()};
+  letter-spacing: ${FORM.labelTracking};
+}
+
+/* .obj-detail is deliberately NOT in that list. It is the price line, and half
+   of what it says is a figure the player is comparing against their purse -
+   "1000 GOLD - 500 SHORT" - so it is a number wearing a label's clothes, and a
+   carved edge on a 10px numeral costs more than the carving is worth. */
+
+/* NOT ON THE FIGURES. A one-pixel dark edge under a 30px numeral costs more
+   legibility than the carving buys, and the whole rule of this pass is that
+   ornament belongs in the frame and never in the number. */
+#hud .readout .val,
+#hud #r-ammo b,
+#hud #r-ammo i,
+#hud #r-ammo .wave u,
+#hud .power s {
+  text-shadow: none;
+  letter-spacing: ${FORM.numeralTracking};
+}
+
+/* ==========================================================================
+   3. REGISTER RULES WHERE THERE WERE BORDERS
+   ========================================================================== */
+
+#hud .card-head {
+  border-bottom: 0;
+  background: ${registerRules('bottom', G, 0.50)};
+  color: ${ink(G, 0.98)};
+}
+#hud #r-ammo .wave {
+  border-top: 0;
+  background: ${registerRules('top', G, 0.44)};
+  padding-top: 9px;
+}
+#hud .map-foot { color: ${ink(GM)}; }
+#hud .obj-where { color: ${ink(GM)}; }
+
+/* ==========================================================================
+   4. LAPIS: THE ARCANE, WHICH THE PALETTE HAD NONE OF
+   ========================================================================== */
+
+/* ---- a gate gold cannot buy ----
+   ui/objective.js already distinguishes "come back richer" from "come back
+   later" in its copy - a price versus THE KINDLING IS COLD - and until now
+   said both in the same gold. The blocked objective is the arcane one, so it
+   wears the inlay: lapis down the binding edge with a lit hairline beside it,
+   which is a stone inlay set into a gold channel and is the single most
+   Egyptian object available. */
+#hud #objective.arcane {
+  box-shadow:
+    inset 3px 0 0 ${ink(LAP)},
+    inset ${3 + FORM.hairline}px 0 0 ${ink(LAPT, 0.85)},
+    inset 0 0 0 ${FORM.hairline}px ${ink(SH, 0.88)},
+    0 0 0 ${FORM.hairline}px ${ink(SH, 0.55)},
+    0 10px 30px ${ink(SH, 0.55)};
+  border-color: ${ink(LAPT, 0.42)};
+}
+#hud #objective.arcane .obj-detail { color: ${ink(LAPT)}; }
+#hud #objective.arcane .card-head { color: ${ink(LAPT)}; }
+#hud #objective.arcane .card-head .ico { stroke: ${ink(LAPT)}; }
+
+/* ---- a weapon that has been through the Altar ----
+   The gun comes back with a title, and the HUD says so in words already. The
+   inlay says it without being read: an upgraded weapon is the only thing in
+   the bottom-right corner that is ever blue. The NUMERALS are untouched. */
+#hud #r-ammo.renewed {
+  box-shadow:
+    inset -3px 0 0 ${ink(LAP)},
+    inset -${3 + FORM.hairline}px 0 0 ${ink(LAPT, 0.85)},
+    inset 0 0 0 ${FORM.hairline}px ${ink(SH, 0.88)},
+    0 0 0 ${FORM.hairline}px ${ink(SH, 0.55)},
+    0 10px 30px ${ink(SH, 0.55)};
+  border-color: ${ink(LAPT, 0.42)};
+}
+#hud #r-ammo.renewed [data-weapon] { color: ${ink(LAPT)}; }
+
+/* ==========================================================================
+   5. THE STATES THAT WERE ALREADY RIGHT, RESTATED IN TOKENS
+   ==========================================================================
+   index.html sets these with the same specificity this sheet uses, and this
+   sheet is later in the cascade - so a border colour left unsaid here would be
+   overwritten by the base plate rule above and the hurt plate would stop
+   turning red. Restated rather than dropped, in the danger token.
+
+   ---------------------------------------------------------------------------
+   THE GOLD IN THE CUT NEVER CHANGES COLOUR, and this is a rule I arrived at by
+   breaking it and being caught by the suite.
+   ---------------------------------------------------------------------------
+
+   The first version of this block also repainted the register rule itself in
+   carnelian for the hurt plate, and in lapis for the arcane objective and the
+   renewed ammunition plate - the whole panel goes to the state colour, which
+   sounds right and measures wrong.
+
+   In the hurt state the numeral is #ff8a6c, relative luminance 0.31, which is
+   DIMMER than gold leaf at 0.476. So in the fight frame the brightest thing
+   inside the vitality plate was never the number, it was that gold bar across
+   the top; test/hud.mjs takes the ink as the 97th percentile of the box, found
+   the bar, and scored 5.98 to one. Painting the bar carnelian took the
+   brightest object out of the box and the ratio fell to 4.74 - a quarter of a
+   stop above a WCAG floor, on the one readout a player checks while something
+   is killing them.
+
+   So the rule is now the material and only the material. Gold is IN THE STONE;
+   it does not change because the news changed. The state is carried by the
+   frame, the inlay and the text - three signals, all of which the screenshots
+   show reading clearly - and the cut stays gold in every one of them. That is
+   both the safer number and the more honest object. */
+
+#hud #r-health.hurt { border-color: ${ink(DGR, 0.70)}; }
+#hud #r-frag.cooking { border-color: ${ink(DGR, 0.75)}; }
+#hud #boss { border-color: ${ink(DGR, 0.45)}; }
+#hud #boss-track { border-radius: ${FORM.pillRadius}; }
+
+/* The boon chips and the shrine marks are a family with the power-up marks and
+   are keyed to the flame colours, which are not this pass's to retune. They get
+   the form and not the colour: a boon chip is a little cartouche. */
+#hud .boon {
+  border-radius: ${FORM.pillRadius};
+  border-color: ${ink(G, 0.30)};
+  box-shadow: inset 0 0 0 ${FORM.hairline}px ${ink(SH, 0.8)};
+}
+#hud .boon.held { border-color: ${ink(G, 0.50)}; }
+
+/* ==========================================================================
+   6. WEAPON SELECT
+   ==========================================================================
+   Built by createWeaponSelect below. Bottom right, directly above the
+   ammunition plate, because the question it answers is the ammunition plate's
+   question - what am I holding - and an answer that appears somewhere else
+   makes the eye travel for it. */
+
+#hud #weapon-select {
+  position: absolute;
+  right: 22px;
+  /* Measured, not guessed. #r-ammo stands from 62 to 166 up the right edge, and
+     the first version of this sat at 168 - a two pixel gap, which is not a gap,
+     it is two plates that look like one badly drawn plate. 180 leaves fourteen,
+     which is the same air the left column keeps between the map and the
+     tracker. The overlap check in the verification script measures it. */
+  bottom: 180px;
+  min-width: 214px;
+  padding: 13px 14px 10px;
+  text-align: right;
+  /* Opacity only, like #frag-hint: a transform here would move a plate whose
+     whole value is being in the same place every time. */
+  opacity: 0;
+  transition: opacity .16s ease-out;
+}
+/* THE hidden ATTRIBUTE NEEDS HELP HERE, ON THREE ELEMENTS, and this is not
+   defensive tidying - it is the bug this project has shipped more than once.
+   The user agent hides [hidden] with a display:none at user-agent origin,
+   which ANY author display beats. Every one of these three sets its own
+   display below or in index.html, so without these rules the code would set
+   hidden, read it back as true, and the element would still be on the screen.
+   The empty slot digit on a weapon with no binding is exactly that case. */
+#hud #weapon-select[hidden] { display: none; }
+#hud #weapon-select .ws-slots[hidden] { display: none; }
+#hud .key-cap[hidden] { display: none; }
+#hud #weapon-select.on { opacity: 1; }
+
+#hud #weapon-select .ws-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+#hud #weapon-select .ws-take { padding-bottom: 8px; }
+#hud #weapon-select .ws-take b {
+  font-weight: normal;
+  font-size: 16px;
+  color: ${ink(BONE)};
+  text-transform: uppercase;
+}
+#hud #weapon-select .ws-take s {
+  text-decoration: none;
+  font-size: 12px;
+  color: ${ink(GM)};
+  margin-right: auto;
+}
+
+/* The register rule between the two rows. The whole card is one cartouche cut
+   into two registers, which is how an Egyptian wall divides a scene from the
+   scene under it. */
+#hud #weapon-select .ws-stow {
+  border-top: 0;
+  background: ${registerRules('top', G, 0.44)};
+  padding-top: 8px;
+}
+#hud #weapon-select .ws-stow em {
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: ${FORM.labelTracking};
+  color: ${ink(G, 0.95)};
+  text-shadow: ${incised()};
+  margin-right: auto;
+}
+#hud #weapon-select .ws-stow u {
+  text-decoration: none;
+  font-size: 10px;
+  letter-spacing: ${FORM.labelTracking};
+  text-transform: uppercase;
+  color: ${ink(GM)};
+  text-shadow: ${incised()};
+}
+/* A renewal is not a swap. Same card, one word different, and the word is
+   derived from the slot not moving rather than from anyone announcing it. */
+#hud #weapon-select.renewed .ws-stow em { color: ${ink(LAPT)}; }
+#hud #weapon-select.renewed .ws-take b { color: ${ink(BONE)}; }
+
+/* ---- THE RACK ----
+   One mark per slot, in the same rotated square the boon chips and the
+   power-up marks are, so the three strips read as one family of things you are
+   carrying. Empty sockets are drawn as well as full ones for the reason the
+   boon strip already argues: "four of seven" is a different piece of
+   information from "four". */
+#hud #weapon-select .ws-slots {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+#hud #weapon-select .ws-slots i {
+  display: block;
+  width: 7px; height: 7px;
+  transform: rotate(45deg);
+  background: transparent;
+  /* An EMPTY SOCKET HAS TO BE VISIBLE or the rack says "four" instead of "four
+     of seven", which is the only reason it is drawn at all. At 0.26 the two
+     unbought slots were there in the DOM and gone in the screenshot at
+     gameplay scale - the boon strip solved the same problem by holding its
+     empty marks at .55 rather than hiding them. */
+  box-shadow: inset 0 0 0 ${FORM.hairline}px ${ink(G, 0.42)};
+}
+#hud #weapon-select .ws-slots i.owned {
+  background: ${ink(G, 0.75)};
+  box-shadow: none;
+}
+#hud #weapon-select .ws-slots i.renewed {
+  background: ${ink(LAP)};
+  box-shadow: inset 0 0 0 ${FORM.hairline}px ${ink(LAPT, 0.9)};
+}
+#hud #weapon-select .ws-slots i.live {
+  width: 10px; height: 10px;
+  background: ${ink(BONE)};
+  box-shadow: 0 0 7px ${ink(HOT, 0.55)};
+}
+#hud #weapon-select .ws-slots i.live.renewed {
+  background: ${ink(LAPT)};
+  box-shadow: 0 0 8px ${ink(LAPT, 0.6)};
+}
+`;
+}
+
+let sheetInstalled = false;
+
+/**
+ * Put the language on the page. Safe to call from anywhere, any number of
+ * times, and a no-op with no document - which is what a node-side import of
+ * this module needs.
+ */
+export function installLanguage(doc = (typeof document === 'undefined' ? null : document)) {
+  if (sheetInstalled || !doc || !doc.head) return false;
+  const el = doc.createElement('style');
+  el.id = SHEET_ID;
+  el.textContent = styleSheetText();
+  doc.head.appendChild(el);
+  sheetInstalled = true;
+  return true;
+}
+
 export function createBoonStrip(el, shrines) {
   if (!el) return { dispose() {} };
+  installLanguage(el.ownerDocument);
 
   // Chips are reused rather than rebuilt. The strip repaints on every purchase
   // and on every cap change, which is rare, but a run that ends with the player
@@ -258,6 +692,8 @@ export function createPowerStrip(el, powerups) {
  * is handed the numbers once a frame and paints them.
  */
 export function createGrenadeReadout(root = document, opts = {}) {
+  installLanguage(root.ownerDocument || (typeof document === 'undefined' ? null : document));
+
   const q = (sel) => root.querySelector(sel);
 
   const plate = q('#r-frag');
@@ -454,6 +890,213 @@ export function createFlash(el) {
 }
 
 // ---------------------------------------------------------------------------
+// weapon select
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT YOU JUST PICKED UP, WHAT YOU JUST PUT DOWN, AND WHAT ELSE IS ON THE RACK.
+ *
+ * This surface did not exist. `weapons.cycle()` has been bound to the scroll
+ * wheel and Digit1..Digit7 to `weapons.equip()` since the armoury was written,
+ * seven weapons are bought across this map, and the only acknowledgement any of
+ * it got was the name on the ammunition plate silently becoming a different
+ * string. A player who scrolls twice has no idea what they scrolled past, and a
+ * player who owns four guns has no idea they own four guns.
+ *
+ * THREE FACTS, IN THE ORDER A PLAYER BEING CHASED NEEDS THEM:
+ *
+ *   WHAT IS IN MY HANDS NOW   biggest, in bone, with its digit beside it and its
+ *                             ammunition to the left. This is the only line that
+ *                             matters if the card is read for a fifth of a
+ *                             second, so it is the only line set at a size that
+ *                             can be.
+ *   WHAT I JUST STOWED        small, in the quiet gold, with ITS digit - which
+ *                             is the fact that makes the swap reversible. A
+ *                             player who scrolled past the shotgun and wants it
+ *                             back needs the number, not the name.
+ *   WHAT ELSE I OWN           one mark per slot, sockets drawn as well as guns,
+ *                             which is the same argument the boon strip makes:
+ *                             "four of seven" decides whether you walk past the
+ *                             next wall buy and "four" does not.
+ *
+ * A RENEWAL IS NOT A SWAP, and the card tells them apart without being told.
+ * The Altar of Ptah hands back the same weapon under a new title, so the name
+ * changes while the DIGIT DOES NOT - and that is the whole test. Same slot means
+ * the second row reads RENEWED in lapis instead of STOWED in gold, and it is
+ * derived from the two numbers rather than from anyone announcing the event,
+ * which is why it cannot get out of step with the Altar.
+ *
+ * Nothing here decides anything, exactly like every other readout in this file.
+ * It is handed two names, two digits and a magazine, and paints.
+ */
+export function createWeaponSelect(root = document, { dwell = 2.2 } = {}) {
+  const doc = root.ownerDocument || (typeof document === 'undefined' ? null : document);
+  installLanguage(doc);
+
+  const host = root && root.querySelector ? root.querySelector('#hud') : null;
+  if (!host || !doc) {
+    return {
+      swap() { return false; }, tick() {}, hide() {}, attach() {},
+      get shown() { return false; }, get left() { return 0; },
+    };
+  }
+
+  const card = doc.createElement('div');
+  card.className = 'plate';
+  card.id = 'weapon-select';
+  // The ATTRIBUTE, on an HTMLElement, where it means something - and paired
+  // with an explicit `[hidden] { display: none }` in the sheet, because this
+  // card sets its own display and an author display beats the user agent's.
+  card.hidden = true;
+
+  const take = doc.createElement('div');
+  take.className = 'ws-row ws-take';
+  const takeAmmo = doc.createElement('s');
+  const takeName = doc.createElement('b');
+  const takeKey = doc.createElement('kbd');
+  takeKey.className = 'key-cap';
+  take.append(takeAmmo, takeName, takeKey);
+
+  const stow = doc.createElement('div');
+  stow.className = 'ws-row ws-stow';
+  const stowWhat = doc.createElement('em');
+  const stowName = doc.createElement('u');
+  const stowKey = doc.createElement('kbd');
+  stowKey.className = 'key-cap';
+  stow.append(stowWhat, stowName, stowKey);
+
+  const rack = doc.createElement('div');
+  rack.className = 'ws-slots';
+
+  card.append(take, stow, rack);
+  // Appended to #hud, not to the body: #hud is `pointer-events: none` and is
+  // hidden as a unit by the harness's HUD-off frame, and a readout that is not
+  // inside it would be measured as part of the game behind it.
+  host.appendChild(card);
+
+  /** Late binding, exactly as the minimap takes its one predicate. */
+  let owns = null;
+  let upgraded = null;
+  let slots = [];
+  const pips = [];
+
+  function buildRack() {
+    while (pips.length < slots.length) {
+      const pip = doc.createElement('i');
+      rack.appendChild(pip);
+      pips.push(pip);
+    }
+  }
+
+  function paintRack(currentSlot) {
+    if (!owns || !slots.length) { rack.hidden = true; return; }
+    rack.hidden = false;
+    buildRack();
+    for (let i = 0; i < pips.length; i++) {
+      const id = slots[i];
+      const held = !!owns(id);
+      const up = held && upgraded ? !!upgraded(id) : false;
+      pips[i].classList.toggle('owned', held);
+      pips[i].classList.toggle('renewed', up);
+      pips[i].classList.toggle('live', i + 1 === currentSlot);
+    }
+  }
+
+  /** Seconds of dwell left. Counted down on the CLAMPED delta by tick(). */
+  let left = 0;
+
+  function show() {
+    if (card.hidden) {
+      card.hidden = false;
+      // A frame between unhiding and the class, or the transition is coalesced
+      // away and the card snaps in. Same reflow #frag-hint needs, same reason.
+      void card.offsetWidth;
+    }
+    card.classList.add('on');
+    left = dwell;
+  }
+
+  function hide() {
+    left = 0;
+    card.classList.remove('on');
+  }
+
+  /**
+   * Taken out of the tree when the fade FINISHES, not on a second timer.
+   *
+   * The fade is 160ms of wall clock - correct here, and only here, for the same
+   * reason the gold popups and the full-frame flash are: nothing in the
+   * simulation reads it. But simulated time can run six times slower than the
+   * wall under software rendering, so a `hidden` written from the delta-driven
+   * clock would cut the fade off part-way through on a slow machine and leave
+   * the card visibly popping out. The transition's own end event is the only
+   * signal that is exactly right, and hiding rather than leaving it at opacity
+   * zero matters because the legibility audit walks every element under #hud
+   * and a CHILD of a transparent parent still computes its own opacity as 1.
+   */
+  card.addEventListener('transitionend', (e) => {
+    if (e.propertyName !== 'opacity') return;
+    if (card.classList.contains('on')) return;
+    card.hidden = true;
+  });
+
+  /**
+   * @param {object} s
+   * @param {string} s.from      the name being put down
+   * @param {number|string} s.fromSlot
+   * @param {string} s.to        the name being taken up
+   * @param {number|string} s.toSlot
+   * @param {number} s.magazine
+   * @param {number} s.reserve
+   */
+  function swap(s) {
+    // SAME DIGIT, DIFFERENT NAME is the Altar handing a weapon back with a
+    // title. Different digit is a swap. Nothing else can produce either.
+    const renewed = !!s.fromSlot && String(s.fromSlot) === String(s.toSlot);
+
+    takeName.textContent = s.to || '';
+    takeKey.textContent = s.toSlot || '';
+    takeKey.hidden = !s.toSlot;
+    takeAmmo.textContent = `${s.magazine ?? 0} / ${s.reserve ?? 0}`;
+
+    stowWhat.textContent = renewed ? 'RENEWED' : 'STOWED';
+    stowName.textContent = s.from || '';
+    stowKey.textContent = s.fromSlot || '';
+    stowKey.hidden = !s.fromSlot;
+
+    card.classList.toggle('renewed', renewed);
+    paintRack(Number(s.toSlot) || 0);
+    show();
+    return true;
+  }
+
+  /** @param {number} dt CLAMPED frame delta, the same one the game runs on. */
+  function tick(dt) {
+    if (left <= 0) return;
+    // A caller that has not been handed the delta still retires the card. A
+    // readout that can get stuck on the screen forever is worse than one that
+    // retires a little early on a slow frame.
+    left -= Number.isFinite(dt) && dt > 0 ? dt : 1 / 60;
+    if (left <= 0) hide();
+  }
+
+  return {
+    swap,
+    tick,
+    hide,
+    attach(parts) {
+      if (!parts) return;
+      if (parts.owns) owns = parts.owns;
+      if (parts.upgraded) upgraded = parts.upgraded;
+      if (parts.slots) { slots = [...parts.slots]; buildRack(); }
+    },
+    el: card,
+    get shown() { return !card.hidden && card.classList.contains('on'); },
+    get left() { return left; },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // the readouts
 // ---------------------------------------------------------------------------
 
@@ -473,7 +1116,21 @@ export function createFlash(el) {
  * thread entirely.
  */
 export function createReadouts(root = document) {
+  installLanguage(root.ownerDocument || (typeof document === 'undefined' ? null : document));
+
   const q = (sel) => root.querySelector(sel);
+
+  const select = createWeaponSelect(root);
+
+  /**
+   * Whether the weapon in hand has been through the Altar.
+   *
+   * Late-bound through attach(), exactly as ui/minimap.js takes the one
+   * predicate it needs rather than importing the armoury. A readout that held
+   * `weapons` could reach in and change it; a readout that holds a function that
+   * answers one question cannot.
+   */
+  let isUpgraded = null;
 
   const healthEl = q('[data-health]');
   const healthBar = q('[data-health-bar]');
@@ -496,7 +1153,7 @@ export function createReadouts(root = document) {
     health: null, healthFrac: null, hurt: null,
     gold: null, wave: null,
     mag: null, reserve: null, weapon: null, slot: null,
-    empty: null, reloading: null, canReload: null,
+    empty: null, reloading: null, canReload: null, renewed: null,
     fps: null, boss: null,
   };
 
@@ -526,6 +1183,11 @@ export function createReadouts(root = document) {
    * @param {boolean} s.empty
    * @param {boolean} s.reloading
    * @param {object|null} s.boss
+   * @param {number} [s.dt]  CLAMPED frame delta. Weapon select has a clock in
+   *                         it, and simulated time runs several times slower
+   *                         than the wall under software rendering, so a card
+   *                         measured against the wall would be gone before a
+   *                         slow machine had drawn the frame that raised it.
    */
   function update(s) {
     // --- vitality -----------------------------------------------------------
@@ -570,7 +1232,18 @@ export function createReadouts(root = document) {
       painted.reserve = s.reserve;
       if (reserveEl) reserveEl.textContent = s.reserve;
     }
-    if (s.weapon !== painted.weapon) {
+    // WEAPON SELECT RIDES ON THIS COMPARE and needs nothing new wired to it.
+    // The name in hand changing is the only event that can raise the card, and
+    // it is already being watched here to keep the plate from repainting sixty
+    // times a second - so the previous name and digit are captured before they
+    // are overwritten and handed straight to the card. `painted.weapon === null`
+    // is the first frame of the run, which is not a swap: the player did not
+    // choose the MK9, they woke up holding it.
+    const swapped = s.weapon !== painted.weapon;
+    const fromName = painted.weapon;
+    const fromSlot = painted.slot;
+
+    if (swapped) {
       painted.weapon = s.weapon;
       if (weaponEl) weaponEl.textContent = s.weapon;
     }
@@ -581,6 +1254,35 @@ export function createReadouts(root = document) {
     if (s.slot !== painted.slot) {
       painted.slot = s.slot;
       if (slotEl) slotEl.textContent = s.slot || '';
+    }
+    // BOTH NAMES HAVE TO BE REAL, and this guard is not belt-and-braces.
+    //
+    // `painted.weapon === null` is the first frame of the run, which is not a
+    // swap - the player did not choose the MK9, they woke up holding it. And an
+    // EMPTY name is a player holding nothing, which is now a real state: the
+    // Altar's ritual takes the gun away for five seconds and main.js sends
+    // `weapon: ''` for every frame of it, so without this the card would raise
+    // itself twice per upgrade, once to announce that you are now carrying a
+    // blank, and once to announce that you have stopped. Neither is a swap.
+    if (swapped && fromName && s.weapon) {
+      select.swap({
+        from: fromName,
+        fromSlot,
+        to: s.weapon,
+        toSlot: s.slot,
+        magazine: s.magazine,
+        reserve: s.reserve,
+      });
+    }
+    select.tick(s.dt);
+
+    // Has this weapon been through the Altar. The lapis inlay on the plate, and
+    // nothing else: see the sheet at the top of this file for why the numerals
+    // are left exactly as they were.
+    const renewed = isUpgraded ? !!isUpgraded() : false;
+    if (renewed !== painted.renewed) {
+      painted.renewed = renewed;
+      if (ammoEl) ammoEl.classList.toggle('renewed', renewed);
     }
     if (s.empty !== painted.empty) {
       painted.empty = s.empty;
@@ -645,5 +1347,25 @@ export function createReadouts(root = document) {
     if (goldEl) goldEl.textContent = n;
   }
 
-  return { update, fps, gold, hitmarker, painted };
+  return {
+    update,
+    fps,
+    gold,
+    hitmarker,
+    painted,
+
+    /** The weapon-select card, for the harness and for nothing else. */
+    select,
+
+    /**
+     * Late binding for the two facts about the armoury this file needs and has
+     * no business owning: which weapons are held, and which have been renewed.
+     * Same shape and same argument as minimap.attach().
+     */
+    attach(parts) {
+      if (!parts) return;
+      if (parts.upgraded) isUpgraded = parts.upgraded;
+      select.attach(parts);
+    },
+  };
 }

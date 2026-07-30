@@ -80,6 +80,13 @@ export const PIGMENT = {
   goldHot:    [226, 160,  60],   // e2a03c - highlight only. Affordable, ready.
   goldDeep:   [168, 117,  31],   // shadowed gold, for the underside of a cut.
 
+  // ADDED. The third gold, which was already in the build as --gold-mid in
+  // index.html and was missing here - so the first surface to reach for
+  // "quieter than the primary gold" out of this file would have had to invent
+  // it or misuse goldDeep, and goldDeep is not legible as text. See THE
+  // LEGIBILITY FLOOR below.
+  goldMid:    [160, 139, 100],
+
   // The missing note. Deep is nearly black-blue and reads as a ground; mid is
   // the one that actually says lapis at a glance.
   lapisDeep:  [ 22,  38,  66],
@@ -89,6 +96,13 @@ export const PIGMENT = {
   faience:    [ 62, 143, 134],   // powered, active, mechanical-arcane.
   carnelian:  [158,  59,  40],   // danger, denial, cannot afford, low health.
 
+  // ADDED, for the same reason goldMid was: the stone-dark carnelian above is a
+  // FILL and measures 2.59 to one against the worst plate, so the shortfall
+  // line, the hurt numeral and the enemy contacts on the map cannot be drawn in
+  // it. This is the value index.html was already using for all three as
+  // e0563c - lifted here so it is one decision rather than five literals.
+  carnelianLit: [224, 86, 60],
+
   linen:      [232, 220, 196],   // the brightest thing allowed. Bone, plaster.
   plaster:    [ 60,  45,  26],   // the painted ground a cartouche is cut into.
   stone:      [ 34,  25,  15],   // panel body.
@@ -96,6 +110,38 @@ export const PIGMENT = {
 };
 
 /**
+ * ---------------------------------------------------------------------------
+ * THE LEGIBILITY FLOOR, and why some roles below exist twice.
+ * ---------------------------------------------------------------------------
+ *
+ * test/hud.mjs walks every element inside #hud that owns text and gates its
+ * COMPUTED COLOUR at 4.5 to one against the worst plate ground it measured
+ * anywhere in the game - the courtyard, where the translucent plate sits over
+ * sunlit sand. That ground measures 0.010 in relative luminance, which puts the
+ * floor for any HUD text at
+ *
+ *     (L + 0.05) / (0.010 + 0.05) >= 4.5   ->   L >= 0.22
+ *
+ * Four of the pigments above are BELOW that line and are therefore fills,
+ * frames and marks only. They must never be handed to text on this HUD:
+ *
+ *     lapis      L 0.112   ratio 2.70    the arcane FILL
+ *     carnelian  L 0.105   ratio 2.59    the danger FILL
+ *     goldDeep   L 0.212   ratio 4.36    the underside of a cut
+ *     faience    L 0.224   ratio 4.57    passes, but with nothing in hand
+ *
+ * and the three that were added so those meanings could still be SAID:
+ *
+ *     goldMid       L 0.269   ratio 5.31
+ *     carnelianLit  L 0.228   ratio 4.64
+ *     lapisLit      L 0.281   ratio 5.52
+ *
+ * So the two roles that carry meaning in text - dim and arcane - are given
+ * their own legible values rather than being borrowed from the fill. This is
+ * the reason `textDim` is goldMid and not goldDeep, and the reason there is an
+ * `arcaneText` at all: a lapis label is unreadable and a lapis frame around a
+ * bone numeral is the actual Egyptian move anyway. Ornament in the frame.
+ *
  * Semantic roles. ALWAYS reach for these, not for a pigment name.
  *
  * A surface that says `role.danger` keeps meaning the right thing when the
@@ -105,11 +151,13 @@ export const PIGMENT = {
 export const ROLE = {
   text:        PIGMENT.goldLeaf,
   textBright:  PIGMENT.linen,
-  textDim:     PIGMENT.goldDeep,
+  textDim:     PIGMENT.goldMid,     // NOT goldDeep: 4.31 to one, under the floor
 
   ready:       PIGMENT.goldHot,     // affordable, usable, charged
-  danger:      PIGMENT.carnelian,   // hurt, denied, cannot afford
-  arcane:      PIGMENT.lapis,       // power, upgrade, the puzzle, the box
+  danger:      PIGMENT.carnelian,   // hurt, denied, cannot afford  (FILL ONLY)
+  dangerText:  PIGMENT.carnelianLit,
+  arcane:      PIGMENT.lapis,       // power, upgrade, the puzzle   (FILL ONLY)
+  arcaneText:  PIGMENT.lapisLit,    // the same meaning, said in a legible value
   active:      PIGMENT.faience,     // switched on, in progress
 
   frame:       PIGMENT.goldLeaf,
@@ -148,10 +196,26 @@ export const blend = (a, b, t) => [
  */
 export const FORM = {
   cartoucheRadius: 'calc(min(1em, 50%))',
+
+  /**
+   * ADDED. The radius for a surface that is ONE LINE TALL - the buy prompt, the
+   * notice, the grenade hint.
+   *
+   * `cartoucheRadius` is right for a data panel, where a full half-height would
+   * eat the corners the readouts stand in. On a single-line pill there is
+   * nothing in the corners to protect, and the note above applies without a
+   * caveat: an oblong with genuinely semicircular ends is a cartouche and a
+   * 12px rounded rectangle is a web component. Any radius past half the height
+   * clamps to exactly half, so this is r = h/2 stated in a way that does not
+   * need to know h.
+   */
+  pillRadius:      '999px',
+
   hairline:        1,      // px. A register rule is thin and exact.
   ruleGap:         3,      // px between the paired lines of a register rule.
   incisionDepth:   1,      // px offset of the carved inner shadow.
   frameInset:      4,      // px from panel edge to frame line.
+  friezeStep:      6,      // px. One kheker in the frieze; see khekerFrieze.
 
   // Type. Egyptian formal writing is monumental and widely spaced; that reads
   // correctly on a label and terribly on a number you must parse instantly.
@@ -181,6 +245,32 @@ export const incised = (glow = 0) => {
 export const registerRule = (colour = ROLE.frame, a = 0.42) =>
   `linear-gradient(${ink(colour, a)} ${FORM.hairline}px, transparent ${FORM.hairline}px)` +
   ` 0 0 / 100% ${FORM.hairline + FORM.ruleGap}px repeat-x`;
+
+/**
+ * ADDED. The register rule as a DIVIDER: the actual pair of lines, anchored to
+ * one edge of the element rather than tiled from the top.
+ *
+ * `registerRule` above is left exactly as it was - a repeating band, which is
+ * what you want for a ground - but a divider between two bands of a panel is a
+ * different object: two hairlines with `ruleGap` between them, the near one
+ * stronger than the far one, sitting on the edge where the border used to be.
+ * Every divider on the HUD is that, so it is here rather than hand-rolled four
+ * times, which is the whole argument of this file.
+ *
+ * Returns a `background` shorthand; the caller sets `border: 0` on that edge.
+ *
+ * @param {'top'|'bottom'} edge
+ */
+export const registerRules = (edge = 'bottom', colour = ROLE.frame, a = 0.42) => {
+  const near = edge === 'top' ? '0 0' : '0 100%';
+  const far = edge === 'top'
+    ? `0 ${FORM.hairline + FORM.ruleGap}px`
+    : `0 calc(100% - ${FORM.hairline + FORM.ruleGap}px)`;
+  const line = (alpha) =>
+    `linear-gradient(${ink(colour, alpha)}, ${ink(colour, alpha)})`;
+  return `${line(a)} ${near} / 100% ${FORM.hairline}px no-repeat,`
+    + ` ${line(a * 0.55)} ${far} / 100% ${FORM.hairline}px no-repeat`;
+};
 
 /**
  * Canvas: the stepped kheker frieze that runs along the top of a wall.

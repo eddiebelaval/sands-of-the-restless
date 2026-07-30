@@ -36,19 +36,53 @@
 
 import { INTERIOR_BOUNDS } from '../world/rooms.js';
 import { BOON_LOOK } from '../world/build.js';
+import {
+  PIGMENT, ROLE, FORM, ink, khekerFrieze,
+} from './tokens.js';
 
 /** Repaints per second. The contacts move; the architecture does not. */
 const HZ = 15;
 
-const INK = '#0a0704';
-const GOLD = '#d9b26a';
-const GOLD_DIM = '#8a6f3e';
-const BONE = '#e8dcc4';
-const BLOOD = '#e0563c';
-const LAPIS = '#6f93d6';
+//
+// EVERY COLOUR FROM ui/tokens.js, and none from here.
+//
+// These were six literals in this file and six more with the same intent in
+// index.html, which is exactly the drift tokens.js was written to stop: the map
+// draws to a 2D context and the HUD is DOM, and the two disagreeing about what
+// gold is would be the fastest way to make the game stop looking like one game.
+// The names are kept short because they are used forty times below, and they are
+// resolved once at module load rather than per draw call.
+//
+const INK = ink(PIGMENT.shadow);
+const GOLD = ink(ROLE.frame);
+const GOLD_DIM = ink(PIGMENT.goldDeep);
+const BONE = ink(ROLE.textBright);
+const HOT = ink(ROLE.ready);
+/** Danger. The map's contacts and its unaffordable prices. */
+const BLOOD = ink(ROLE.dangerText);
+/**
+ * THE ARCANE, and the reason there are two of them.
+ *
+ * `LAPIS` is the fill - the stone itself, which is nearly black-blue and reads
+ * as a ground. `LAPIS_LIT` is what a line or a numeral has to be drawn in to
+ * survive being 7px tall on a dark panel. The fill is the mystery box's body;
+ * the lit tint is its outline, the sealed doorway's dash, and the word SEALED.
+ * See the legibility note in tokens.js: the mid lapis is not a text colour.
+ */
+const LAPIS = ink(ROLE.arcane);
+const LAPIS_LIT = ink(ROLE.arcaneText);
 
-/** Padding inside the canvas, in device-independent pixels. */
-const PAD = 9;
+/**
+ * Padding inside the canvas, in device-independent pixels.
+ *
+ * Lifted from 9 to 14 to make room for the kheker frieze along the top edge and
+ * the register rule along the bottom. The frieze is one step tall - see
+ * FORM.friezeStep - and a map drawn to the old padding put the pyramid's
+ * silhouette straight through it. This changes the projection's offset and
+ * scale, which is all it changes: `fit` is uniform on both axes and both
+ * directions, so the map's bearing is untouched and north still reads up.
+ */
+const PAD = 14;
 
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
@@ -203,8 +237,47 @@ export function createMinimap({
     // A dark ground under everything. The panel behind the canvas is already
     // dark, but the canvas has to carry its own so a screenshot of the map is
     // legible regardless of what the CSS underneath is doing.
-    ctx.fillStyle = 'rgba(8,5,3,0.90)';
+    ctx.fillStyle = ink(PIGMENT.shadow, 0.90);
     ctx.fillRect(0, 0, W, H);
+  }
+
+  /**
+   * THE FRAME: a kheker frieze along the top, a register rule along the bottom.
+   *
+   * This is the one place on the HUD where the material change is a whole
+   * object rather than a treatment. A floorplan in a gold hairline box is a
+   * diagram; the same floorplan under the stepped frieze that runs along the top
+   * of every painted wall in the New Kingdom is a wall, and the map stops
+   * reading as a piece of software borrowed from another game.
+   *
+   * It is in the PADDING, not in the plan. `PAD` is 14 and the frieze is
+   * FORM.friezeStep tall starting at 3, so it occupies rows 3 to 9 of a margin
+   * nothing is ever drawn into - the architecture and every numeral on it are
+   * inside the fitted box and cannot collide with it. That is the whole reason
+   * this is drawn from the canvas rather than as a CSS border: a border would
+   * push the plan and change the scale, and the scale is the compass.
+   *
+   * khekerFrieze lives in tokens.js and not here, for the reason stated there:
+   * the pause menu wants the same motif, and two hand-rolled friezes is how a
+   * design language dies.
+   */
+  function frame() {
+    const step = FORM.friezeStep;
+    khekerFrieze(ctx, 1, 3, W - 2, step, ROLE.frame, 0.55);
+
+    // The register rule under the plan. The pair, near line stronger, exactly
+    // as the DOM dividers are - the two surfaces are the same object drawn by
+    // two different rasterisers and they have to agree.
+    ctx.save();
+    ctx.lineWidth = FORM.hairline;
+    for (const [dy, a] of [[0, 0.5], [FORM.hairline + FORM.ruleGap, 0.26]]) {
+      ctx.strokeStyle = ink(ROLE.frame, a);
+      ctx.beginPath();
+      ctx.moveTo(1, H - 4 - dy + 0.5);
+      ctx.lineTo(W - 1, H - 4 - dy + 0.5);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // Callers pass a world rectangle, not a screen one, so which of z0/z1 lands
@@ -264,7 +337,7 @@ export function createMinimap({
     ctx.textAlign = align;
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(4,3,1,0.95)';
+    ctx.strokeStyle = ink(PIGMENT.shadow, 0.95);
     ctx.lineJoin = 'round';
     ctx.strokeText(text, x, y);
     ctx.fillStyle = colour;
@@ -317,13 +390,13 @@ export function createMinimap({
       const z0 = z - d / 2, z1 = z + d / 2;
 
       if (room.id === current) {
-        rect(x0, z0, x1, z1, 'rgba(217,178,106,0.26)', GOLD, 1.8);
+        rect(x0, z0, x1, z1, ink(ROLE.frame, 0.26), GOLD, 1.8);
       } else if (adj.has(room.id)) {
-        rect(x0, z0, x1, z1, 'rgba(217,178,106,0.12)', 'rgba(217,178,106,0.70)', 1.2);
+        rect(x0, z0, x1, z1, ink(ROLE.frame, 0.12), ink(ROLE.frame, 0.70), 1.2);
       } else if (seen.has(room.id)) {
-        rect(x0, z0, x1, z1, 'rgba(60,45,26,0.94)', 'rgba(217,178,106,0.42)', 1);
+        rect(x0, z0, x1, z1, ink(ROLE.incision, 0.94), ink(ROLE.frame, 0.42), 1);
       } else {
-        rect(x0, z0, x1, z1, 'rgba(34,25,15,0.94)', 'rgba(217,178,106,0.28)', 1);
+        rect(x0, z0, x1, z1, ink(ROLE.ground, 0.94), ink(ROLE.frame, 0.28), 1);
       }
     }
   }
@@ -361,7 +434,8 @@ export function createMinimap({
       ctx.moveTo(a, b);
       ctx.lineTo(c, e);
       ctx.lineWidth = open ? 2.4 : 3.4;
-      ctx.strokeStyle = open ? GOLD : gated ? LAPIS : '#e2a03c';
+      // LAPIS_LIT, not LAPIS: a mid-lapis dash on a near-black panel is not there.
+      ctx.strokeStyle = open ? GOLD : gated ? LAPIS_LIT : HOT;
       ctx.setLineDash(open ? [] : [2.5, 2.2]);
       ctx.stroke();
       ctx.setLineDash([]);
@@ -391,21 +465,34 @@ export function createMinimap({
       const ly = my + (dy / len) * 11;
 
       if (gated) {
-        label(l.kind === 'power' ? 'DARK' : 'SEALED', lx, ly, LAPIS, 7);
+        label(l.kind === 'power' ? 'DARK' : 'SEALED', lx, ly, LAPIS_LIT, 7);
       } else if (l.cost > 0) {
         label(String(l.cost), lx, ly, economy.canAfford(l.cost) ? GOLD : BLOOD, 9);
       }
     }
   }
 
-  /** A small upright chest outline. Two rectangles, no glyph, no font. */
+  /**
+   * A small upright chest outline. Two rectangles, no glyph, no font.
+   *
+   * LAPIS WHEN IT IS LIVE, and this is the clearest case for the colour in the
+   * whole game. The mystery box is the one fixture on this map that is not a
+   * transaction: a wall buy sells a named gun for a printed price, and the box
+   * takes your gold and hands back luck. It was drawn in gold, which is what
+   * every purchasable thing on the panel is drawn in, so the one supernatural
+   * object read as another shop. Now it is the only blue mark in the pyramid and
+   * the eye goes to it, which is exactly what a mystery box is for.
+   *
+   * The two cold plinths stay gold and dashed. They are sites, not the box, and
+   * making them blue as well would spend the signal on where it ISN'T.
+   */
   function chest(x, z, r, on) {
     const a = px(x), b = py(z);
     ctx.beginPath();
     ctx.rect(a - r, b - r * 0.7, r * 2, r * 1.4);
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = on ? GOLD : 'rgba(217,178,106,0.42)';
-    if (on) { ctx.fillStyle = 'rgba(217,178,106,0.45)'; ctx.fill(); }
+    ctx.lineWidth = on ? 1.6 : 1.2;
+    ctx.strokeStyle = on ? LAPIS_LIT : ink(ROLE.frame, 0.42);
+    if (on) { ctx.fillStyle = ink(ROLE.arcane, 0.92); ctx.fill(); }
     ctx.setLineDash(on ? [] : [2, 2]);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -414,12 +501,21 @@ export function createMinimap({
     ctx.beginPath();
     ctx.moveTo(a - r, b - r * 0.2);
     ctx.lineTo(a + r, b - r * 0.2);
-    ctx.strokeStyle = on ? INK : 'rgba(217,178,106,0.42)';
+    ctx.strokeStyle = on ? LAPIS_LIT : ink(ROLE.frame, 0.42);
     ctx.lineWidth = 1;
     ctx.stroke();
   }
 
-  /** The Kindling: a flame, drawn as a leaning triangle. */
+  /**
+   * The Kindling: a flame, drawn as a leaning triangle.
+   *
+   * Lit, it is fire and it is gold, because that is what it is. COLD, it was a
+   * muddy brown that read as a mark the map had given up on - and a cold
+   * Kindling is not a failed anything, it is the single gate the whole back half
+   * of the pyramid is behind. So unlit it is lapis: dormant rather than dead,
+   * the same colour the doorways it locks are already drawn in, so the player can
+   * see at a glance that the blue lever and the blue doors are one fact.
+   */
   function flame(x, z, r, lit) {
     const a = px(x), b = py(z);
     ctx.beginPath();
@@ -427,17 +523,25 @@ export function createMinimap({
     ctx.quadraticCurveTo(a + r, b - r * 0.1, a, b + r);
     ctx.quadraticCurveTo(a - r, b - r * 0.1, a, b - r * 1.3);
     ctx.closePath();
-    ctx.fillStyle = lit ? '#ffc061' : 'rgba(120,96,60,0.55)';
+    ctx.fillStyle = lit ? HOT : ink(ROLE.arcane, 0.85);
     ctx.fill();
-    ctx.strokeStyle = lit ? '#fff0c8' : GOLD_DIM;
+    ctx.strokeStyle = lit ? ink(PIGMENT.linen, 0.95) : LAPIS_LIT;
     ctx.lineWidth = 1;
     ctx.stroke();
   }
 
-  /** The Altar: a bar and an upright, which is a djed seen from above. */
-  function altarMark(x, z, r) {
+  /**
+   * The Altar: a bar and an upright, which is a djed seen from above.
+   *
+   * Lapis once the power is on, gold-deep before it. Renewing a weapon is the
+   * other arcane transaction in the map - the gun comes back with a title rather
+   * than with better numbers on a price list - and it is the thing the HUD's own
+   * lapis inlay on the ammunition plate refers back to. One colour, one meaning,
+   * on both surfaces.
+   */
+  function altarMark(x, z, r, live = true) {
     const a = px(x), b = py(z);
-    ctx.strokeStyle = GOLD;
+    ctx.strokeStyle = live ? LAPIS_LIT : GOLD_DIM;
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.moveTo(a - r, b); ctx.lineTo(a + r, b);
@@ -459,7 +563,7 @@ export function createMinimap({
       const owned = !!id && weaponsOwn(id);
 
       const a = px(rec.x), b = py(rec.z);
-      ctx.fillStyle = owned ? 'rgba(232,220,196,0.40)' : GOLD;
+      ctx.fillStyle = owned ? ink(ROLE.textBright, 0.40) : GOLD;
       ctx.fillRect(a - 2.5, b - 3.5, 5, 7);
       ctx.strokeStyle = INK;
       ctx.lineWidth = 1;
@@ -485,7 +589,13 @@ export function createMinimap({
         // money should not be advertising a colour at the player: this is the
         // same distinction doors.js makes between "come back richer" and "come
         // back later", carried onto the map.
-        diamond(rec.x, rec.z, 3.6, 'rgba(20,15,9,0.85)', 'rgba(160,140,110,0.5)');
+        //
+        // Now drawn in the arcane pair rather than in a neutral grey. The grey
+        // said "broken"; lapis says "not yet", which is the truth - and it puts
+        // the six dormant shrines, the cold Kindling and the doorways they lock
+        // into one colour, so the whole pre-power state of the map reads as ONE
+        // thing waiting on one lever instead of nine separate disappointments.
+        diamond(rec.x, rec.z, 3.6, ink(ROLE.arcane, 0.85), LAPIS_LIT);
         continue;
       }
 
@@ -525,7 +635,7 @@ export function createMinimap({
     // --- the Altar ----------------------------------------------------------
     for (const rec of fixtures()) {
       if (rec.type !== 'altar') continue;
-      altarMark(rec.x, rec.z, 4);
+      altarMark(rec.x, rec.z, 4, !!power.powered);
     }
 
     // --- the chest, and the two places it is NOT ----------------------------
@@ -656,24 +766,24 @@ export function createMinimap({
     // raises the floor the ink has to stand off, and it was the reason the
     // brightest one per cent of this panel scored barely three to one against
     // its own ground. Dark ground, bright ink.
-    rect(b.minX, b.minZ, b.maxX, b.maxZ, 'rgba(40,30,18,0.55)', 'rgba(217,178,106,0.34)', 1);
+    rect(b.minX, b.minZ, b.maxX, b.maxZ, ink(ROLE.incision, 0.55), ink(ROLE.frame, 0.34), 1);
 
     // The two colonnade rows, and the processional axis between them running at
     // the one thing at the far end of it.
     line(-AVENUE_HALF, b.minZ, -AVENUE_HALF, b.maxZ, GOLD, 2);
     line(AVENUE_HALF, b.minZ, AVENUE_HALF, b.maxZ, GOLD, 2);
-    line(0, b.minZ + 2, 0, b.maxZ - 3, 'rgba(217,178,106,0.55)', 1.2, [4, 5]);
+    line(0, b.minZ + 2, 0, b.maxZ - 3, ink(ROLE.frame, 0.55), 1.2, [4, 5]);
 
     label('THE AVENUE', px(0), py(b.maxZ - 6), GOLD, 8);
 
     // The pyramid mass beyond the avenue's far wall, drawn as the stepped
     // silhouette it is on the skyline rather than as another box.
     rect(b.minX - 3, b.minZ - 11, b.maxX + 3, b.minZ + 0.4,
-      'rgba(34,25,15,0.92)', 'rgba(217,178,106,0.40)', 1.2);
+      ink(ROLE.ground, 0.92), ink(ROLE.frame, 0.40), 1.2);
     for (let i = 1; i <= 2; i++) {
       const inset = i * 6.5;
       rect(b.minX - 3 + inset, b.minZ - 11 + i * 1.6, b.maxX + 3 - inset, b.minZ + 0.4,
-        null, 'rgba(217,178,106,0.28)', 1);
+        null, ink(ROLE.frame, 0.28), 1);
     }
     label('THE PYRAMID', px(0), py(b.minZ - 8.2), GOLD, 8);
 
@@ -686,7 +796,7 @@ export function createMinimap({
       ctx.beginPath();
       ctx.moveTo(a, y); ctx.lineTo(c, y);
       ctx.lineWidth = 3.4;
-      ctx.strokeStyle = open ? GOLD : '#e2a03c';
+      ctx.strokeStyle = open ? GOLD : HOT;
       ctx.setLineDash(open ? [] : [2.5, 2.2]);
       ctx.stroke();
       ctx.setLineDash([]);
@@ -728,6 +838,7 @@ export function createMinimap({
       state.space = 'exterior';
       state.room = null;
       state.contacts = drawCourtyard();
+      frame();
       if (roomLabel && roomLabel.textContent !== 'The Necropolis') {
         roomLabel.textContent = 'The Necropolis';
       }
@@ -749,6 +860,7 @@ export function createMinimap({
     drawFixtures();
     state.contacts = drawContacts();
     drawPlayer();
+    frame();
 
     const room = roomsById.get(current);
     const name = room ? room.name : 'The Pyramid';

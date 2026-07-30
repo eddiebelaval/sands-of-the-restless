@@ -346,6 +346,17 @@ function boot() {
   // predicate rather than the module, so it cannot reach for anything else.
   minimap.attach({ owns: (id) => weapons.owns(id) });
 
+  // The readouts take the same shape for the same reason: weapon select draws
+  // the whole rack, so it needs to know which slots are held and which have been
+  // through the Altar, and the ammunition plate wears a lapis inlay while the
+  // gun in hand is a renewed one. Three predicates and the slot order, not the
+  // armoury - a readout that held `weapons` could change it.
+  readouts.attach({
+    owns: (id) => weapons.owns(id),
+    upgraded: (id) => weapons.isUpgraded(id),
+    slots: SLOTS,
+  });
+
   // -------------------------------------------------------------------------
   // assets
   // -------------------------------------------------------------------------
@@ -804,6 +815,10 @@ function boot() {
         && !!weapons.STATS[weapons.state.current]
         && weapons.magazine < weapons.STATS[weapons.state.current].magazine,
       boss: director.boss,
+      // The CLAMPED delta, for the same reason the ordnance readout is handed
+      // it below: weapon select has a clock in it, and simulated time runs
+      // several times slower than the wall under software rendering.
+      dt: started ? dt : 0,
     });
 
     // Ordnance. Handed the numbers rather than the system, exactly as the

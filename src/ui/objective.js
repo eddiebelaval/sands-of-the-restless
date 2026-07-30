@@ -36,6 +36,7 @@
  */
 
 import { BOONS } from '../systems/shrines.js';
+import { installLanguage } from './hud.js';
 
 /** How the tracker talks about a barrier, by what kind of barrier it is. */
 const CROSS_VERB = {
@@ -589,6 +590,11 @@ export function createObjectives({
 export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
   if (!el || !objectives) return { update() {}, get text() { return ''; } };
 
+  // The Egyptian material pass, which this panel wears the same as every other
+  // plate. Idempotent, and imported from ui/hud.js rather than duplicated so
+  // there is exactly one sheet on the page whoever gets constructed first.
+  installLanguage(el.ownerDocument);
+
   const headline = el.querySelector('[data-obj-text]');
   const detail = el.querySelector('[data-obj-detail]');
   const where = el.querySelector('[data-obj-where]');
@@ -598,6 +604,7 @@ export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
   let paintedDetail = null;
   let paintedWhere = null;
   let paintedShort = null;
+  let paintedArcane = null;
   let current = null;
 
   // Throttled off the CLAMPED frame delta, like the minimap. next() walks the
@@ -636,6 +643,25 @@ export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
       }
     }
 
+    // A GATE GOLD CANNOT BUY IS NOT A PRICE, and the card now says so in colour
+    // as well as in words.
+    //
+    // fromBarrier() above already draws the distinction that matters most in
+    // this interface - "come back richer" quotes a figure, "come back later"
+    // quotes THE KINDLING IS COLD or N OF 4 SONS RETURNED and sets `blocked` -
+    // and the panel then said both of them in exactly the same gold. Blocked is
+    // the arcane case, so the card takes the lapis inlay: the one cool note on a
+    // gold interface, which is the pairing this palette exists for and the only
+    // signal on the HUD a player can read without reading it.
+    //
+    // Off `step.blocked`, which is derived from the barrier's own kind, so the
+    // colour cannot disagree with the copy - they are the same decision.
+    const arcane = !!step.blocked;
+    if (arcane !== paintedArcane) {
+      paintedArcane = arcane;
+      el.classList.toggle('arcane', arcane);
+    }
+
     // The gauge is only drawn while gold IS the obstacle. A full bar under an
     // objective that has nothing to do with money is a progress bar lying about
     // what it measures.
@@ -652,6 +678,8 @@ export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
   return {
     update,
     get step() { return current; },
+    /** Is the card wearing the lapis inlay. For the harness. */
+    get arcane() { return !!paintedArcane; },
     get text() { return paintedText || ''; },
     get detail() { return paintedDetail || ''; },
     get where() { return paintedWhere || ''; },
