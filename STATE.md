@@ -18,17 +18,70 @@ Suites:
 ```bash
 npm install     # playwright and sharp, for the harness only
 npm start       # serve on 4177
-npm test        # all eight suites: shot gun interior economy enemies
-                # mysterybox grenades powerups
+npm test        # EIGHT of the THIRTEEN files in test/: shot gun interior
+                # economy enemies mysterybox grenades powerups
 ```
 
-All eight are green as of 2026-07-28, verified on an ISOLATED tree rather than
+Those eight are green as of 2026-07-29, verified on an ISOLATED tree rather than
 the working tree. That distinction matters and is not pedantry: three separate
 times this session, failures on the working tree turned out to be another
 agent's uncommitted work, and once I committed a lane as "verified" when the
 verification had been contaminated the same way. Extract with `git archive HEAD`
 into a temp dir, copy in only the files under test, serve that, and run against
 it.
+
+### THE INVENTORY IS NOT THE GATE. Read this before trusting any pass.
+
+Thirteen files in `test/`, eight in `npm test`. The gap is where two real defects
+sat undetected, and it is the root cause of both.
+
+| file | in `npm test` | state |
+|---|---|---|
+| shot gun interior economy enemies mysterybox grenades powerups | yes | green |
+| **hud.mjs** | **no** | **205 checks, 8 FAILING at HEAD** |
+| **probe.mjs** | **no** | passes, but nothing runs it routinely |
+| ao-ab.mjs | no | a measurement tool; correctly not a gate |
+| settings.mjs | no | new, from the pause/settings work |
+| chrome.mjs | n/a | helper, not a suite |
+
+Because nothing ran `hud.mjs` routinely, two things rotted inside it:
+
+1. **It ignored the URL argument** until 5fb40a5 - it read only `SANDS_URL`, so
+   every `node test/hud.mjs http://127.0.0.1:PORT/index.html` silently tested
+   4177. The commit that fixed the other suites said "all eight". There were
+   NINE. Any "hud verified on an isolated tree" claim before 5fb40a5 is FALSE and
+   tested the wrong build. It surfaced only because 4177 is kept deliberately
+   EMPTY as a tripwire, so the ignored argument produced a connection refusal
+   rather than a confident pass. Had anything been serving that port it would
+   have lied.
+2. **It has 8 failing checks at HEAD**, confirmed against a pristine
+   `git archive HEAD` tree, so they are nobody's regression. Seven are minimap
+   "the wedge is drawn toward its tip" reporting **0 bone pixels** along the
+   spine - at every yaw, in both the courtyard and the interior. Not a threshold
+   miss; none at all. Either the player wedge has not rendered for some time, or
+   the assertion samples a colour that no longer exists. The eighth is "the
+   worst-case frame really had all three up: boss true prompt false".
+   **UNRESOLVED**, under investigation in the minimap lane.
+
+**hud is NOT a green gate right now.** Do not read a hud run as pass or fail
+except against the 197-pass / 8-fail baseline.
+
+`test/settings.mjs` has the SAME defect hud.mjs had - reads only `SANDS_URL`,
+ignores `argv[2]`. It is uncommitted work owned by another session and was left
+alone deliberately; it needs the one-line fix before anything verified through it
+means anything.
+
+**The lesson, because this is the second time this shape has appeared:** a claim
+of the form "all N are fixed" or "all N are green" must be produced by
+ENUMERATING the files, not by counting the ones you happened to edit or the ones
+a script happens to invoke. The audit that found both defects was a loop over
+`test/*.mjs` printing how each file resolves its URL. That same audit cleared
+`ao-ab.mjs`, which looks broken to a naive grep because it navigates via a
+template literal.
+
+Adding hud and probe to `npm test` is the obvious durable fix and is deliberately
+NOT done yet: hud is red, so wiring it in now would make `npm test` red while
+several lanes are in flight. Do it as soon as the wedge question is settled.
 
 `node test/ao-ab.mjs` separately measures whether the AO pass contributes.
 
