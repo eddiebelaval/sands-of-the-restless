@@ -953,11 +953,23 @@ await page.evaluate(() => {
 // l. past the spine. The tail names the cheapest thing still unbought, and it
 //    must still be a real, reachable, named thing.
 {
-  const { step } = await stage('one weapon renewed', () => {
+  // The Altar is a ritual now: buy() puts the weapon IN and the upgrade lands
+  // five seconds later, so the tracker only comes off this rung once the machine
+  // has finished. The clock is run down rather than waited out - this suite is
+  // about the objective ladder, and the duration is measured in test/economy.mjs.
+  const { step } = await stage('one weapon renewed', async () => {
     const g = window.__SANDS__;
     g.economy.grant(6000, 'harness');
     const rec = g.interacts.records.find((r) => r.type === 'altar');
     g.altar.buy(rec);
+    g.altar.state.remaining = 0.02;
+    let f = 0;
+    while (g.altar.state.phase === 'working' && f < 30) {
+      await new Promise((r) => requestAnimationFrame(r));
+      f++;
+    }
+    g.altar.buy(rec);                    // and take it back off the plate
+    await window.__H__.frames(4);
   });
   check(step.stage === 'survive', 'objective l: off the ladder', step.stage);
   check(!!step.text && step.text.length > 3, 'objective l: still names something', step.text);

@@ -1766,14 +1766,130 @@ const INTERACTS = {
     core.material.color.setHex(0xffcf6a);
     core.material.emissive.setHex(0xffa617);
     core.position.y = 2.75;
+    // Pushed to the BACK half of the plate. It used to sit on the centre line,
+    // where the weapon the machine is now asked to present would have been
+    // inside the fireball rather than above the altar.
+    core.position.z = 0.46;
     g.add(core);
 
+    /**
+     * WHERE A WEAPON SITS WHILE THE ALTAR HAS IT.
+     *
+     * An empty group and deliberately nothing else. systems/altar.js owns the
+     * weapon on the machine - it is a real copy of the real viewmodel, built by
+     * player/viewmodel.js, and this file has no business authoring a second
+     * gun-shaped prop - so all the geometry owes it is a mount at the right
+     * height, in front of the core rather than inside it, on the side the player
+     * walks up to.
+     *
+     * A slot's rot is the direction it FACES and forward is (-sin, 0, -cos), so
+     * local -Z is the front of every fixture in this file, and this sits at the
+     * FRONT of the 2.4-deep plate rather than on its centre line. Both parts of
+     * that were measured off rendered frames rather than chosen:
+     *
+     *   - the core moved back to +0.46, because a 0.5 radius emissive sphere on
+     *     the centre line put the presented weapon inside the fireball
+     *   - the mount came forward to -0.95, because the plate's own front edge is
+     *     above a 1.68 metre eye and therefore occludes what stands behind it.
+     *     At the centre line it cut 240mm off the bottom of the weapon at
+     *     conversational distance.
+     */
+    const mount = new THREE.Group();
+    mount.position.set(0, 2.46, -0.95);
+    g.add(mount);
+
+    /**
+     * The machine's own lamp, hung over the MOUNT and not over the core.
+     *
+     * An altar that glows the same in all three states is set dressing; the read
+     * of the ritual is that the room changes while the player is standing in it
+     * with no gun. Modest range and intensity on purpose: see the note on the
+     * chest's beam light, where a lamp strong enough to be found across a room
+     * blew the fixture past white and what the player found was a glare.
+     */
+    /**
+     * IN FRONT OF THE MOUNT, not over it, and that is about metal rather than
+     * about brightness.
+     *
+     * The gilded finish is metalness 0.86 and a metal has essentially no diffuse
+     * term: what it shows the player is a REFLECTION, so a lamp hung directly
+     * above the weapon puts its highlight on the top faces where nobody standing
+     * in front of the Altar can see it. Sitting the lamp on the player's side of
+     * the weapon puts the specular lobe back down the sightline, which is what
+     * makes the gold inlay read as gold instead of as a dark blue outline.
+     */
+    const lamp = new THREE.PointLight(0xffc46a, 0, 13, 2);
+    lamp.position.set(0, 2.95, -1.45);
+    lamp.castShadow = false;
+    g.add(lamp);
+
+    // Two ramps, 0..1: `live` is the machine under load, `show` is a finished
+    // weapon standing on the plate. Both are ramped rather than switched, which
+    // is what makes the fire CATCH and then BANK rather than snapping between
+    // three lighting presets.
+    let target = 0;
+    let live = 0;
+    let showTarget = 0;
+    let show = 0;
+
     animated.push({
+      /** systems/altar.js, on insertion and on completion. */
+      setWorking(on) { target = on ? 1 : 0; },
+      setPresenting(on) { showTarget = on ? 1 : 0; },
+
       update(dt, t) {
-        core.material.emissiveIntensity = 2.8 + Math.sin(t * 1.6) * 0.8;
-        core.rotation.y += dt * 0.6;
+        const rate = target > live ? dt / 0.35 : dt / 1.1;
+        live = target > live ? Math.min(target, live + rate) : Math.max(target, live - rate);
+
+        const sRate = dt / 0.8;
+        show = showTarget > show ? Math.min(showTarget, show + sRate)
+                                 : Math.max(showTarget, show - sRate);
+
+        // Base 2.8 with a slow breath, up to a hard flicker at full work. The
+        // flicker is two incommensurate sines so it never falls into a pattern.
+        const beat = Math.sin(t * 1.6) * 0.8;
+        const grind = Math.sin(t * 11.3) * 0.5 + Math.sin(t * 7.1) * 0.5;
+
+        /**
+         * THE FIRE BANKS WHEN THE WORK IS DONE, and this is the line that makes
+         * the presented weapon legible at all.
+         *
+         * The first pass of this ritual left the core at its idle value while a
+         * weapon was on the plate, and the rendered frame is the whole argument
+         * for why that was wrong: a half-metre emissive sphere at intensity 2.8,
+         * two metres behind a 400mm weapon, through a bloom pass, is a white
+         * disc with a dark aeroplane in it. The prompt said TAKE THE NEKHBET'S
+         * TALON and there was visibly nothing there to take. Photographed, and
+         * only findable by photographing it.
+         *
+         * So the ember drops to a quarter and shrinks while it is presenting.
+         * Which is also the better fiction - the forge has finished, and what is
+         * left glowing in the room is the thing it made.
+         */
+        const banked = 1 - show * 0.76;
+        core.material.emissiveIntensity = (2.8 + beat) * banked + live * (5.4 + grind * 2.2);
+
+        // 0.6 rad/s at rest, six times that under load.
+        core.rotation.y += dt * (0.6 + live * 3.1);
+        core.scale.setScalar((1 + live * 0.18 + live * grind * 0.05) * (1 - show * 0.34));
+
+        // Under load the lamp floods the room. Presenting, it is a display light
+        // on one object at arm's length and nothing else.
+        // 3.6 rather than the 6.2 the first pass used, and the difference is
+        // where the player is allowed to stand. The collider stops them 2.1
+        // metres from the Altar's centre, which is a metre and a half from the
+        // weapon, and at 6.2 the near face of a broadside weapon clipped past
+        // white with a bloom halo around it - a white gun, not a gilded one. It
+        // reads correctly at the reach limit and at the collider both.
+        lamp.intensity = live * (11 + grind * 2.4) + show * 3.6;
       },
     });
+
+    // Handed back through the context, exactly as the shrine does: rooms.js is
+    // DATA the node harness reads without a GPU, so nothing THREE-shaped is
+    // written onto the slot. buildInteracts moves this onto the interact record.
+    ctx.lastVisuals = animated[animated.length - 1];
+    ctx.lastVisuals.mount = mount;
 
     addCollider(slot.x, slot.z, 2.1, 2.4);
     return g;

@@ -261,8 +261,28 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
   }
 
   const state = {
+    /**
+     * What is in the player's hands, or NULL for nothing at all.
+     *
+     * Null is a real state and not a bug: the Altar of Ptah takes the weapon
+     * away for the length of its ritual, and if that is the only weapon the
+     * player owns then for those five seconds they are holding nothing. That is
+     * the whole point of the machine - it is a decision because it costs you
+     * your gun during a horde - so every read of this field below is guarded
+     * rather than the state being faked with a hidden weapon.
+     */
     current: 'mk9',
     owned: new Set(['mk9']),   // wall buys and the mystery box add to this
+    /**
+     * The weapon sitting in the Altar of Ptah, or null.
+     *
+     * It stays in `owned` while it is in there, because the player has not lost
+     * it - they cannot reach it. Keeping ownership is also what lets the upgrade
+     * apply while the weapon is on the machine rather than in a hand. What this
+     * field does is refuse it to equip() and cycle(), so a number key cannot
+     * summon a gun that is visibly lying on an altar in another room.
+     */
+    stowed: null,
     firing: false,
     reloading: false,
     reloadEnds: 0,
@@ -300,10 +320,13 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
 
   function canFire() {
     if (state.reloading) return false;
+    // Empty hands. Checked FIRST, because every line under it indexes a table
+    // by the weapon id and there is no id.
     const s = STATS[state.current];
+    if (!s) return false;
     if (clock - state.lastShot < interval(state.current)) return false;
     if (ammo[state.current].mag <= 0) return false;
-    return !!s;
+    return true;
   }
 
   /**
@@ -336,6 +359,11 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
    * connected, for the damage and economy systems to consume.
    */
   function fire(ads) {
+    // Nothing in your hands fires nothing, and does not click either. A dry-fire
+    // snap with no weapon on screen reads as the gun being invisible rather than
+    // absent, which is exactly the wrong read while the Altar has it.
+    if (!state.current) return null;
+
     if (!canFire()) {
       // Dry fire only when the trigger is pulled on a genuinely empty magazine,
       // not on every frame the rate limiter says no.
@@ -398,6 +426,7 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
 
   function reload() {
     const id = state.current;
+    if (!id) return false;
     if (state.reloading) return false;
     if (ammo[id].mag >= STATS[id].magazine) return false;
     if (ammo[id].reserve <= 0) return false;
@@ -419,6 +448,9 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
 
   function finishReload() {
     const id = state.current;
+    // The hands can empty mid-reload: the Altar takes the weapon and the frame
+    // loop is still holding a `reloading` flag from the frame before.
+    if (!id) { state.reloading = false; return; }
     const need = STATS[id].magazine - ammo[id].mag;
     const take = Math.min(need, ammo[id].reserve);
 
@@ -430,6 +462,8 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
   function equip(id) {
     if (!STATS[id] || !state.owned.has(id)) return false;
     if (id === state.current) return false;
+    // It is in the machine. Owned, and out of reach: see state.stowed.
+    if (id === state.stowed) return false;
 
     state.current = id;
     state.reloading = false;
@@ -441,12 +475,73 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
   }
 
   function cycle(delta) {
-    const owned = SLOTS.filter((id) => state.owned.has(id));
+    const owned = SLOTS.filter((id) => state.owned.has(id) && id !== state.stowed);
+    if (!owned.length) return;
+
+    // From empty hands the wheel takes whatever is first rather than doing
+    // nothing, which is what a player who has just put their only other weapon
+    // on the Altar and spun the wheel is asking for.
+    if (!state.current) { equip(owned[0]); return; }
     if (owned.length < 2) return;
 
     const i = owned.indexOf(state.current);
     const next = owned[(i + delta + owned.length) % owned.length];
     equip(next);
+  }
+
+  /**
+   * THE ALTAR OF PTAH TAKES THE WEAPON. Returns the id it took, or null.
+   *
+   * This is the mechanical half of the ritual and the reason the ritual is worth
+   * building: for as long as the machine has the weapon, the player does not, so
+   * standing at the Altar during a horde is a wager rather than a transaction.
+   *
+   * WHAT THE PLAYER HOLDS INSTEAD is Black Ops 2's answer, which is "your other
+   * weapon, if you brought one". A player carrying two guns comes away from the
+   * machine holding the second one; a player carrying one - which is everybody
+   * on their first visit, because the MK9 is the only weapon the run starts with
+   * - comes away holding NOTHING and cannot shoot until they collect it. Both
+   * paths are real: see the note on state.current.
+   *
+   * Nothing is refunded or destroyed here. The weapon is in `owned` the whole
+   * time and the only route out of `stowed` is restore(), which is called from
+   * exactly two places in systems/altar.js: the collection, and the refund.
+   */
+  function stow() {
+    const id = state.current;
+    if (!id) return null;
+    if (state.stowed) return null;      // the machine holds one weapon
+
+    state.stowed = id;
+    state.current = null;
+    state.firing = false;
+    state.reloading = false;
+    state.lastShot = -Infinity;
+
+    // Ordered so exactly one of the two animations runs. equip() drives the
+    // viewmodel's own lower-and-swap; stow() drives the lower with nothing on
+    // the far side of it. Running both would latch two intentions onto one
+    // stroke and the loser would be silently dropped.
+    const other = SLOTS.find((x) => x !== id && state.owned.has(x));
+    if (other) equip(other);
+    else viewmodel?.stow?.();
+
+    return id;
+  }
+
+  /**
+   * Hand a stowed weapon back, straight into the hands.
+   *
+   * Called on collection and on the Altar's refund path, and it is the same call
+   * both times on purpose: a weapon that comes back because the machine finished
+   * and a weapon that comes back because the machine refused arrive by one route,
+   * so there is no way for one of them to be the path that forgot to give it back.
+   */
+  function restore(id) {
+    if (state.stowed !== id) return false;
+    state.stowed = null;
+    equip(id);
+    return true;
   }
 
   /** Wall buys, the mystery box, and the puzzle reward all come through here. */
@@ -503,6 +598,13 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
 
     const s = STATS[state.current];
 
+    // Empty hands: the trigger still latches, so holding it down through a
+    // collection does not dump the first magazine the moment the weapon is back.
+    if (!s) {
+      state.firing = !!input.fire;
+      return null;
+    }
+
     // Automatic weapons fire while held; everything else needs a fresh press,
     // which is what `firing` latches.
     let hits = null;
@@ -529,13 +631,17 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     grant,
     refillAmmo,
     upgrade,
+    stow,
+    restore,
 
     owns(id) { return state.owned.has(id); },
     isUpgraded(id = state.current) { return state.upgraded.has(id); },
     displayName,
 
-    get magazine() { return ammo[state.current].mag; },
-    get reserve() { return ammo[state.current].reserve; },
+    // Zero rather than a throw when the hands are empty. The HUD asks for these
+    // every frame and it is not the HUD's business whether the Altar has the gun.
+    get magazine() { return state.current ? ammo[state.current].mag : 0; },
+    get reserve() { return state.current ? ammo[state.current].reserve : 0; },
     get name() { return STATS[state.current] ? state.current : ''; },
     get isReloading() { return state.reloading; },
   };

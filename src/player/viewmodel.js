@@ -4308,6 +4308,7 @@ export function createViewmodel(host, materials) {
   let current = null;               // the active WEAPONS entry
   let model = null;                 // the active built model
   let pending = null;               // weapon id waiting for the lower to finish
+  let stowing = false;              // the Altar took it: detach at the bottom
 
   let adsBlend = 0;
   let sprintBlend = 0;
@@ -4511,6 +4512,94 @@ export function createViewmodel(host, materials) {
   }
 
   /**
+   * A COPY OF A WEAPON FOR SOMETHING IN THE WORLD TO HOLD.
+   *
+   * The Altar of Ptah takes the weapon out of the player's hands and puts it on
+   * the machine where they can see it, so for five seconds and however long they
+   * leave it there the same object has to exist as world geometry rather than as
+   * a viewmodel. That object is built HERE and not in systems/altar.js, and the
+   * reason is the whole editorial position of this file: these seven models are
+   * the part of the project that is already right, and a second hand-authored
+   * "gun-shaped prop" living in a systems file would be an eighth weapon that
+   * drifts from the seven the moment either is touched. This is the same
+   * builder, the same palette, the same geometry cache and the same gild map.
+   *
+   * Three things are done to it and nothing else:
+   *
+   *   - THE HANDS COME OFF. gripHand/guardHand/pistolSupportHand name their
+   *     subtrees, which is what makes this two lines rather than a guess. A
+   *     weapon lying on an altar with two disembodied gloves and a pair of
+   *     forearms still gripping it is the funniest possible bug and it would
+   *     have shipped: nothing about the held pose says "hands" from inside a
+   *     traverse except those names.
+   *   - IT IS GILDED IF THE WEAPON HAS BEEN THROUGH. The finish is not decided
+   *     here; `gilded` is the same set upgradeFinish() writes, so the thing on
+   *     the machine and the thing that comes off it cannot disagree.
+   *   - IT IS TAGGED OUT OF EVERY RAYCAST. `noHit` keeps rounds from stopping
+   *     on it (a weapon presented in front of the Altar sits between the player
+   *     and the only thing they can shoot in that room) and `noPick` keeps it
+   *     out of the fixture prompt, so looking at the gun still prompts the
+   *     Altar behind it.
+   *
+   * Returned as the whole model record, not just the root, because the caller
+   * wants the authored muzzle and sight points to hang the presentation pose off
+   * rather than re-measuring the bounds of a group.
+   */
+  function buildDisplay(id) {
+    const w = WEAPONS[id];
+    if (!w) return null;
+
+    const m = w.build(P);
+
+    // Collected before anything is detached: removing during a traverse walks a
+    // children array that is being spliced underneath it, which silently leaves
+    // one hand behind.
+    const limbs = [];
+    m.root.traverse((o) => {
+      if (o.name === 'vm:firingHand' || o.name === 'vm:supportHand' || o.name === 'vm:arm') {
+        limbs.push(o);
+      }
+    });
+    for (const l of limbs) l.parent && l.parent.remove(l);
+
+    if (gilded.has(id)) gild(m);
+
+    m.root.traverse((o) => {
+      if (!o.isMesh) return;
+      o.userData.noHit = true;
+      o.userData.noPick = true;
+      o.castShadow = false;
+    });
+
+    applyDetailVisibility(m);
+    return m;
+  }
+
+  /**
+   * TAKE THE WEAPON AWAY AND LEAVE THE PLAYER HOLDING NOTHING.
+   *
+   * The Altar's vulnerability window is the feature, and it is only a window if
+   * the weapon is genuinely gone. This runs the SAME lower stroke a weapon swap
+   * runs and detaches at the bottom of it, which is the only place a cut is
+   * invisible - so the gun goes down out of frame exactly as it does on a swap
+   * and then simply does not come back up.
+   *
+   * phase 'empty' is not a new state: it is what this module boots in, before
+   * the first equip(), and update() already returns early on a null model. So
+   * the frames after this are the frames before the game started, which are
+   * known to render.
+   */
+  function stow() {
+    if (!model) { state.phase = 'empty'; return true; }
+    pending = null;
+    stowing = true;
+    state.phase = 'lowering';
+    reloadT = 0;
+    inspectT = 0;
+    return true;
+  }
+
+  /**
    * Swap weapons. If something is already up it is lowered first and the swap
    * happens at the bottom of the stroke, which is the only place a cut is
    * invisible.
@@ -4518,6 +4607,12 @@ export function createViewmodel(host, materials) {
   function equip(id) {
     if (!WEAPONS[id]) return false;
     if (state.weapon === id && state.phase !== 'empty') return true;
+
+    // A raise cancels a stow. Without this an equip issued during the lower
+    // stroke would set `pending` and then be thrown away at the bottom by the
+    // stow that is still latched, and the player would be left empty-handed
+    // holding a weapon the logic thinks is in their hands.
+    stowing = false;
 
     if (!model) {
       attach(id);
@@ -4723,6 +4818,21 @@ export function createViewmodel(host, materials) {
         switchT = Math.max(0, switchT - dt / LOWER_TIME);
         if (switchT <= 0) {
           // Bottom of the stroke: swap the model where nobody can see the cut.
+          if (stowing) {
+            // The Altar took it. Detach and stop: nothing comes back up. The
+            // built model is left in `built` rather than disposed, so the same
+            // gun coming off the machine is the same object, gilded in place.
+            stowing = false;
+            group.remove(model.root);
+            model = null;
+            current = null;
+            state.weapon = null;
+            state.name = null;
+            state.phase = 'empty';
+            state.ads = false;
+            adsBlend = 0;
+            break;
+          }
           if (pending) { attach(pending); pending = null; }
           state.phase = 'raising';
         }
@@ -4741,6 +4851,12 @@ export function createViewmodel(host, materials) {
       default:
         break;
     }
+
+    // The stow above is the one transition that can empty the hands MID-update,
+    // and every line below this reads `current` and `model`. The early return at
+    // the top of this function covers every frame after that one; this covers
+    // the frame it happens on.
+    if (!model) return;
 
     // --- base pose ---------------------------------------------------------
     const hp = current.hipPose, ap = model.adsPose;
@@ -5030,6 +5146,21 @@ export function createViewmodel(host, materials) {
     /** The Altar of Ptah's cosmetic half. Finish only: see the note above. */
     upgradeFinish,
     isGilded(id) { return gilded.has(id); },
+
+    /** The Altar of Ptah's ritual: the weapon leaves the hands, and is shown. */
+    stow,
+    buildDisplay,
+
+    /**
+     * Re-apply the current detail-part rule to a model this module built.
+     *
+     * setFidelity() above walks `built`, which is the weapons the PLAYER has
+     * carried. A display copy standing on the Altar is not in there - the Altar
+     * owns its lifetime, not this module - so it needs telling, or a weapon
+     * presented on high and then dropped to low keeps 200 sub-millimetre parts
+     * that every other weapon in the game has just discarded.
+     */
+    refreshDetail(m) { if (!m) return false; applyDetailVisibility(m); return true; },
 
     /** Optional: build the environment before the first frame instead of on it. */
     prepare(renderer) { if (!envBuilt) buildEnvironment(renderer); },

@@ -160,8 +160,12 @@ function boot() {
     notice: (text, ms) => showNotice(text, ms),
   });
 
+  // The viewmodel goes in because the Altar's ritual PRESENTS the weapon it is
+  // working on: the thing that sits on the plate for those five seconds is a copy
+  // built by viewmodel.buildDisplay(), from the same builders and the same gild
+  // map as the gun in the player's hands. See systems/altar.js.
   altar = createAltar({
-    scene, camera, weapons, economy, audio,
+    scene, camera, weapons, viewmodel, economy, audio,
     notice: (text, ms) => showNotice(text, ms),
   });
 

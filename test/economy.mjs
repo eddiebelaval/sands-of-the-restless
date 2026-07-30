@@ -589,6 +589,25 @@ const altar = await page.evaluate(async () => {
 
 await shoot('eco-11-altar', "the Altar of Ptah in the King's Chamber, 5000 short");
 
+/**
+ * THE ALTAR IS A RITUAL AND NOT A VENDING MACHINE, so this drives all four beats.
+ *
+ * The gold goes and the weapon LEAVES THE PLAYER'S HANDS; the machine works for
+ * five seconds; the upgraded weapon stands on the plate; the player takes it
+ * back. What this block asserts about the far end of that is exactly what it
+ * asserted when the upgrade was instant - 2.5x damage, doubled magazine, tighter
+ * spread, a new name, a gilded viewmodel, 5000 debited once, 2000 for the next
+ * one - because none of that changed. What is new is the middle: the deferral is
+ * asserted rather than skipped over, so a regression that quietly makes the
+ * upgrade instant again fails here.
+ *
+ * THE FIVE SECONDS ARE NOT WAITED OUT. Under software rendering this suite runs
+ * at roughly one frame a second and the window is 100 clamped frames, so waiting
+ * would add a minute and a half to the run for no assertion. The clock is dropped
+ * to its last frame instead, which is still the real state machine finishing on
+ * its own delta. The DURATION is proved by the countdown sample below, which is
+ * the only part of it that a shortened clock could hide.
+ */
 const upgraded = await page.evaluate(async () => {
   const g = window.__SANDS__;
 
@@ -603,22 +622,98 @@ const upgraded = await page.evaluate(async () => {
   const prompt = document.getElementById('prompt').textContent;
   const goldBefore = g.economy.gold;
 
+  // Beat one: the gold and the weapon both go.
   await window.__E__.press();
   await window.__E__.frames(3);
+
+  const inserted = {
+    phase: g.altar.state.phase,
+    spent: goldBefore - g.economy.gold,
+    stowed: g.weapons.state.stowed,
+    inHand: g.weapons.state.current,
+    hudWeapon: document.querySelector('[data-weapon]').textContent,
+    prompt: document.getElementById('prompt').textContent,
+    deny: document.getElementById('prompt').classList.contains('deny'),
+    // Still un-upgraded: the whole point of the ritual.
+    isUpgraded: g.weapons.isUpgraded('smg'),
+    remaining: g.altar.state.remaining,
+  };
+
+  // Beat two, measured: the countdown runs on the CLAMPED FRAME DELTA. Ten frames
+  // under the software renderer is ten clamps of 1/20s, so half a second of
+  // simulated time - a wall-clock timer would have burned ten seconds by here and
+  // a frame counter would move at a different rate on a faster machine.
+  const before = g.altar.state.remaining;
+  await window.__E__.frames(10);
+  const ticked = +(before - g.altar.state.remaining).toFixed(3);
+
+  // Beat three: let it finish.
+  g.altar.state.remaining = 0.02;
+  let f = 0;
+  while (g.altar.state.phase === 'working' && f < 30) {
+    await new Promise((r) => requestAnimationFrame(r));
+    f++;
+  }
+  await window.__E__.frames(24);          // the rise, and the ember banking
+
+  const presentedRoot = g.altar.presented;
+  const presented = {
+    phase: g.altar.state.phase,
+    onThePlate: !!presentedRoot,
+    prompt: document.getElementById('prompt').textContent,
+    // Measured, not asserted: a weapon "on the altar" that is 40mm wide behind a
+    // statue would pass a boolean. This is its projected width as a percentage of
+    // the frame from where the player is standing.
+    screenWidth: (() => {
+      if (!presentedRoot) return 0;
+      const b = new g.THREE.Box3().setFromObject(presentedRoot);
+      const xs = [];
+      for (const x of [b.min.x, b.max.x]) {
+        for (const y of [b.min.y, b.max.y]) {
+          for (const z of [b.min.z, b.max.z]) {
+            xs.push(new g.THREE.Vector3(x, y, z).project(g.camera).x);
+          }
+        }
+      }
+      return +(((Math.max(...xs) - Math.min(...xs)) / 2) * 100).toFixed(1);
+    })(),
+    // The hands are still empty, and the stats are ALREADY upgraded: the thing
+    // standing on the plate is the finished weapon, not a promise of one.
+    inHand: g.weapons.state.current,
+    isUpgraded: g.weapons.isUpgraded('smg'),
+  };
+
+  return {
+    prompt, inserted, ticked, presented,
+    spent: goldBefore - g.economy.gold,
+    baseDamage, baseMag, baseSpread: +baseSpread.toFixed(5), baseName,
+  };
+});
+
+await shoot('eco-12-altar-presented', 'the SMG on the Altar, gold and lapis, waiting to be taken');
+
+// Beat four, and the state the suite used to reach in one keypress.
+const collected = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+
+  const goldBefore = g.economy.gold;
+  await window.__E__.press();
+  await window.__E__.frames(16);          // the raise
 
   const upDamage = window.__E__.measureDamage('smg');
   const secondCost = g.altar.costFor(g.interacts.candidate);
 
   return {
-    prompt,
-    spent: goldBefore - g.economy.gold,
+    goldOnCollect: goldBefore - g.economy.gold,
+    inHand: g.weapons.state.current,
+    stowed: g.weapons.state.stowed,
+    stillOnThePlate: !!g.altar.presented,
     isUpgraded: g.weapons.isUpgraded('smg'),
     gilded: g.viewmodel.isGilded('smg'),
-    baseName,
     upName: g.weapons.displayName('smg'),
-    damage: [baseDamage, upDamage],
-    magazine: [baseMag, g.weapons.STATS.smg.magazine],
-    spread: [+baseSpread.toFixed(5), +g.weapons.STATS.smg.spreadHip.toFixed(5)],
+    upDamage,
+    magazine: g.weapons.STATS.smg.magazine,
+    spread: +g.weapons.STATS.smg.spreadHip.toFixed(5),
     mag: g.weapons.magazine,
     secondCost,
     promptAfter: document.getElementById('prompt').textContent,
@@ -626,7 +721,95 @@ const upgraded = await page.evaluate(async () => {
   };
 });
 
-await shoot('eco-12-altar-upgraded', 'the SMG back off the Altar: gold and lapis, renamed on the HUD');
+await shoot('eco-12b-altar-collected', 'the SMG back off the Altar: gold and lapis, renamed on the HUD');
+
+/**
+ * THE OTHER HALF OF THE RULE: A PLAYER WITH ONE WEAPON IS LEFT WITH NOTHING.
+ *
+ * This is the state the whole ritual is FOR - rooted at the machine during a
+ * horde with nothing in your hands - and it is also the most invasive thing the
+ * feature does to the rest of the game, because weapons.state.current is null
+ * and every table in player/weapons.js is keyed on it. The HUD asks for a
+ * magazine size every frame; the frame loop asks whether the trigger is down.
+ * So it is asserted here rather than left to the two-weapon path above, which
+ * never reaches it.
+ *
+ * The armoury is narrowed to one un-upgraded weapon to get there, and put back
+ * afterwards: everything downstream in this suite fires the SMG.
+ */
+const emptyHanded = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+
+  const ownedBefore = [...g.weapons.state.owned];
+  g.weapons.grant('carbine');
+  g.weapons.state.owned = new Set(['carbine']);
+  g.weapons.equip('carbine');
+  await window.__E__.frames(14);
+
+  g.economy.reset(6000);
+  await window.__E__.frames(3);
+  await window.__E__.press();
+  await window.__E__.frames(4);
+
+  const empty = {
+    phase: g.altar.state.phase,
+    inHand: g.weapons.state.current,
+    stowed: g.weapons.state.stowed,
+    hudWeapon: document.querySelector('[data-weapon]').textContent,
+    hudMag: document.querySelector('[data-mag]').textContent,
+    slot: document.querySelector('[data-slot]') ? document.querySelector('[data-slot]').textContent : '',
+    // Nothing in the hands fires nothing and reloads nothing, and neither is an
+    // error the player is told about.
+    fired: g.weapons.fire(false),
+    reloaded: g.weapons.reload(),
+    // And the number key for the weapon in the machine will not summon it back.
+    reEquipped: g.weapons.equip('carbine'),
+    magazine: g.weapons.magazine,
+    reserve: g.weapons.reserve,
+  };
+
+  // Ten frames with the trigger HELD, which is the frame-loop path: it reads
+  // STATS[current] every frame and would have thrown on the first one.
+  g.input.state.fire = true;
+  await window.__E__.frames(10);
+  g.input.state.fire = false;
+
+  window.__OWNED__ = ownedBefore;
+  return empty;
+});
+
+// PHOTOGRAPHED HERE, and the split is the point: the shot has to land while the
+// hands are still empty. The first version of this section restored the armoury
+// inside the same evaluate and then took the picture, which produced a frame of
+// the gilded SMG captioned "the hands are empty" - the exact class of false
+// evidence this suite exists to prevent, arriving in its own caption.
+await shoot('eco-12c-altar-empty-handed', 'one weapon, and the Altar has it: nothing in the hands');
+
+const emptyBack = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+
+  g.altar.state.remaining = 0.02;
+  let f = 0;
+  while (g.altar.state.phase === 'working' && f < 30) {
+    await new Promise((r) => requestAnimationFrame(r));
+    f++;
+  }
+  await window.__E__.frames(6);
+  await window.__E__.press();
+  await window.__E__.frames(16);
+
+  const back = {
+    inHand: g.weapons.state.current,
+    stowed: g.weapons.state.stowed,
+    name: g.weapons.displayName('carbine'),
+    magazine: g.weapons.magazine,
+  };
+
+  g.weapons.state.owned = new Set(window.__OWNED__);
+  g.weapons.equip('smg');
+  await window.__E__.frames(14);
+  return back;
+});
 
 // The gilded weapon, held up, so the finish can be judged by eye rather than
 // by a boolean claiming a material was swapped.
@@ -771,6 +954,9 @@ section('shrines', shrineRuns);
 section('capacity', capped);
 section('altar', altar);
 section('upgraded', upgraded);
+section('collected', collected);
+section('empty handed', emptyHanded);
+section('empty handed, collected', emptyBack);
 section('tracers', tracers);
 section('boon effects', effects);
 
@@ -904,15 +1090,65 @@ const checks = {
   'the first upgrade costs 5000':     altar.cost === 5000,
   'a short altar prompt is red':      altar.denyWhenShort === true,
   'the upgrade debited 5000':         upgraded.spent === 5000,
-  'the weapon is upgraded':           upgraded.isUpgraded === true,
-  'THE UPGRADE DOES MORE DAMAGE':     upgraded.damage[1] > upgraded.damage[0] * 2,
-  'the magazine doubled':             upgraded.magazine[1] === upgraded.magazine[0] * 2,
-  'the spread came down':             upgraded.spread[1] < upgraded.spread[0],
-  'the weapon was renamed':           upgraded.upName !== upgraded.baseName
-                                        && upgraded.hud.weapon === upgraded.upName.toUpperCase(),
-  'the viewmodel was gilded':         upgraded.gilded === true,
-  'a second upgrade costs 2000':      upgraded.secondCost === 2000,
-  'an upgraded altar quotes no price': !/GOLD/.test(upgraded.promptAfter),
+
+  // THE RITUAL. One keypress used to do all of this; it now takes the weapon,
+  // works, presents it and hands it back, and each beat is asserted so a
+  // regression to the vending-machine version cannot pass this suite.
+  'inserting starts the machine':     upgraded.inserted.phase === 'working',
+  'THE WEAPON LEAVES THE HANDS':      upgraded.inserted.stowed === 'smg'
+                                        && upgraded.inserted.inHand !== 'smg',
+  // Black Ops 2's rule: the machine takes the gun and you are left holding your
+  // OTHER one. This player owns the MK9 as well, so that is what arrives - and
+  // the HUD has to name the weapon actually in the hands and not the one on the
+  // machine. The empty-handed half of the rule is the section below.
+  'and the other weapon arrives':     upgraded.inserted.inHand === 'mk9'
+                                        && upgraded.inserted.hudWeapon === 'MK9',
+  'the upgrade is NOT instant':       upgraded.inserted.isUpgraded === false,
+  'a working altar counts down':      /WORKING - 5/.test(upgraded.inserted.prompt)
+                                        && upgraded.inserted.deny === true,
+  // Three clamped frames have already run by the time this is sampled, so the
+  // window is five seconds minus 3/20ths and not exactly five.
+  'the window is five seconds':       upgraded.inserted.remaining > 4.7
+                                        && upgraded.inserted.remaining <= 5,
+  // Ten clamped frames at 1/20s. Anything on a wall clock would have burned the
+  // whole window; anything counting frames would drift with the frame rate.
+  'the clock runs on the DELTA':      upgraded.ticked > 0.4 && upgraded.ticked < 0.6,
+
+  'the finished weapon is presented': upgraded.presented.phase === 'ready'
+                                        && upgraded.presented.onThePlate === true,
+  'IT IS ACTUALLY ON THE SCREEN':     upgraded.presented.screenWidth > 4,
+  'the plate holds the UPGRADED gun': upgraded.presented.isUpgraded === true,
+  'and it is still not in the hands': upgraded.presented.inHand !== 'smg',
+  'a holding altar offers the gun':   /^TAKE THE WADJET ASCENDANT/.test(upgraded.presented.prompt),
+
+  'collecting costs nothing':         collected.goldOnCollect === 0,
+
+  // one weapon, and the machine has it
+  'ONE WEAPON MEANS EMPTY HANDS':     emptyHanded.inHand === null
+                                        && emptyHanded.stowed === 'carbine',
+  'the HUD names no weapon':          emptyHanded.hudWeapon === '',
+  'and reads zero rounds':            emptyHanded.magazine === 0
+                                        && emptyHanded.reserve === 0,
+  'empty hands cannot fire':          emptyHanded.fired === null,
+  'empty hands cannot reload':        emptyHanded.reloaded === false,
+  'the number key will not summon it': emptyHanded.reEquipped === false,
+  'and it comes back on collection':  emptyBack.inHand === 'carbine'
+                                        && emptyBack.stowed === null,
+  'renewed, with a full magazine':    emptyBack.name === 'Ankh Eternal'
+                                        && emptyBack.magazine === 60,
+  'collecting empties the plate':     collected.stillOnThePlate === false
+                                        && collected.stowed === null,
+  'the weapon comes back':            collected.inHand === 'smg',
+
+  'the weapon is upgraded':           collected.isUpgraded === true,
+  'THE UPGRADE DOES MORE DAMAGE':     collected.upDamage > upgraded.baseDamage * 2,
+  'the magazine doubled':             collected.magazine === upgraded.baseMag * 2,
+  'the spread came down':             collected.spread < upgraded.baseSpread,
+  'the weapon was renamed':           collected.upName !== upgraded.baseName
+                                        && collected.hud.weapon === collected.upName.toUpperCase(),
+  'the viewmodel was gilded':         collected.gilded === true,
+  'a second upgrade costs 2000':      collected.secondCost === 2000,
+  'an upgraded altar quotes no price': !/GOLD/.test(collected.promptAfter),
   'tracers fly on upgraded rounds':   tracers.after > tracers.before,
 
   // boons, measured
