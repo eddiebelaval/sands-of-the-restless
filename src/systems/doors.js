@@ -43,11 +43,81 @@ const SLAB_SECONDS = 1.6;
  * watches the stone move, and then walks through it. That step is the whole
  * moment.
  */
-const ENTER_AT = { z: -31.6, halfWidth: 2.6 };
-const EXIT_AT = { z: -140.8, halfWidth: 2.2 };
+/*
+ * `fadeFrom` is where the screen starts going dark and `blackBy` is where it
+ * has finished, both measured along z in the direction of travel.
+ *
+ * THE ONLY THING THAT MAKES THIS SAFE: `blackBy` is on the near side of `z`.
+ * The curtain is a function of position, evaluated in the same update, from
+ * the same coordinates, immediately before the same test that fires the swap -
+ * so on whatever frame the player crosses `z`, the fade has already passed
+ * `blackBy` and the curtain reads exactly 1. Not "usually", not "at 60 fps":
+ * the crossing frame cannot be reached without the black, because both are
+ * read off the same number. A fade driven by a clock would have been a race
+ * with the frame rate, and it would have been lost precisely on the slow
+ * frames - which is when this transition runs, because it is the transition
+ * that makes the frames slow.
+ *
+ * The jamb line is at z = -30.2 and the black sheet described below hangs at
+ * -30.1, so entering is complete on the near side of it. That is not a round
+ * number chosen for looks - it is the last z at which the sheet is still in
+ * front of the camera. Past it the player is inside the pyramid's own solid
+ * mass, which has no inside, and the only thing that can be shown there is
+ * nothing. Leaving is the same shape mirrored; there is no sheet on that side
+ * because the interior's entry wall is already a sealed wall and measures at
+ * luminance 0.3 from a stride away.
+ */
+const ENTER_AT = { z: -31.6, halfWidth: 2.6, fadeFrom: -27.6, blackBy: -30.0 };
+const EXIT_AT = { z: -140.8, halfWidth: 2.2, fadeFrom: -144.6, blackBy: -141.6 };
+
+/**
+ * How far off the doorway's centreline the fade stops applying, past the
+ * width the threshold itself accepts.
+ *
+ * It has to be a margin OUTSIDE `halfWidth` rather than a taper across it, or
+ * a player entering at the edge of the opening would cross the line at less
+ * than full black and see the swap. Inside `halfWidth` this term is exactly 1,
+ * which is what keeps the guarantee above true.
+ */
+const VEIL_MARGIN = 1.2;
 
 /** Where the player is put down when they come back out of the pyramid. */
 const RETURN_TO = { x: 0, z: -27.0, rot: Math.PI };
+
+/**
+ * The dark behind the door, as geometry.
+ *
+ * "We walk through a wall" is literally what was happening. The doorway is a
+ * hole in a stepped mass that has no inside - once the slab drops you are
+ * looking at the back of the pyramid's own casing, bright orange stone with
+ * hieroglyphs on it, and past z = -31 those faces cull and the player is
+ * looking out the far side at open desert with the whole necropolis behind
+ * them. Both measured on the pristine build, held at z = -22 and z = -31.4.
+ *
+ * So one unlit black sheet is hung across the opening, and where it hangs is
+ * the entire design of it. A DEEP void was tried first - an open-fronted box
+ * behind the doorway, so the passage would have a floor and walls - and it
+ * looked right from down the avenue and failed completely from two metres out,
+ * because the pyramid's own mass sits immediately behind the jamb and wins the
+ * depth test against anything further back. The sheet has to be the NEAREST
+ * surface inside the opening, not the furthest, and at the jamb line nothing
+ * can be in front of it but the slab, which has dropped.
+ *
+ * It is sized to the 5.2 x 8.8 opening with a hair of bleed, so the jambs, the
+ * lintel and the set-back soffit still frame it. Unlit and unfogged: anything
+ * that tints it gives it a distance, and a distance makes it a surface again.
+ *
+ * `z` is 0.15 and it is boxed in on both sides, which is worth the sentence.
+ * Below it, the temple mass carries a course straight across the opening at
+ * world -30.10, and the first version of this sat exactly on it - the sheet
+ * came out black with one lit stone band across it, found by raycasting a
+ * column down the doorway rather than by staring at the screenshot. Above it,
+ * 0.2 is where the slab's mover filter starts, and anything at or past that
+ * gets driven into the sand when the door is bought. The material carries a
+ * polygon offset as well, so the next person to nudge the mass by four
+ * centimetres does not get the band back.
+ */
+const VOID = { w: 5.3, h: 8.9, y: 4.4, z: 0.15 };
 
 export function createDoors({
   scene, camera, player, economy, audio, spaces, interior,
@@ -143,7 +213,46 @@ export function createDoors({
     for (const p of parts) p.mesh.userData.door = record;
     courtyardTargets.push(...parts.map((p) => p.mesh));
 
+    // AFTER the parts filter above, and it has to stay that way round: that
+    // filter takes every child of the frame standing proud of the jamb at
+    // z > 0.2 and drives it into the ground, and the sheet sits at 0.15. It is
+    // five centimetres from being carried away by the door it is behind.
+    buildVoid(frame);
+
     return record;
+  }
+
+  /** Hang the dark across the doorway. See VOID above for where and why. */
+  function buildVoid(frame) {
+    const sheet = new THREE.Mesh(
+      new THREE.PlaneGeometry(VOID.w, VOID.h),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        // Both faces. The player walks through this thing, and for the frame
+        // or two they are behind it - at full black, but still - a hole in the
+        // world behind them is not something to leave lying around.
+        side: THREE.DoubleSide,
+        fog: false,
+        // Wins the depth test against anything sharing its plane. See VOID.
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+        polygonOffsetUnits: -8,
+      }),
+    );
+
+    sheet.position.set(0, VOID.y, VOID.z);
+    sheet.name = 'doorway-void';
+
+    // Not a surface. It must not stop a bullet, take an impact decal, or turn
+    // up under the interact ray - all three would be the game insisting there
+    // is something there.
+    sheet.userData.noHit = true;
+    sheet.userData.noPick = true;
+    sheet.castShadow = false;
+    sheet.receiveShadow = false;
+
+    frame.add(sheet);
+    return sheet;
   }
 
   /**
@@ -334,7 +443,7 @@ export function createDoors({
   // thresholds
   // ---------------------------------------------------------------------------
 
-  /**
+  /*
    * Teleport, not a tunnel, and the reason is in rooms.js: the interior is a
    * separate cell 110 units beyond the courtyard's outer wall, because the
    * playable interior is several times larger than the 62-unit stepped mass
@@ -342,23 +451,95 @@ export function createDoors({
    * true, so the two spaces are never both real at once. The doorway is the
    * seam, and it is hidden by the one thing that hides a seam perfectly: the
    * player walks through a hole in a wall and comes out somewhere dark.
+   *
+   * That sentence was the design and it was never built. What actually
+   * happened was that the player walked through a hole in a wall, spent a
+   * metre and a half inside solid stone looking out the back of it, and was
+   * then handed the far cell mid-stride with the camera still in the
+   * forecourt. The three pieces below are that sentence, finally: VOID makes
+   * the far side of the doorway dark, veilFor takes the screen down to black
+   * on the approach, and spaces.js does the swap where nobody is looking.
    */
-  function checkThresholds() {
+
+  /**
+   * How black the screen should be, given only where the player is standing.
+   *
+   * No clock, no state, no memory - which is what makes it impossible to be
+   * stuck in. Turn round two paces from the doorway and the room comes back on
+   * the same frame, because there was never a fade running, only a number
+   * being read off a position.
+   */
+  function veilFor(spec, p) {
+    const along = (p.z - spec.fadeFrom) / (spec.blackBy - spec.fadeFrom);
+    if (along <= 0) return 0;
+
+    const lateral = (spec.halfWidth + VEIL_MARGIN - Math.abs(p.x)) / VEIL_MARGIN;
+    if (lateral <= 0) return 0;
+
+    return Math.min(1, along) * Math.min(1, lateral);
+  }
+
+  /**
+   * Whether the threshold the player is walking toward is allowed to fire.
+   *
+   * Cleared on arrival and set again only once the player is clear of the
+   * whole fade zone, which is doing two jobs at once. It stops the doorway
+   * they have just come through from grabbing them straight back - the entry
+   * spawn at z -143.5 is inside the exit's fade zone, so without this the room
+   * would come up permanently a third dark and one step would send them back
+   * out. And it means the answer to "what if they turn round mid-transition"
+   * is that there is nothing to turn round out of: the swap already happened,
+   * the fade in always finishes, and the door behind them is inert until they
+   * have genuinely walked away from it.
+   */
+  let armed = true;
+
+  /**
+   * Drive the curtain, then decide whether to cross.
+   *
+   * Order is the whole safety argument. The curtain is set from THIS frame's
+   * position before the threshold is tested against THAT SAME position, so the
+   * frame that crosses is a frame on which the screen has already been told to
+   * be black. See ENTER_AT.
+   */
+  function advanceThreshold(dt) {
     const p = player.position;
+    const inside = spaces.active === 'interior';
+    const spec = inside ? EXIT_AT : ENTER_AT;
 
-    if (spaces.active === 'exterior') {
-      if (!sealed || !sealed.opened) return;
-      if (p.z > ENTER_AT.z || Math.abs(p.x) > ENTER_AT.halfWidth) return;
+    // No darkening in front of a door that will not open. Standing at a slab
+    // that is still sealed and having the lights go down would be the game
+    // promising something it is about to refuse.
+    const live = inside || !!(sealed && sealed.opened);
+    const want = live ? veilFor(spec, p) : 0;
 
-      spaces.enter('interior', ENTRY.spawn);
-      state.entered++;
+    if (!armed) {
+      // Still leaving. veilTick is called anyway: a fade IN that is in flight
+      // has to keep running, and it ignores the demand while it does.
+      if (want <= 0) armed = true;
+      spaces.veilTick(dt, 0);
       return;
     }
 
-    // Coming back out. Without this the player can walk through the entry
-    // doorway from the inside and out over a floor that does not exist.
-    if (p.z < EXIT_AT.z || Math.abs(p.x) > EXIT_AT.halfWidth) return;
-    spaces.enter('exterior', RETURN_TO);
+    spaces.veilTick(dt, want);
+
+    if (!live) return;
+
+    // Inside, the player walks OUT through the entry doorway - without this
+    // they walk out over a floor that does not exist. Outside, they walk in.
+    // The comparison flips with the direction of travel; nothing else does.
+    const past = inside ? p.z >= spec.z : p.z <= spec.z;
+    if (!past || Math.abs(p.x) > spec.halfWidth) return;
+
+    if (inside) {
+      if (spaces.enter('exterior', RETURN_TO)) armed = false;
+      return;
+    }
+
+    if (spaces.enter('interior', ENTRY.spawn)) {
+      state.entered++;
+      armed = false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -391,13 +572,21 @@ export function createDoors({
     const { text, deny: red } = describe(candidate);
     setPrompt(text, red);
 
-    checkThresholds();
+    advanceThreshold(dt);
   }
 
   return {
     state,
     update,
     interact,
+
+    /**
+     * Whether the threshold the player is walking toward may fire. False from
+     * the moment they are taken until they are clear of the doorway they
+     * arrived at. Exposed so a harness can tell "the door refused" from "the
+     * door has not been walked away from yet".
+     */
+    get armed() { return armed; },
 
     /** The barrier currently under the crosshair, for the harness and the HUD. */
     get candidate() { return candidate; },
