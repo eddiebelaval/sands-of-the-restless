@@ -80,7 +80,7 @@ const BLAST_VOICES = 3;
  */
 const BLAST_EXECUTE = 0.08;
 
-export function createCombat({ player, rig, post, audio, impacts, notice, director }) {
+export function createCombat({ player, rig, post, audio, impacts, notice, director, death }) {
   /**
    * Late-bound, exactly like the director above it. See attach().
    *
@@ -392,18 +392,49 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
   }
 
   /**
-   * The minimum honest failure state.
+   * The player's health reached zero.
    *
-   * The run resets to wave one and the player comes back at full health. It is
-   * not a death screen and it is not meant to be; what it IS, is a consequence,
-   * and the alternative - health that bottoms out at zero and stays there while
-   * the waves keep coming - is a game that has quietly stopped having stakes.
+   * THIS USED TO BE THE WHOLE OF DYING and it was too small a thing by half.
+   * It washed the frame red, healed the player back to full, reset the wave
+   * director and printed a line in the notice pill - all between two frames,
+   * with the player still standing and still holding the trigger. Two defects
+   * came out of that, and they are different defects:
+   *
+   *   The player was never TOLD. A one-line notice in the corner is what this
+   *   game says when a door opens. Death got the same weight as a door.
+   *
+   *   The restart was AUTOMATIC. A player who walked away from the keyboard
+   *   died, restarted, and died again on a loop, forever, which the owner
+   *   watched happen. A run has to wait for the person playing it.
+   *
+   * So this file keeps the one fact it owns - the heart stopped - and hands the
+   * consequence to ui/death.js, which owns the fall, the card, the gate and the
+   * reset rule. What stays here is only what belongs to combat: the counter, the
+   * full red wash, the trauma, and the sound.
+   *
+   * `state.downs` still increments HERE and still increments FIRST, before the
+   * hand-off, because it is the event source main.js watches to drop the shrine
+   * boons and it must fire on the frame of the death whether or not a death
+   * sequence is wired up.
+   *
+   * If nothing is attached, the old behaviour stands. That is not a dead branch
+   * kept for sentiment: main.js is contended and this module is constructed
+   * before ui/death.js exists, so `death` is late-bound through attach() and
+   * there is a window - and any harness that builds a combat system without a UI
+   * layer at all still needs the run to end rather than to hang at zero health.
    */
   function fell() {
     state.downs++;
     state.wash = 1;
     rig?.addTrauma?.(1);
     audio?.roundEnd?.();
+
+    // Owned from here. The sequence does almost nothing on this call - see the
+    // note at the top of ui/death.js - because we are being called from inside
+    // the director's actor loop and anything that touches the live list here is
+    // the crash test/enemies.mjs pins under "a death mid-tick does not throw".
+    if (death?.begin?.()) return;
+
     notice?.('THE SANDS TAKE YOU - THE VIGIL BEGINS AGAIN', 3600);
     player.heal(player.state.maxHealth);
     director?.reset?.();
@@ -446,6 +477,10 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
     attach(parts) {
       if (parts.director) director = parts.director;
       if (parts.grenades) grenades = parts.grenades;
+      // The death sequence is built LAST of all - it needs the director, the
+      // power-ups and the Altar, every one of which is constructed from this
+      // object - so it arrives the same way they do. See fell().
+      if (parts.death) death = parts.death;
     },
 
     /** Whoever registered themselves as the grenade pouch, or null. */

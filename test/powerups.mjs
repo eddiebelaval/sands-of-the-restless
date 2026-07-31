@@ -196,7 +196,38 @@ await page.addScriptTag({
 window.__P__ = {
   clock: 2000,
 
+  /**
+   * STAND THE PLAYER BACK UP, because dying now stops the world and this file is
+   * not about dying.
+   *
+   * The death gate is deliberate: going down halts the whole simulation block and
+   * waits for the player to press Enter, with no timeout, because a run that
+   * restarts itself kills an absent player on a loop. Nothing in a headless suite
+   * ever presses Enter.
+   *
+   * This file stages fields of six or more live enemies for the nuke section and
+   * then walks the player around photographing plinths, so it dies partway
+   * through and everything after that measured a frozen world. Seven checks went
+   * red at once - drops that "read at four metres" earlier in the same run
+   * suddenly matching an empty floor to a hundredth: 41.74 with a drop against
+   * 41.78 with nothing on it. The drops were not missing, the world had stopped.
+   *
+   * confirm() is the same call the Enter key makes, so this presses the button a
+   * player would press rather than reaching around the gate. Healing first means
+   * a field that is still swinging does not simply put them down again on the
+   * next frame.
+   */
+  revive() {
+    const g = window.__SANDS__;
+    if (g.player && g.player.heal) g.player.heal(999);
+    if (g.death && g.death.halted && g.death.confirm) g.death.confirm();
+  },
+
   async frames(n) {
+    const g = window.__SANDS__;
+    // A death mid-measurement freezes every frame that follows it, so the gate is
+    // cleared here rather than in twenty separate places.
+    if (g.death && g.death.halted) window.__P__.revive();
     for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r));
   },
 

@@ -58,6 +58,51 @@ const ADS_ZOOM_MAX = 2.50;
 const PITCH_LIMIT = Math.PI / 2 - 0.02;
 const SENSITIVITY = 0.0022;
 
+/**
+ * ---------------------------------------------------------------------------
+ * THE DEATH POSE
+ * ---------------------------------------------------------------------------
+ *
+ * A first-person camera has no body, which is exactly why a cut to a death
+ * screen reads as the game being switched off rather than as the player being
+ * killed. The fix is not a fade: it is to make the camera behave for one second
+ * like a thing that has stopped holding itself up.
+ *
+ * Three components, and all three are what a body does, not what a camera does:
+ *
+ *   THE DROP. The eye falls 1.25 m, from standing to a head on the sand. Fast
+ *   at the start and slow at the end, because knees give way before a body
+ *   lands - a symmetrical ease reads as a lift descending.
+ *
+ *   THE ROLL. 0.95 rad, about 54 degrees, to one side. This is the single most
+ *   important of the three and the one a "camera lowers" implementation always
+ *   misses: a body that falls does not stay level, and a level horizon at ankle
+ *   height reads as crouching.
+ *
+ *   THE SETTLE. One damped oscillation on top of both, so the head arrives,
+ *   rebounds slightly, and stops. Without it the motion ends on a hard clamp,
+ *   which is the tell that a number was lerped to a target.
+ *
+ * Plus the field of view widening eight per cent across the fall, slowly. The
+ * world getting further away is a cheap effect and it is the right one here.
+ *
+ * WHICH SIDE the body falls to is chosen once, at startDeath(), and alternates
+ * rather than randomising: two deaths in a row that fall the same way read as a
+ * canned animation, and Math.random() would occasionally give you three.
+ *
+ * DELTA-TIME. `death.t` accumulates the CLAMPED simulation delta handed to
+ * update(), the same clock the horde and the fuses run on, so a machine dropping
+ * 50 ms frames plays every part of this arc across twenty frames instead of
+ * sixty. A frame-counted fall would finish in a third of a second precisely when
+ * the machine was least able to draw it.
+ */
+const DEATH_FALL = 1.00;
+const DEATH_DROP = 1.25;
+const DEATH_ROLL = 0.95;
+const DEATH_PITCH = 0.30;
+const DEATH_YAW = 0.14;
+const DEATH_FOV_WIDEN = 1.08;
+
 /** What the sensitivity slider multiplies. 1.0 is the shipped feel. */
 const SENS_MIN = 0.20;
 const SENS_MAX = 3.00;
@@ -91,6 +136,17 @@ export function createCameraRig(camera) {
   let trauma = 0;
 
   const shakeOffset = new THREE.Euler();
+
+  // The death pose. Plain numbers on the closure, written in place every frame,
+  // so the sequence allocates nothing at all - which matters because it runs on
+  // the frames immediately after twenty-four actors and a horde were on screen.
+  const death = { active: false, t: 0, side: 1 };
+  let dEase = 0;      // 0..1 progress along the fall, eased
+  let dDrop = 0;      // metres the eye has fallen
+  let dRoll = 0;      // radians of roll
+  let dPitch = 0;     // radians added to pitch
+  let dYaw = 0;       // radians added to yaw
+  let deaths = 0;     // which way the last body fell; see DEATH_ROLL
 
   function look(dx, dy, sensitivityScale = 1) {
     yaw -= dx * sensitivity * sensitivityScale;
@@ -142,13 +198,36 @@ export function createCameraRig(camera) {
       shakeOffset.set(0, 0, 0);
     }
 
+    // --- the death pose ----------------------------------------------------
+    // Before the FOV, because it overrides the target, and before the compose
+    // below, which reads the four offsets.
+    if (death.active) {
+      death.t = Math.min(DEATH_FALL, death.t + dt);
+      const p = death.t / DEATH_FALL;
+
+      // Fast out of the gate, slow into the sand.
+      dEase = 1 - Math.pow(1 - p, 2.6);
+
+      // One damped bounce. Zero at p = 0 and effectively zero by p = 1, so it
+      // adds a landing and never a wobble on the way down.
+      const settle = Math.sin(p * Math.PI * 2.2) * Math.exp(-p * 5.0);
+
+      dDrop  = DEATH_DROP  * (dEase - settle * 0.085);
+      dRoll  = DEATH_ROLL  * (dEase + settle * 0.10) * death.side;
+      dPitch = DEATH_PITCH * (dEase + settle * 0.14);
+      dYaw   = DEATH_YAW   * dEase * death.side;
+    }
+
     // --- field of view -----------------------------------------------------
-    targetFov = ads ? adsFov()
+    targetFov = death.active ? baseFov * DEATH_FOV_WIDEN
+      : ads ? adsFov()
       : player.state.sprinting ? sprintFov()
       : baseFov;
 
     // ADS snaps in faster than it eases out, which is how it feels in the hand.
-    const fovRate = ads ? 14 : 9;
+    // The death widen is slower than either: it is the world receding, not a
+    // sight coming up.
+    const fovRate = death.active ? 2.2 : ads ? 14 : 9;
     fov += (targetFov - fov) * Math.min(1, dt * fovRate);
 
     applyFov();
@@ -157,17 +236,21 @@ export function createCameraRig(camera) {
     camera.position.copy(player.position);
 
     // Head bob is applied in view space, so it sways with where you are
-    // looking rather than along fixed world axes.
+    // looking rather than along fixed world axes. It is faded out across the
+    // fall: a walk cycle still swaying on a body that has stopped walking is
+    // the one detail that would undo the whole pose.
     const bob = player.state.bobOffset;
-    camera.position.x += bob.x * Math.cos(yaw);
-    camera.position.z += bob.x * -Math.sin(yaw);
-    camera.position.y += bob.y;
+    const bobK = 1 - dEase;
+    camera.position.x += bob.x * Math.cos(yaw) * bobK;
+    camera.position.z += bob.x * -Math.sin(yaw) * bobK;
+    camera.position.y += bob.y * bobK;
+    camera.position.y -= dDrop;
 
     camera.rotation.set(0, 0, 0);
     camera.rotation.order = 'YXZ';
-    camera.rotation.y = yaw + recoil.yaw + shakeOffset.y;
-    camera.rotation.x = pitch + recoil.pitch + shakeOffset.x;
-    camera.rotation.z = shakeOffset.z;
+    camera.rotation.y = yaw + recoil.yaw + shakeOffset.y + dYaw;
+    camera.rotation.x = pitch + recoil.pitch + shakeOffset.x + dPitch;
+    camera.rotation.z = shakeOffset.z + dRoll;
   }
 
   return {
@@ -269,10 +352,53 @@ export function createCameraRig(camera) {
       trauma = Math.min(1, trauma + n);
     },
 
+    // --- dying ---------------------------------------------------------------
+    //
+    // Started by ui/death.js at the moment the player goes down and ended when
+    // the run restarts. The rig owns the POSE and nothing else: it does not know
+    // what a death card is, it does not stop the simulation, and it does not
+    // decide when to let go.
+
+    /** The body stops holding itself up. See THE DEATH POSE above. */
+    startDeath() {
+      if (death.active) return;
+      death.active = true;
+      death.t = 0;
+      // Alternating rather than random: two identical falls in a row read as a
+      // canned animation, and random gives you three about one time in eight.
+      death.side = (deaths++ % 2) ? -1 : 1;
+    },
+
+    /** Stand back up. Instant, because the card is still over the screen. */
+    endDeath() {
+      death.active = false;
+      death.t = 0;
+      dEase = dDrop = dRoll = dPitch = dYaw = 0;
+      trauma = 0;
+      fov = baseFov;
+      targetFov = baseFov;
+      applyFov(true);
+    },
+
+    get dying() { return death.active; },
+
+    /**
+     * 0..1 along the fall, EASED - not raw time.
+     *
+     * ui/death.js drives the weapon out of frame off this so the gun and the
+     * head move on one curve. Handing out the eased value rather than the clock
+     * is what makes that true; two separate easings of the same duration is two
+     * animations that happen to finish together.
+     */
+    get deathProgress() { return dEase; },
+
     reset(y = 0, p = 0) {
       yaw = y; pitch = p;
       recoil.pitch = recoil.yaw = recoil.vPitch = recoil.vYaw = 0;
       trauma = 0;
+      death.active = false;
+      death.t = 0;
+      dEase = dDrop = dRoll = dPitch = dYaw = 0;
     },
   };
 }

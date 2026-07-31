@@ -41,6 +41,7 @@ import {
 import { createMinimap } from './ui/minimap.js';
 import { createObjectives, createObjectivePanel } from './ui/objective.js';
 import { createGrenades } from './systems/grenades.js';
+import { createDeath } from './ui/death.js';
 import { createPowerups } from './systems/powerups.js';
 import { createPauseMenu } from './ui/pause.js';
 import { createDifficulty } from './systems/difficulty.js';
@@ -586,6 +587,27 @@ function boot() {
   btnLow.addEventListener('click', () => pause.refresh());
 
   // -------------------------------------------------------------------------
+  // dying
+  // -------------------------------------------------------------------------
+  //
+  // Built LAST, because it is the only thing in the file that needs everything:
+  // the camera to fall, the viewmodel to drop the weapon out of frame, the
+  // director and the power-ups and the Altar to be swept, and the pause menu to
+  // know when the keyboard is not its. It reaches combat the same way the
+  // director does - through attach(), late, because combat is what constructs
+  // the failure path that calls it.
+  //
+  // The overlay is created in JavaScript rather than declared in index.html, on
+  // purpose: another lane owns that file this week.
+  const death = createDeath({
+    doc: document,
+    rig, player, viewmodel, combat, director, powerups, altar, economy,
+    input, audio,
+    suspended: () => pause.paused,
+  });
+  combat.attach({ death });
+
+  // -------------------------------------------------------------------------
   // entering the game
   // -------------------------------------------------------------------------
 
@@ -648,8 +670,14 @@ function boot() {
   // go through core/input.js at all - they read the event directly - so
   // suspending the input layer would leave a paused player still able to
   // reload, inspect, swap weapons and buy whatever the crosshair was left on.
+  //
+  // `death.halted` joins them for exactly the same reason pause did. These
+  // bindings read the raw event, so suspending the input layer does not reach
+  // them: without this a player lying on the sand under a death card could
+  // still reload, inspect, swap weapons, and - through F - buy a door and walk
+  // the run's gold while the run was supposed to be stopped.
   window.addEventListener('keydown', (e) => {
-    if (!started || pause.paused) return;
+    if (!started || pause.paused || death.halted) return;
 
     if (e.code === 'KeyR') { weapons.reload(); return; }
     if (e.code === 'KeyV') { viewmodel.inspect(); return; }
@@ -707,7 +735,7 @@ function boot() {
 
   // Scrolling the settings panel must not swap the weapon underneath it.
   window.addEventListener('wheel', (e) => {
-    if (!started || pause.paused) return;
+    if (!started || pause.paused || death.halted) return;
     weapons.cycle(e.deltaY > 0 ? 1 : -1);
   }, { passive: true });
 
@@ -883,9 +911,60 @@ function boot() {
     const dt = Math.min(raw, MAX_DELTA);
     elapsed += dt;
 
+    // -----------------------------------------------------------------------
+    // THE DEATH GATE, and it is a second and narrower kind of stopped.
+    // -----------------------------------------------------------------------
+    //
+    // The pause above returns before anything advances INCLUDING the render.
+    // This one is different: the camera still falls, the world still draws, and
+    // the composer still runs - because the whole point is that the player
+    // watches themselves go down. What stops is the SIMULATION: the player does
+    // not move, the horde does not step, no wave begins, no fuse burns, no
+    // power-up expires, health does not regenerate and nothing can be damaged.
+    //
+    // It holds until the player presses Enter or clicks the card's button.
+    // There is no timeout, because a timeout is the bug it was written to fix -
+    // a run that restarts itself is a run that kills an absent player on a loop.
+    death.update(dt);
+    const halted = death.halted;
+
+    // GOING DOWN COSTS THE BOONS, and it has to, or none of this is a wager.
+    //
+    // ui/death.js resets the run to wave one and stands the player back up at
+    // full health, and it does not know shrines exist. If the boons survived
+    // that, a death would cost a wave counter and nothing else - and the Shrine
+    // of Anubis, whose entire product is one death forgiven, would be 1500 gold
+    // for the right to skip a free inconvenience.
+    //
+    // Watched off the counter rather than hooked, because `fell()` is private to
+    // a file this system has no business reaching into, and a counter that only
+    // ever goes up is a perfectly honest event source.
+    //
+    // MOVED ABOVE THE GATE, and that is not tidying. This block used to sit at
+    // the bottom of the simulation block, which was correct while nothing could
+    // switch that block off - but the death gate switches it off from the frame
+    // AFTER the counter moves, so an event handler for going down was sitting
+    // inside the branch that going down disables. In the game the death lands
+    // mid-block and the handler still fired the same frame, which is why it
+    // looked fine; test/economy.mjs kills the player from OUTSIDE the loop and
+    // caught it immediately, as "going down costs every boon" and "Sekhmet
+    // vitality came back off". A death cost nothing at all.
+    if (combat.state.downs !== downsSeen) {
+      downsSeen = combat.state.downs;
+      // The power-ups go with them, and for the identical reason: a run that
+      // resets to wave one while keeping half a minute of one-hit kills is a
+      // death that cost a counter. What is still on the FLOOR is swept by
+      // ui/death.js at the restart, not here - see the reset rule in that file.
+      powerups.clearEffects();
+      if (shrines.count) {
+        shrines.dropAll();
+        showNotice('THE GODS WITHDRAW THEIR FAVOUR', 3000);
+      }
+    }
+
     let lookDx = 0, lookDy = 0;
 
-    if (started) {
+    if (started && !halted) {
       const look = input.consumeLook();
       lookDx = look.dx; lookDy = look.dy;
       // Sensitivity scales with zoom so aiming does not feel twitchy at 55 FOV.
@@ -916,7 +995,24 @@ function boot() {
 
     rig.update(dt, player, ads);
 
-    if (started) {
+    if (started && halted) {
+      // THE ONE EXEMPTION FROM THE FREEZE, and it is for the transition lane.
+      //
+      // A fade-to-black pyramid entry is being built in systems/doors.js and
+      // systems/spaces.js. If the player dies with that curtain halfway up and
+      // this loop freezes its clock with everything else, the curtain never
+      // comes down again: a black screen, held forever, over a death card
+      // nobody can see. So doors keep their delta while the run is held, on the
+      // assumption that a transition finishes and lifts its own curtain from
+      // here. Everything else in the block below stays stopped.
+      //
+      // Nothing else is reachable through it while dead - the prompt is not
+      // repainted, and the thresholds it checks are measured off a player
+      // position that cannot change.
+      doors.update(dt);
+    }
+
+    if (started && !halted) {
       // Weapons update after the camera, because hitscan rays are cast through
       // the camera and must use this frame's orientation, not last frame's.
       const hits = weapons.update(dt, input.state, ads);
@@ -1005,30 +1101,6 @@ function boot() {
       powerups.update(dt, elapsed);
 
       combat.update(dt);
-
-      // GOING DOWN COSTS THE BOONS, and it has to, or none of this is a wager.
-      //
-      // systems/damage.js resets the run to wave one and stands the player back
-      // up at full health, and it does not know shrines exist. If the boons
-      // survived that, a death would cost a wave counter and nothing else - and
-      // the Shrine of Anubis, whose entire product is one death forgiven, would
-      // be 1500 gold for the right to skip a free inconvenience.
-      //
-      // Watched off the counter rather than hooked, because `fell()` is private
-      // to a file this system has no business reaching into, and a counter that
-      // only ever goes up is a perfectly honest event source.
-      if (combat.state.downs !== downsSeen) {
-        downsSeen = combat.state.downs;
-        // The power-ups go with them, and for the identical reason: a run that
-        // resets to wave one while keeping half a minute of one-hit kills is a
-        // death that cost a counter. What is still lying on the floor stays
-        // there - the player earned those and the field has just been cleared.
-        powerups.clearEffects();
-        if (shrines.count) {
-          shrines.dropAll();
-          showNotice('THE GODS WITHDRAW THEIR FAVOUR', 3000);
-        }
-      }
     }
 
     // THE SHRINE OF PTAH, and this is the whole of it.
@@ -1140,7 +1212,7 @@ function boot() {
     THREE, renderer, scene, camera, post, world, player, rig, input, sky,
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
-    director, combat, melee,
+    director, combat, melee, death,
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     pause,

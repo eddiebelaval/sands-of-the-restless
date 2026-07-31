@@ -45,7 +45,53 @@ await page.screenshot({ path: OUT + '01-title.png' });
 
 // Enter the game.
 await page.evaluate(() => document.getElementById('begin').click());
-await page.waitForTimeout(1800);
+
+/**
+ * WAIT FOR FRAMES, NOT FOR THE CLOCK.
+ *
+ * This was `waitForTimeout(1800)`, and 1800 milliseconds is a promise about the
+ * wall clock rather than about the picture. Under swiftshader a busy machine
+ * renders this scene at roughly two frames a second, so 1.8s can be three frames
+ * or it can be one, and one is not enough for the composer to have put anything
+ * on the canvas.
+ *
+ * That is how this file produced `the world did not render` three separate times
+ * today on builds that were completely fine. Measured directly: run alone on a
+ * quiet machine it reports meanLuma 44.88; run with nine other headless Chrome
+ * instances live it reports 0.00, same server, same commit, same second. The
+ * first diagnosis was a stale http.server and that was wrong - killing the server
+ * changed nothing, and lowering the load fixed it every time.
+ *
+ * So the wait is now for rendered frames plus a real check on the canvas, with a
+ * bounded retry. It is the same correction systems/spaces.js already had to make
+ * for the pyramid entry: hold until the thing has actually drawn, because a timer
+ * only tells you how long you waited.
+ */
+const booted = await page.evaluate(async () => {
+  const canvas = document.querySelector('canvas');
+  for (let attempt = 0; attempt < 240; attempt++) {
+    await new Promise((r) => requestAnimationFrame(r));
+    if (attempt % 8 !== 0) continue;
+    // Cheap probe: one small strip through the middle of the canvas. If anything
+    // has been drawn at all this is non-zero long before the frame is finished.
+    const g = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    if (!g) return { ok: false, why: 'no webgl context' };
+    const px = new Uint8Array(4 * 64);
+    g.readPixels(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 64, 1,
+                 g.RGBA, g.UNSIGNED_BYTE, px);
+    let sum = 0;
+    for (let i = 0; i < px.length; i += 4) sum += px[i] + px[i + 1] + px[i + 2];
+    if (sum > 0) return { ok: true, attempt, sum };
+  }
+  return { ok: false, why: 'nothing drawn in 240 frames' };
+});
+if (!booted.ok) console.log(`  WARN boot: ${booted.why} - the capture below may be a blank frame`);
+
+// A few more frames once something is on the canvas, so the shot is a settled
+// frame rather than the first one that happened to be non-empty.
+await page.evaluate(async () => {
+  for (let i = 0; i < 12; i++) await new Promise((r) => requestAnimationFrame(r));
+});
 await page.screenshot({ path: OUT + '02-courtyard.png' });
 
 // Look around and walk, to prove the controller and colliders work.
