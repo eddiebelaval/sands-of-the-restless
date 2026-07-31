@@ -32,36 +32,196 @@
   }
   #stage { position: fixed; inset: 0; display: block; }
 
-  /* ---- overlays ---- */
+  /* ---- THE TITLE SCREEN ----
+
+     THE HUD WAS REPAINTED INTO THIS LANGUAGE IN 9135f98 AND THIS SCREEN WAS
+     EXPLICITLY LEFT OUT OF THAT PASS, which meant the first thing anyone saw of
+     the game was the one surface in it that had never been designed: a radial
+     scrim, a letterspaced heading and a bordered rectangle. This closes it,
+     under the same thesis stated at the top of src/ui/tokens.js - keep the
+     shooter's information architecture, change the material it is made of.
+
+     The architecture is a title screen's and is not clever: name, the one
+     choice worth making before entering, the way in, the controls, top to
+     bottom, primary action alone on its line. The MATERIAL is the cartouche -
+     an oblong with semicircular ends and the rope tie at one end, which is what
+     an Egyptian surface does with a name that matters - the register rule, and
+     the kheker frieze along the top of the wall.
+
+     Every label here is CARVED: a dark edge down and a lit edge up, at one
+     pixel. More than a pixel and an incision becomes a bevel, which reads as
+     nineties software rather than as stone. Same two shadows as incised() in
+     src/ui/tokens.js.
+
+     Nothing on this screen is an image, a font file or a glyph. The frieze is
+     one repeating gradient, the cartouche is a border radius, and the icon is
+     the same 1.5px gold stroke as every other mark in the build. */
   .veil {
     position: fixed; inset: 0;
     display: flex; align-items: center; justify-content: center;
     flex-direction: column;
-    background: radial-gradient(ellipse at center, rgba(20,14,8,.82), rgba(6,4,2,.97));
+    /* Deeper and warmer than it was, and centred slightly high: the name has to
+       stand on a ground dark enough to be cut into, and at .82 the sunlit
+       avenue read straight through the middle of the type. */
+    background: radial-gradient(ellipse at 50% 46%,
+      rgba(24,17,9,.84), rgba(5,3,1,.975) 76%);
     z-index: 40;
     text-align: center;
     padding: 24px;
   }
   .veil[hidden] { display: none; }
 
+  /* THE KHEKER FRIEZE: the stepped band that runs along the top of a painted
+     wall. One repeating gradient and two rules rather than sixty elements -
+     a gold tick every seven pixels standing on a register rule. The same motif
+     khekerFrieze() draws on canvas for the minimap border, so the two surfaces
+     are wearing one ornament and not two versions of it. */
+  .frieze {
+    position: absolute; left: 0; right: 0; top: 0; height: 13px;
+    background:
+      repeating-linear-gradient(90deg,
+        rgba(217,178,106,.45) 0 1px, transparent 1px 7px) 0 0 / 100% 9px no-repeat,
+      linear-gradient(rgba(217,178,106,.45), rgba(217,178,106,.45))
+        0 9px / 100% 1px no-repeat,
+      linear-gradient(rgba(217,178,106,.20), rgba(217,178,106,.20))
+        0 12px / 100% 1px no-repeat;
+    opacity: .62;
+  }
+
+  /* THE NAME RING. A cartouche is an oblong with SEMICIRCULAR ends, and the
+     difference between r = h/2 and r = 8px is the difference between reading as
+     Egyptian and reading as a web component. Any radius past half the height
+     clamps to exactly half, so 999px is r = h/2 stated without knowing h. See
+     FORM.pillRadius in src/ui/tokens.js. */
+  .cartouche {
+    position: relative;
+    padding: 20px clamp(40px, 7vw, 94px) 22px;
+    border: 1px solid rgba(217,178,106,.45);
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(31,22,12,.55), rgba(8,5,3,.30));
+    box-shadow:
+      inset 0 1px 0 rgba(217,178,106,.14),
+      inset 0 0 40px rgba(0,0,0,.55),
+      0 0 70px rgba(217,178,106,.06);
+  }
+  /* THE TIE, and it is at ONE end on purpose. The cartouche is a loop of rope
+     knotted at a single end, and that knot is the whole reason the shape reads
+     as a name ring rather than as a pill. A mirrored pair would be tidier and
+     would be a different object. */
+  .cartouche::after {
+    content: ""; position: absolute; left: 15px; top: 24%; bottom: 24%;
+    width: 1px; background: rgba(217,178,106,.55);
+  }
+
   .title {
-    font-size: clamp(28px, 6vw, 62px);
+    font-size: clamp(26px, 5.2vw, 56px);
     letter-spacing: .22em;
     text-transform: uppercase;
+    font-weight: normal;
     color: var(--gold);
-    text-shadow: 0 0 24px rgba(217,178,106,.35), 0 2px 0 #2a1d0d;
-    margin-bottom: .35em;
+    text-shadow:
+      0 1px 0 rgba(8,5,3,.85),
+      0 -1px 0 rgba(168,117,31,.45),
+      0 0 30px rgba(217,178,106,.26);
+    /* The final glyph's tracking is trailing space on the right. Pulling the
+       line back by one tracking unit is what actually centres the name inside
+       the ring; without it the word sits a quarter of a letter to the left. */
+    text-indent: .22em;
   }
   .sub {
-    font-size: clamp(11px, 1.6vw, 14px);
+    font-size: clamp(10px, 1.5vw, 13px);
     letter-spacing: .34em;
     text-transform: uppercase;
-    color: var(--gold-dim);
-    margin-bottom: 2.4em;
+    /* --gold-mid, not --gold-dim. Dim measures 3.70 to one and this line is the
+       only thing on the screen that says what the game is about. */
+    color: var(--gold-mid);
+    margin-top: 17px;
   }
+
+  /* THE REGISTER RULE: the paired line that separates one band of Egyptian wall
+     art from the next, near line stronger than far. registerRules() in
+     src/ui/tokens.js returns the same pair for DOM surfaces. */
+  .rule {
+    width: min(560px, 74vw); height: 5px;
+    margin: 26px 0 22px;
+    background:
+      linear-gradient(90deg, transparent, rgba(217,178,106,.55) 14%,
+        rgba(217,178,106,.55) 86%, transparent) 0 0 / 100% 1px no-repeat,
+      linear-gradient(90deg, transparent, rgba(217,178,106,.28) 14%,
+        rgba(217,178,106,.28) 86%, transparent) 0 4px / 100% 1px no-repeat;
+  }
+
+  /* ---- the one choice made before entering ---- */
+  .rite { display: flex; flex-direction: column; align-items: center; gap: 13px; }
+  .rite-head {
+    font-size: 9px; letter-spacing: .34em; text-transform: uppercase;
+    color: var(--gold-mid);
+  }
+  .rite-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
+  /* The same cartouche at badge size. */
+  .tier {
+    font-family: inherit;
+    font-size: 12px; letter-spacing: .26em; text-transform: uppercase;
+    color: var(--gold-mid);
+    background: linear-gradient(180deg, rgba(20,14,8,.85), rgba(8,5,3,.70));
+    border: 1px solid rgba(217,178,106,.30);
+    border-radius: 999px;
+    padding: 11px 30px 12px;
+    min-width: 132px;
+    cursor: pointer;
+    /* NO TRANSITION, AND IT WAS THERE UNTIL A SCREENSHOT CAUGHT IT.
+     *
+     * A 160ms fade on colour and border looked right in principle and was
+     * measured, on the headless build every verification in this project runs
+     * on, still 20 per cent complete 1.4 SECONDS after the click: with the
+     * whole scene rendering behind the veil under software rasterisation the
+     * page gets well under one animation frame a second, and a transition only
+     * advances when style is ticked. The reading was unambiguous - the button
+     * that had just been chosen still had the unselected colour and the one
+     * just abandoned still had bone text, while the lapis ground (not
+     * transitioned, because a gradient was not in the list) had already moved.
+     * A selector whose feedback arrives after the player has looked away is a
+     * selector that reads as broken.
+     *
+     * It is also the wrong idea on its own terms. src/ui/tokens.js states it
+     * for the HUD - state changes are instant and high contrast - and every
+     * other toggle in this interface already obeys: .set-btn and .pause-tab
+     * carry no transition at all. A choice is discrete. It snaps. */
+  }
+  .tier:hover { color: var(--gold); border-color: rgba(217,178,106,.60); }
+  /* CHOSEN. Filled with lapis and lettered in bone, which is both the Egyptian
+     move - gold and lapis is the funerary mask, and a pectoral is a bone-white
+     inlay in a blue ground - and the only legible one: tokens.js measures lapis
+     at 2.70 to one and marks it FILL ONLY. Ornament in the frame, never in the
+     number. */
+  .tier[aria-pressed="true"] {
+    color: var(--bone);
+    border-color: rgba(217,178,106,.90);
+    background: linear-gradient(180deg, rgba(45,95,158,.45), rgba(22,38,66,.65));
+    box-shadow: 0 0 0 1px rgba(0,0,0,.55), 0 0 22px rgba(45,95,158,.30);
+    text-shadow: 0 1px 0 rgba(8,5,3,.80), 0 -1px 0 rgba(96,148,206,.35);
+  }
+  /* Locked once the run begins. The choice is part of the score. */
+  .tier:disabled { cursor: default; opacity: .55; }
+
+  /* What the tier actually does, in plain words, from the same record the wave
+     director reads. min-height is load-bearing: the three sentences are
+     different lengths and without it the buttons above jump a line every time
+     the player compares two tiers. */
+  .rite-note {
+    max-width: min(560px, 76vw);
+    min-height: 3.4em;
+    font-size: 11px; letter-spacing: .12em; line-height: 1.7;
+    color: var(--gold-mid);
+  }
+
+  .enter { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
+
   .cta {
-    border: 1px solid var(--gold-dim);
-    background: linear-gradient(180deg, rgba(217,178,106,.12), rgba(217,178,106,.03));
+    border: 1px solid rgba(217,178,106,.55);
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(217,178,106,.16), rgba(217,178,106,.04));
     color: var(--gold);
     padding: 14px 40px;
     letter-spacing: .28em;
@@ -69,19 +229,51 @@
     font-size: 13px;
     font-family: inherit;
     cursor: pointer;
-    transition: background .18s ease, border-color .18s ease;
+    text-shadow: 0 1px 0 rgba(8,5,3,.75), 0 -1px 0 rgba(168,117,31,.35);
+    transition: background .18s ease, border-color .18s ease, box-shadow .18s ease;
   }
-  .cta:hover { background: rgba(217,178,106,.2); border-color: var(--gold); }
+  .cta:hover {
+    background: rgba(217,178,106,.24);
+    border-color: var(--gold);
+    box-shadow: 0 0 24px rgba(217,178,106,.20);
+  }
+
+  /* The way to the settings that already exist. Quieter than the way in, and
+     beside it rather than under it, because it is the same kind of act - a
+     button that leaves this screen - at a fraction of the importance. */
+  .ghost {
+    display: flex; align-items: center; gap: 9px;
+    border: 1px solid rgba(217,178,106,.24);
+    border-radius: 999px;
+    background: rgba(10,7,4,.70);
+    color: var(--gold-mid);
+    padding: 13px 22px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: color .16s ease, border-color .16s ease;
+  }
+  .ghost:hover { color: var(--gold); border-color: rgba(217,178,106,.55); }
 
   .keys {
-    margin-top: 2.6em;
+    margin-top: 2.4em;
     font-size: 11px;
     letter-spacing: .16em;
-    color: #6b5a42;
+    color: #7d6a4e;
     line-height: 2;
     text-transform: uppercase;
   }
-  .keys b { color: var(--gold-dim); font-weight: normal; }
+  .keys b { color: var(--gold-mid); font-weight: normal; }
+
+  /* The same focus treatment the pause panel gets, and for the same reason
+     recorded there: Chrome's default ring is a saturated blue rectangle, which
+     on a warm gold interface is the brightest and coldest object on the screen.
+     Replaced rather than removed - a keyboard player has to know where they
+     are. */
+  .veil :focus-visible { outline: 1px solid var(--gold); outline-offset: 3px; }
+  .veil :focus:not(:focus-visible) { outline: none; }
 
   /* ---- asset loading ---- */
   #load-wrap {
@@ -408,6 +600,17 @@
   }
   #r-ammo .wave u {
     text-decoration: none; font-size: 15px; letter-spacing: .06em; color: var(--bone);
+  }
+  /* The run's terms. Quieter than the wave by a clear step - it is a constant
+     and the wave is not - but above the legibility floor, which is the whole
+     reason it is --gold-mid rather than --gold-dim. */
+  #r-ammo .terms {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    margin-top: 6px;
+    font-size: 9px; letter-spacing: .26em; color: var(--gold-mid);
+  }
+  #r-ammo .terms u {
+    text-decoration: none; letter-spacing: .18em; color: var(--gold);
   }
   #r-ammo .hint { display: flex; align-items: center; gap: 6px; }
   /* Lit only while pressing it would do something. A key hint that is bright
@@ -986,6 +1189,15 @@
     <symbol id="i-resume" viewBox="0 0 12 12">
       <path d="M3.4 2.3v7.4l6-3.7z"/>
     </symbol>
+    <!-- settings: two register rules with a bead riding on each, which is both
+         the universal sign for a slider and, in this hand, the paired lines
+         that divide one band of a wall from the next. Drawn, never a gear
+         glyph and never an emoji. -->
+    <symbol id="i-rule" viewBox="0 0 12 12">
+      <path d="M1.4 4h9.2M1.4 8.4h9.2"/>
+      <circle cx="4.2" cy="4" r="1.3"/>
+      <circle cx="8.1" cy="8.4" r="1.3"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -1068,6 +1280,16 @@
       <span class="hint"><kbd class="key-cap">R</kbd>Reload</span>
       <span>Wave<u data-wave>1</u></span>
     </span>
+    <!-- THE TERMS OF THE RUN. Written once by src/ui/start.js when the run
+         begins and never again, because it cannot change while the run lasts -
+         see the lock in systems/difficulty.js. It sits under the wave counter
+         because it is the same fact at a different rate: the wave says where on
+         the curve the player is, this says which curve.
+
+         --gold-mid and not --gold-dim, for the reason stated at the top of this
+         file: dim measures 3.70 to one against the plate over sunlit sand and
+         test/hud.mjs audits every label on this HUD at 4.5. -->
+    <span class="terms"><span>Difficulty</span><u data-difficulty>Normal</u></span>
   </div>
 
   <!-- Once, and then never again. See #frag-hint above: one line, one boolean,
@@ -1092,10 +1314,44 @@
   <div id="hitmarker"></div>
 </div>
 
+<!-- THE TITLE SCREEN.
+
+     The shell only. The three difficulty cartouches and the line under them are
+     built by src/ui/start.js out of the same table src/systems/difficulty.js
+     hands the wave director, for the reason ui/pause.js builds its settings
+     rows the same way: the sentence a player reads and the numbers the game
+     runs on have to be one object, or the screen can describe a tier that is
+     not being played.
+
+     #begin KEEPS ITS ID AND ITS JOB. Eleven test suites boot this game by
+     calling document.getElementById('begin').click(), so it is not a button on
+     this screen, it is the entry point to the build. -->
 <div class="veil" id="veil">
-  <h1 class="title">Sands of the Restless</h1>
+  <div class="frieze" aria-hidden="true"></div>
+
+  <div class="cartouche">
+    <h1 class="title">Sands of the Restless</h1>
+  </div>
   <p class="sub">The dead are getting up</p>
-  <button class="cta" id="begin">Enter the Necropolis</button>
+
+  <div class="rule" aria-hidden="true"></div>
+
+  <!-- THE ONE CHOICE MADE BEFORE ENTERING. Fixed for the run once #begin is
+       pressed; see the lock in systems/difficulty.js. -->
+  <div class="rite">
+    <div class="rite-head">Difficulty</div>
+    <div class="rite-row" data-tiers role="group" aria-label="Difficulty"></div>
+    <p class="rite-note" data-tier-note></p>
+  </div>
+
+  <div class="enter">
+    <button class="cta" id="begin">Enter the Necropolis</button>
+    <!-- Opens the panel that already exists rather than a copy of it. -->
+    <button class="ghost" id="open-settings" data-open-settings type="button">
+      <svg class="ico"><use href="#i-rule"/></svg>Settings
+    </button>
+  </div>
+
   <div class="keys">
     <b>WASD</b> move &nbsp;&middot;&nbsp; <b>Shift</b> sprint &nbsp;&middot;&nbsp; <b>Space</b> jump<br>
     <b>Mouse</b> look &nbsp;&middot;&nbsp; <b>LMB</b> fire &nbsp;&middot;&nbsp; <b>RMB</b> aim<br>
@@ -1130,10 +1386,15 @@
      to be the thing that runs it. -->
 <div id="pause" hidden>
   <div class="pause-sheet plate">
+    <!-- The heading says what the STATE is, and the panel now has two of them:
+         it is reached from the title screen as well as from a stopped game, and
+         a panel that says PAUSED before a run has begun is describing a state
+         the player is not in. Written by src/ui/pause.js from one table on
+         open(), so the two can never disagree; see HEADINGS there. -->
     <div class="pause-head">
-      <svg class="ico"><use href="#i-pause"/></svg>
-      <h2>Paused</h2>
-      <span class="said">The sands are still</span>
+      <svg class="ico"><use href="#i-pause" data-pause-mark/></svg>
+      <h2 data-pause-title>Paused</h2>
+      <span class="said" data-pause-said>The sands are still</span>
     </div>
 
     <nav id="pause-tabs" data-pause-tabs></nav>

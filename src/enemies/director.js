@@ -31,6 +31,7 @@
 import * as THREE from 'three';
 import { createEnemy } from './mummy.js';
 import { VARIANTS, UNLOCK } from './variants.js';
+import { TIER, DEFAULT_TIER } from '../systems/difficulty.js';
 import { createBossPack } from './boss.js';
 import { allPortals } from '../world/rooms.js';
 import { PLAYER_CONSTANTS } from '../player/controller.js';
@@ -49,10 +50,17 @@ const LIVE_CAP = 24;
  * starve the wave behind them. */
 const POOL = { shambler: 16, husk: 10, bound: 6, scarab: 12 };
 
-/** Seconds of quiet between waves. The first one is shorter: a player who has
- * just pressed Begin should not be standing in silence. */
-const BREATHER = 6.0;
-const FIRST_BREATHER = 3.5;
+/**
+ * Seconds of quiet between waves, and the shorter first one - a player who has
+ * just pressed Begin should not be standing in silence - MOVED TO THE TIER
+ * TABLE in systems/difficulty.js.
+ *
+ * They were 6.0 and 3.5 here and they are still 6.0 and 3.5 on the `normal`
+ * tier, which is the default. They are pacing rather than substance, which is
+ * exactly the class of thing a difficulty is allowed to move: Hard gets less
+ * time to reload and reposition between rounds, Easy gets more, and neither
+ * changes what walks out of the dark.
+ */
 
 /** Distance band a spawn point must fall in, relative to the player. */
 const SPAWN_NEAR = 13;
@@ -201,7 +209,24 @@ function createColliderGrid() {
 
 export function createDirector({
   scene, world, spaces, audio, player, rig, camera, combat, impacts, notice,
+  difficulty,
 }) {
+  /**
+   * THE CURVE THE RUN IS BEING PLAYED ON.
+   *
+   * A live read, never a snapshot, and that is the whole wiring decision in
+   * this file. The director is constructed at boot; the tier is chosen at the
+   * title screen afterwards. A `const tier = difficulty.tier` here would bind
+   * whatever was selected before the player had a chance to select anything,
+   * and every tier button on the title would set a variable that nothing
+   * downstream ever read again - which is a difficulty selector that looks
+   * exactly like a working one from the outside.
+   *
+   * Falls back to the shipped tier if nothing was handed over, so the module
+   * stays constructible on its own. That fallback is Normal, which is the
+   * constants this file used to carry as literals.
+   */
+  const tierNow = () => (difficulty ? difficulty.tier : TIER[DEFAULT_TIER]);
   // One root for every actor, added to the SCENE rather than to a space group,
   // so it survives a transition and is never hidden along with the courtyard.
   const root = new THREE.Group();
@@ -627,22 +652,50 @@ export function createDirector({
    */
   const queue = [];
 
+  /**
+   * The wave a variant first appears on, THIS RUN.
+   *
+   * UNLOCK in variants.js is the shipped schedule - swarm at four, husk at six,
+   * Bound at ten - and the tier shifts the whole table rather than editing any
+   * one entry: Easy pushes every introduction two waves later, Hard pulls each
+   * one wave earlier, and Normal returns the table untouched. Floored at one,
+   * because a variant introduced on wave zero is a variant with no introduction.
+   *
+   * Shifting rather than rewriting keeps the ORDER of the game intact, which is
+   * the part a player learns. They meet the same things in the same sequence
+   * with the same gear available; they simply meet them with more or less
+   * warning.
+   */
+  const unlockAt = (id) => Math.max(1, UNLOCK[id] + tierNow().unlockShift);
+
   function compose(wave) {
     queue.length = 0;
 
     const boss = wave % 5 === 0;
+    // THE BOSS WAVE IS NOT ON THE TABLE. Every fifth wave is a fixed landmark -
+    // same size, same god, same health formula on all three tiers - so a tier
+    // moves the ramp BETWEEN the landmarks and never the landmarks themselves.
+    // "I got to Anubis" means one thing across all three.
     const total = boss
       ? Math.min(16, 4 + Math.round(wave * 0.8))
-      : Math.min(34, 5 + Math.round(wave * 2.1));
+      : Math.min(34, 5 + Math.round(wave * tierNow().sizeSlope));
 
     // Weights, evaluated against the unlock table. A variant that has not
     // unlocked contributes nothing rather than being clamped to a small share,
     // which is what keeps wave three genuinely a wave of shamblers.
+    //
+    // The husk and Bound ramps are measured FROM THEIR OWN UNLOCK WAVE rather
+    // than from the literals 6 and 10 they used to carry. On Normal that is the
+    // same arithmetic to the digit, because the unlock waves ARE 6 and 10; on a
+    // shifted table it is the difference between a variant that eases in from
+    // its first appearance and one that arrives already part-way up its ramp.
+    const husk0 = unlockAt('husk');
+    const bound0 = unlockAt('bound');
     const weight = {
       shambler: 1.0,
-      scarab: wave >= UNLOCK.scarab ? 0.30 + Math.min(0.35, wave * 0.012) : 0,
-      husk: wave >= UNLOCK.husk ? 0.25 + Math.min(0.55, (wave - 6) * 0.035) : 0,
-      bound: wave >= UNLOCK.bound ? 0.10 + Math.min(0.30, (wave - 10) * 0.02) : 0,
+      scarab: wave >= unlockAt('scarab') ? 0.30 + Math.min(0.35, wave * 0.012) : 0,
+      husk: wave >= husk0 ? 0.25 + Math.min(0.55, (wave - husk0) * 0.035) : 0,
+      bound: wave >= bound0 ? 0.10 + Math.min(0.30, (wave - bound0) * 0.02) : 0,
     };
 
     let sum = 0;
@@ -666,7 +719,27 @@ export function createDirector({
 
   // --- spawning -------------------------------------------------------------
 
-  const hpScale = (wave) => 1 + (wave - 1) * 0.15;
+  /**
+   * THE CURVE. It was `1 + (wave - 1) * 0.15` and it still is on Normal.
+   *
+   * The slope is the one number a difficulty tier is really made of, and the
+   * `(wave - 1)` is why it can be moved without ever producing a bullet sponge:
+   * every tier passes through exactly 1.00 at wave one, so the first fight is
+   * identical on all three and they diverge from wave two onward. Hard is not a
+   * harder enemy, it is the same enemy four waves early.
+   */
+  const hpScale = (wave) => 1 + (wave - 1) * tierNow().hpSlope;
+
+  /**
+   * SPEED IS NOT ON THE TABLE, and that is deliberate.
+   *
+   * A faster shambler is not more runway consumed, it is a different enemy with
+   * a different counter-play - the whole kiting geometry of the game is the gap
+   * between 2.6 m/s and the player's sprint. Moving it per tier would make Easy
+   * and Hard two different games rather than two points on one curve, and the
+   * player would have no way to see that their score came from a map where the
+   * dead walked at a different pace.
+   */
   const speedScale = (wave) => Math.min(1.45, 1 + (wave - 1) * 0.022);
 
   function takeFromPool(id) {
@@ -713,7 +786,10 @@ export function createDirector({
   function summon(n) {
     let made = 0;
     for (let i = 0; i < n; i++) {
-      const id = state.wave >= UNLOCK.husk && Math.random() < 0.5 ? 'husk' : 'shambler';
+      // The same shifted table the wave queue uses. A boss that summons husks
+      // the player has not met yet would be the one place the tier's schedule
+      // leaked, and it would leak in the worst possible frame.
+      const id = state.wave >= unlockAt('husk') && Math.random() < 0.5 ? 'husk' : 'shambler';
       if (spawnOne(id)) made++;
     }
     return made;
@@ -751,7 +827,7 @@ export function createDirector({
   const state = {
     wave: 0,
     phase: 'breather',        // breather | spawning | clearing
-    timer: FIRST_BREATHER,
+    timer: tierNow().firstBreather,
     spawnIn: 0,
     boss: null,
     running: true,
@@ -907,7 +983,15 @@ export function createDirector({
         if (spawnOne(queue[queue.length - 1])) { queue.pop(); state.stall = 0; }
         // Faster later, but never a firehose: the interval floor is what stops
         // wave thirty from being a wall that materialises in one second.
-        state.spawnIn = Math.max(0.28, 1.5 - state.wave * 0.045);
+        //
+        // All three numbers come off the tier now and all three were 0.28 /
+        // 1.5 / 0.045, which is what Normal still carries. The FLOOR is the one
+        // worth naming: Easy raises it to 0.40 rather than only slackening the
+        // ramp, because the ramp bottoms out by wave thirty on every tier and
+        // past that point the floor is the entire difference between a horde
+        // that arrives and a horde that materialises.
+        const c = tierNow();
+        state.spawnIn = Math.max(c.spawnFloor, c.spawnBase - state.wave * c.spawnRamp);
       }
 
       // A queue that cannot place anything with nothing alive to wait for is a
@@ -930,7 +1014,7 @@ export function createDirector({
     } else if (state.phase === 'clearing') {
       if (!live.length) {
         state.phase = 'breather';
-        state.timer = BREATHER;
+        state.timer = tierNow().breather;
         state.boss = null;
       }
     }
@@ -1061,7 +1145,7 @@ export function createDirector({
       queue.length = 0;
       state.wave = 0;
       state.phase = 'breather';
-      state.timer = FIRST_BREATHER;
+      state.timer = tierNow().firstBreather;
       state.killed = 0;
     },
 
@@ -1069,6 +1153,38 @@ export function createDirector({
       for (const id in pools) for (const a of pools[id]) a.setFidelity(high);
       bosses.setFidelity(high);
       for (const e of emitters) e.handle.setFidelity(high);
+    },
+
+    /**
+     * WHAT THIS WAVE IS WORTH, ON THE TIER THAT IS ACTUALLY SELECTED.
+     *
+     * Every value here is read through the same expression the running game
+     * reads - `hpScale`, `unlockAt`, the spawn interval - rather than being
+     * re-derived from the tier table. That distinction is the whole point of
+     * the method: a re-derivation would only prove the tier table agrees with
+     * itself, and the failure being guarded against is a selector wired to a
+     * table that nothing downstream consults. This asks the director.
+     */
+    curve(wave = state.wave) {
+      const w = Math.max(1, wave);
+      const c = tierNow();
+      return {
+        tier: difficulty ? difficulty.id : DEFAULT_TIER,
+        wave: w,
+        health: hpScale(w),
+        speed: speedScale(w),
+        waveSize: w % 5 === 0
+          ? Math.min(16, 4 + Math.round(w * 0.8))
+          : Math.min(34, 5 + Math.round(w * c.sizeSlope)),
+        spawnInterval: Math.max(c.spawnFloor, c.spawnBase - w * c.spawnRamp),
+        breather: c.breather,
+        firstBreather: c.firstBreather,
+        unlocks: {
+          scarab: unlockAt('scarab'),
+          husk: unlockAt('husk'),
+          bound: unlockAt('bound'),
+        },
+      };
     },
 
     stats() {

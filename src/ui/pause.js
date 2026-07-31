@@ -266,6 +266,25 @@ function buildSpec({ rig, audio, mute, fidelity }) {
 }
 
 /**
+ * WHAT THE PANEL SAYS IT IS, and there are two answers now.
+ *
+ * This surface is reached from two places: a stopped game, and the title screen
+ * - src/ui/start.js opens it rather than building a second settings panel
+ * beside it, because a title-screen copy of the sensitivity slider would be a
+ * second writer to the camera and the first thing to drift. But a panel headed
+ * PAUSED in front of a player who has not started a run is describing a state
+ * they are not in, and the `.said` line exists precisely to state the state.
+ *
+ * One table, applied on open(), for the same reason the settings rows come out
+ * of one: a heading authored in markup and a mode decided in code is two places
+ * to say the same thing.
+ */
+const HEADINGS = {
+  paused: ['Paused', 'The sands are still', '#i-pause'],
+  title: ['Settings', 'Before the descent', '#i-rule'],
+};
+
+/**
  * @param {object} o
  * @param {HTMLElement} o.root       #pause, OUTSIDE #hud - see index.html
  * @param {object} o.rig             player/camera.js
@@ -309,6 +328,9 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, onResume })
   const tabsEl = root.querySelector('[data-pause-tabs]');
   const bodyEl = root.querySelector('[data-pause-body]');
   const resumeEl = root.querySelector('[data-pause-resume]');
+  const titleEl = root.querySelector('[data-pause-title]');
+  const saidEl = root.querySelector('[data-pause-said]');
+  const markEl = root.querySelector('[data-pause-mark]');
 
   /** Every built row, by id, so refresh() is a walk and not a search. */
   const rows = {};
@@ -482,10 +504,25 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, onResume })
    * IDEMPOTENT, and that is load-bearing rather than defensive: main.js calls
    * this from both the Esc keydown and the pointerlockchange that the same Esc
    * produced, and on most paths both arrive. Two opens must be one pause.
+   *
+   * @param {'paused'|'title'} [mode]  what the panel is being opened AS
    */
-  function open() {
+  function open(mode = 'paused') {
     if (paused) return false;
     paused = true;
+
+    // Say which state this is BEFORE the panel is shown, so there is never a
+    // frame of the wrong heading. Defaults to 'paused', which is what every
+    // existing caller - the Esc key, the pointer-lock loss, the tab going
+    // hidden, and the harness - passes by passing nothing.
+    const [name, said, mark] = HEADINGS[mode] || HEADINGS.paused;
+    if (titleEl) titleEl.textContent = name;
+    if (saidEl) saidEl.textContent = said;
+    // setAttribute rather than `.href`, which on an SVGUseElement is a
+    // read-only SVGAnimatedString: assigning it sets an expando and changes
+    // nothing on screen. Same class of failure as `.hidden` on an <svg>, which
+    // is how the fuse ring shipped invisible.
+    if (markEl) markEl.setAttribute('href', mark);
 
     /**
      * TAKE THE CURSOR BACK, AND THIS LINE IS THE WHOLE MENU.

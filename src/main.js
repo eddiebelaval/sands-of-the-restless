@@ -43,6 +43,8 @@ import { createObjectives, createObjectivePanel } from './ui/objective.js';
 import { createGrenades } from './systems/grenades.js';
 import { createPowerups } from './systems/powerups.js';
 import { createPauseMenu } from './ui/pause.js';
+import { createDifficulty } from './systems/difficulty.js';
+import { createStartScreen } from './ui/start.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
@@ -67,6 +69,15 @@ function boot() {
   // See ui/hud.js: the loop had acquired a dozen element handles and a bar
   // width calculation, none of which is anything a frame loop is about.
   const readouts = createReadouts(document);
+
+  /**
+   * THE TERMS OF THE RUN, chosen at the title and fixed for its length.
+   *
+   * Constructed first because the director and economy both read it below.
+   * The director keeps the live object rather than a copied tier, since the
+   * player makes the choice after boot but before the first wave.
+   */
+  const difficulty = createDifficulty();
 
   // -------------------------------------------------------------------------
   // stage
@@ -256,6 +267,7 @@ function boot() {
 
   const director = createDirector({
     scene, world, spaces, audio, player, rig, camera, impacts, combat,
+    difficulty,
     notice: (text, ms) => showNotice(text, ms),
   });
 
@@ -544,6 +556,10 @@ function boot() {
     // two can never disagree about which fidelity is live.
     fidelity: { get: () => high, set: (v) => setFidelity(!!v) },
     onResume: () => {
+      // Settings is also reachable from the title screen, where there is no
+      // pointer lock to reacquire yet.
+      if (!started) return;
+
       // NEVER the probing form. input.engage() arms a 400ms timer that declares
       // pointer lock unavailable if it has not engaged, and Chrome refuses a
       // re-lock for about a second after Esc released the last one - so calling
@@ -552,6 +568,16 @@ function boot() {
       // session. See input.relock(), which is that decision left alone.
       input.relock();
     },
+  });
+
+  /**
+   * The title screen reuses the existing settings panel rather than owning a
+   * second copy of those controls.
+   */
+  const startScreen = createStartScreen({
+    veil,
+    difficulty,
+    onSettings: () => pause.open('title'),
   });
 
   // Keep the corner fidelity buttons and the panel in step. setFidelity is the
@@ -568,6 +594,13 @@ function boot() {
   function start() {
     if (started) return;
     started = true;
+
+    // Lock the selected curve for this run, seed its starting purse, stamp the
+    // choice onto the HUD, and re-arm the first breather from the chosen tier.
+    const tier = difficulty.lock();
+    economy.reset(tier.startGold);
+    startScreen.lockIn();
+    director.reset();
 
     veil.hidden = true;
     hud.hidden = false;
@@ -680,7 +713,14 @@ function boot() {
 
   beginBtn.addEventListener('click', start);
   window.addEventListener('keydown', (e) => {
-    if (!started && (e.code === 'Enter' || e.code === 'Space')) start();
+    if (started || pause.paused) return;
+    if (e.code !== 'Enter' && e.code !== 'Space') return;
+
+    // Activating a difficulty or Settings button must not also start the run.
+    const el = e.target;
+    if (el instanceof HTMLElement && el.tagName === 'BUTTON' && el.id !== 'begin') return;
+
+    start();
   });
 
   // Re-acquire lock after the menu let it go, without going back through the
@@ -1104,6 +1144,7 @@ function boot() {
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     pause,
+    difficulty, startScreen,
     setFidelity, start,
     get elapsed() { return elapsed; },
     // Frames the loop has run, INCLUDING paused ones. Against `elapsed`, which
