@@ -88,7 +88,24 @@ export const POWERUPS = Object.freeze({
     name: 'THE FLOOD OF HAPI',
     plain: 'MAX AMMO',
     colour: 0x4fc3ff,
-    weight: 26,
+    /**
+     * 26 -> 34, and this is the smallest of the three ammunition changes.
+     *
+     * The owner's report was that he keeps being caught with nothing. At the
+     * shipped weights ammunition was 26 per cent of a roll that fires once in
+     * sixty kills: on a wave-ten field of twenty-six bodies that is 0.11 Flood
+     * of Hapi per wave, or one Max Ammo roughly every nine waves. Nothing about
+     * that is a supply line.
+     *
+     * Raising the weight moves ammunition to 31.5 per cent of the same roll,
+     * which is a fifth more Floods without changing how often ANYTHING drops -
+     * so no extra insta-kills, no extra nukes, no extra fire sales. That is the
+     * point of doing it here rather than at DROP_CHANCE: the complaint is about
+     * one of the six, and the fix should cost the other five nothing.
+     *
+     * It is nowhere near enough on its own. See SUPPLY below, which is.
+     */
+    weight: 34,
     // Three stacked bars: the water hieroglyph, and nothing else in the set is
     // horizontal, so it is the one drop that is told apart by silhouette alone.
     bars: [[0.46, 0.075, 0, 0.16], [0.46, 0.075, 0, 0], [0.46, 0.075, 0, -0.16]],
@@ -175,6 +192,104 @@ export const KINDS = Object.keys(POWERUPS);
  */
 export const DROP_CHANCE = 1 / 60;
 export const DROPS_PER_WAVE = 2;
+
+/**
+ * THE AMMUNITION FLOOR, and every knob a difficulty tier may scale.
+ *
+ * -------------------------------------------------------------------------
+ * WHY THIS IS NOT `DROP_CHANCE *= 3`
+ * -------------------------------------------------------------------------
+ *
+ * The reported defect is "I keep getting caught with no ammo". That is a FLOOR
+ * problem wearing a rate problem's clothes, and the two have different fixes.
+ *
+ * A rate is a statement about the average. Tripling DROP_CHANCE would put three
+ * times as many drops on a wave the player was already comfortable on and would
+ * STILL, one wave in five, hand them nothing across the two minutes they spent
+ * running dry - because a Bernoulli trial has no memory of how the last forty
+ * went. The same complaint arrives a week later, with a longer tail. It would
+ * also triple the Feather of Maat, the Twin Crowns and the Second Death, which
+ * is a rebalance of the whole game paid to fix one of its six drops.
+ *
+ * A floor is a statement about the WORST CASE, and the worst case is the thing
+ * the player actually felt. So the base roll is left exactly where it was and a
+ * second, ammunition-only channel is opened underneath it, which:
+ *
+ *   - is INVISIBLE while the player is stocked. It cannot fire at all above
+ *     `lowReserve`, so it can never be the reason a full player got a drop.
+ *   - RAMPS rather than switches. From `armAfter` kills spent low the chance
+ *     climbs, reaching certainty at `guaranteeAfter`, so relief usually arrives
+ *     early and unpredictably and only ever arrives late deterministically.
+ *     A hard "every 14th kill" counter would be a metronome the player learns.
+ *   - is bounded by `perWave` on ITS OWN budget, separate from DROPS_PER_WAVE,
+ *     so a starving player is never blocked by having already been paid two
+ *     Twin Crowns this round.
+ *
+ * And `lowAmmoWeight` tilts the ORDINARY roll toward ammunition while the
+ * player is low, so the drops they were going to get anyway arrive as the thing
+ * they need. That one costs nothing: it changes what a drop IS, never whether
+ * one happened, which is why the measured drop rate is untouched by it.
+ *
+ * -------------------------------------------------------------------------
+ * THE NUMBERS, against the shipped wave table
+ * -------------------------------------------------------------------------
+ *
+ * A wave is 5 + 2.1 per wave number, capped at 34. The carbine carries 240
+ * rounds all in and a wave-ten shambler takes eight of them, so twenty-six
+ * bodies is very nearly one full load: the player crosses `lowReserve` about
+ * once a wave from wave eight onward, which is exactly when the complaint
+ * started. `guaranteeAfter: 14` is sized so relief lands inside the SAME wave
+ * that emptied them rather than at the next horn.
+ *
+ * -------------------------------------------------------------------------
+ * FOR THE DIFFICULTY LANE
+ * -------------------------------------------------------------------------
+ *
+ * This object is deliberately mutable and deliberately the only place these
+ * numbers exist. Nothing below reads a literal. Easing resource pressure means
+ * raising `lowReserve` and `lowAmmoWeight` and lowering `guaranteeAfter`;
+ * tightening it means the reverse. `dropChance` and `dropsPerWave` mirror the
+ * exported constants and are what the module actually reads, so a tier can
+ * scale the general roll too without this file caring.
+ */
+export const SUPPLY = {
+  // --- the general roll, unchanged in value, now readable from one place ---
+  /** Per-kill chance that ANY power-up drops. */
+  dropChance: DROP_CHANCE,
+  /** How many general drops one wave may produce. */
+  dropsPerWave: DROPS_PER_WAVE,
+
+  // --- the ammunition floor ------------------------------------------------
+  /**
+   * At or below this fraction of total carried capacity, the player is LOW.
+   *
+   * Measured across every weapon they own, magazine plus reserve, against what
+   * those same weapons hold when full. Not the weapon in hand: a player with an
+   * empty carbine and a full pistol has a bad thirty seconds, not a crisis, and
+   * the drop that rescues them from it should be earned.
+   */
+  lowReserve: 0.30,
+  /** Kills spent low before the floor may fire at all. */
+  armAfter: 4,
+  /** Kills spent low by which it is certain. */
+  guaranteeAfter: 14,
+  /**
+   * Seconds spent low that count as the same pressure as `guaranteeAfter`
+   * kills. The two run in parallel and the HIGHER of them drives the roll, so a
+   * player pinned behind cover with four rounds is not required to earn their
+   * own resupply by killing things they have no ammunition to kill.
+   */
+  guaranteeSeconds: 50,
+  /** Floor drops one wave may produce, on a budget of its own. */
+  perWave: 2,
+  /**
+   * What the Flood's weight is multiplied by in the ORDINARY roll while low.
+   *
+   * 3.0 takes ammunition from 31 per cent of a roll to 58 per cent of one. It
+   * does not change how often a drop happens, only which one it is.
+   */
+  lowAmmoWeight: 3.0,
+};
 
 /** How many drops may exist in the world at once. */
 const POOL = 5;
@@ -493,6 +608,32 @@ export function createPowerups({
     droppedThisWave: 0,
     wave: 0,
 
+    // --- the ammunition floor, all readable by the harness -----------------
+    /**
+     * Total carried ammunition as a fraction of total capacity, or NULL when
+     * it cannot be established.
+     *
+     * Null is a real answer and it is load-bearing. The bench instance in
+     * test/powerups.mjs constructs this module with a weapons stub that has an
+     * `owned` set and nothing else - no ammo table, no STATS - and a floor that
+     * guessed at "low" from a missing table would fire on every one of its
+     * sixty thousand kills and turn a rate measurement into a rate assertion
+     * about a mechanic that was not being measured. Unknown supply is never
+     * scarcity: you cannot claim a player is starving from a number you did not
+     * read.
+     */
+    reserveFrac: null,
+    /** True while `reserveFrac` is at or under SUPPLY.lowReserve. */
+    lowNow: false,
+    /** Kills resolved while low, since the last relief. */
+    lowKills: 0,
+    /** Simulated seconds spent low, since the last relief. */
+    lowSeconds: 0,
+    /** How many times the floor has rolled, and how often it paid. */
+    supplyRolls: 0,
+    supplied: 0,
+    supplyThisWave: 0,
+
     /** What each kind has done, so a balance pass has numbers to read. */
     taken: {},
 
@@ -742,16 +883,104 @@ export function createPowerups({
   // the roll
   // ---------------------------------------------------------------------------
 
+  /**
+   * The weight table, tilted toward ammunition while the player is low.
+   *
+   * The tilt changes WHICH drop this is and never WHETHER there is one, which
+   * is why the measured drop rate is identical on both sides of it. See
+   * SUPPLY.lowAmmoWeight.
+   */
+  function weightOf(id) {
+    const w = POWERUPS[id].weight;
+    return (id === 'hapi' && state.lowNow) ? w * SUPPLY.lowAmmoWeight : w;
+  }
+
   function pickKind() {
     let sum = 0;
-    for (const id of KINDS) sum += POWERUPS[id].weight;
+    for (const id of KINDS) sum += weightOf(id);
 
     let r = rng() * sum;
     for (const id of KINDS) {
-      r -= POWERUPS[id].weight;
+      r -= weightOf(id);
       if (r <= 0) return id;
     }
     return KINDS[0];
+  }
+
+  /**
+   * Total carried ammunition over total capacity, or null if unreadable.
+   *
+   * Every read is guarded because the ONLY honest answer to a missing table is
+   * "I do not know", and null is what the floor treats as stocked. See
+   * state.reserveFrac.
+   */
+  function reserveFraction() {
+    const ammo = weapons && weapons.ammo;
+    const stats = weapons && weapons.STATS;
+    const owned = weapons && weapons.state && weapons.state.owned;
+    if (!ammo || !stats || !owned || typeof owned[Symbol.iterator] !== 'function') return null;
+
+    let have = 0;
+    let cap = 0;
+    for (const id of owned) {
+      const a = ammo[id];
+      const s = stats[id];
+      if (!a || !s) continue;
+      have += (a.mag || 0) + (a.reserve || 0);
+      cap += (s.magazine || 0) + (s.reserve || 0);
+    }
+    if (cap <= 0) return null;
+    return have / cap;
+  }
+
+  /** Reset the wave-scoped budgets when the director's counter moves. */
+  function syncWave() {
+    const wave = director && director.state ? director.state.wave : 0;
+    if (wave === state.wave) return;
+    state.wave = wave;
+    state.droppedThisWave = 0;
+    state.supplyThisWave = 0;
+  }
+
+  /**
+   * THE FLOOR. Returns a drop, or null.
+   *
+   * Runs only after the general roll has already declined, so it can never be
+   * the reason a wave produced two drops instead of one on a stocked player -
+   * `lowNow` is false for them and this returns on the first line.
+   *
+   * The pressure term is the higher of two ramps, kills and seconds, both
+   * measured from the moment the player went low. Rolling against it rather
+   * than counting to a fixed number is what keeps relief from becoming a
+   * metronome: at eight kills low it is a coin flip, at fourteen it is certain,
+   * and the player never learns which kill it will be.
+   */
+  function supplyFloor(x, z) {
+    if (!state.lowNow) return null;
+    if (state.supplyThisWave >= SUPPLY.perWave) return null;
+
+    state.lowKills++;
+
+    const span = Math.max(1, SUPPLY.guaranteeAfter - SUPPLY.armAfter);
+    const byKills = (state.lowKills - SUPPLY.armAfter) / span;
+    const bySeconds = state.lowSeconds / Math.max(1e-6, SUPPLY.guaranteeSeconds);
+    const pressure = Math.min(1, Math.max(byKills, bySeconds));
+    if (pressure <= 0) return null;
+
+    state.supplyRolls++;
+    if (rng() >= pressure) return null;
+
+    const d = place('hapi', x, z);
+    if (!d) return null;
+
+    state.supplied++;
+    state.supplyThisWave++;
+    // The clock restarts from the moment relief was PLACED, not from the moment
+    // it was collected. A player who walks past a Flood has been supplied; the
+    // decision to leave it is theirs and the floor does not owe them a second.
+    state.lowKills = 0;
+    state.lowSeconds = 0;
+    return d;
   }
 
   /**
@@ -773,18 +1002,17 @@ export function createPowerups({
       return place(kind, p.x, p.z);
     }
 
-    const wave = director && director.state ? director.state.wave : 0;
-    if (wave !== state.wave) {
-      state.wave = wave;
-      state.droppedThisWave = 0;
+    syncWave();
+
+    // The general roll, exactly as it was. It is checked and spent FIRST so
+    // that a kill which was going to pay a drop anyway is never also charged to
+    // the floor's budget.
+    if (state.droppedThisWave < SUPPLY.dropsPerWave) {
+      state.rolls++;
+      if (rng() < SUPPLY.dropChance) return place(pickKind(), p.x, p.z);
     }
 
-    if (state.droppedThisWave >= DROPS_PER_WAVE) return null;
-
-    state.rolls++;
-    if (rng() >= DROP_CHANCE) return null;
-
-    return place(pickKind(), p.x, p.z);
+    return supplyFloor(p.x, p.z);
   }
 
   // ---------------------------------------------------------------------------
@@ -1016,6 +1244,31 @@ export function createPowerups({
   function update(dt, elapsed = 0) {
     clock += dt;
 
+    // --- the supply gauge -----------------------------------------------------
+    //
+    // Read every frame rather than at the moment of a kill, because the SECONDS
+    // half of the floor's pressure has to accumulate while the player is running
+    // away from a wave they cannot afford to fight - which is precisely the
+    // situation where no kills are happening and a kill-only counter would sit
+    // still and report that everything was fine.
+    //
+    // dt, like every other clock in this file, so it means the same thing under
+    // the software renderer as it does at sixty frames a second.
+    const frac = reserveFraction();
+    state.reserveFrac = frac;
+    const low = frac !== null && frac <= SUPPLY.lowReserve;
+
+    if (low) {
+      state.lowSeconds += dt;
+    } else if (state.lowNow) {
+      // Back above the line: the pressure is spent, not banked. Banking it
+      // would mean a player who topped up at a wall buy still carried fourteen
+      // kills of credit into the next dry spell and got an instant Flood.
+      state.lowKills = 0;
+      state.lowSeconds = 0;
+    }
+    state.lowNow = low;
+
     // A drop belongs to the space it fell in. The director retires every actor
     // on a transition for the same reason: the courtyard and the interior are
     // 110 units apart and do not share a floor, so a drop left behind is a lit
@@ -1130,6 +1383,15 @@ export function createPowerups({
     drops,
     POWERUPS,
     KINDS,
+
+    /**
+     * The tuning object, on the instance as well as on the module.
+     *
+     * A difficulty tier holds a reference to the running game, not to an import
+     * graph, and it must be able to reach the knobs from there. It is the SAME
+     * object, deliberately - there is one set of live numbers and it is this one.
+     */
+    SUPPLY,
 
     update,
 
@@ -1264,8 +1526,24 @@ export function createPowerups({
         collected: state.collected,
         expired: state.expired,
         droppedThisWave: state.droppedThisWave,
-        chance: DROP_CHANCE,
-        capPerWave: DROPS_PER_WAVE,
+        chance: SUPPLY.dropChance,
+        capPerWave: SUPPLY.dropsPerWave,
+
+        // The floor, as numbers. A mechanic whose whole job is to fire in the
+        // worst case has to be inspectable in the ordinary one, or the only
+        // evidence it works is a player not complaining.
+        supply: {
+          // Recomputed rather than read off state, so `stats()` is honest even
+          // on a frame the loop has not run yet.
+          reserveFrac: (() => { const f = reserveFraction(); return f === null ? null : +f.toFixed(3); })(),
+          low: state.lowNow,
+          lowKills: state.lowKills,
+          lowSeconds: +state.lowSeconds.toFixed(2),
+          rolls: state.supplyRolls,
+          supplied: state.supplied,
+          thisWave: state.supplyThisWave,
+          knobs: { ...SUPPLY },
+        },
         taken: { ...state.taken },
         active: api.active().map((e) => e.id),
         instaKill: combat.state.instaKill,

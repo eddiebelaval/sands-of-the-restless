@@ -4046,6 +4046,119 @@ const CELL_RELOAD = [
   { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0, glow: 1 },
 ];
 
+// ---------------------------------------------------------------------------
+// THE KHOPESH
+//
+// Two tracks, because a swing is two things moving: the blade crosses the frame
+// and the weapon in the firing hand REACTS to it. Animating only the blade
+// would read as a sword floating past a photograph of a gun.
+//
+// MELEE_BLADE is in the khopesh's own space, which sits under the same group as
+// the weapon so it inherits the sway, the bob and the recoil spring - the blade
+// is in the same pair of hands and has to breathe with them.
+//
+// The arc runs left to right and slightly downward, which is a left arm coming
+// across the body. It starts and ends OFF FRAME on the left rather than fading
+// in: a blade that materialises in shot is a decal, and the whole read of a
+// melee is that something entered from where your other hand is.
+//
+// The rotation on the middle keys is what sells it. `r[2]` sweeps 2.4 radians
+// across the swing, so the hooked edge leads on the way in and trails on the
+// way out, and the silhouette is never the same twice in the four rendered
+// frames a software renderer gives it.
+// ---------------------------------------------------------------------------
+/**
+ * ROTATION ORDER, AND IT IS THE WHOLE REASON THE FIRST SWING WAS INVISIBLE.
+ *
+ * The khopesh is built with its blade along +Y and its FLAT facing +/-X, so two
+ * rotations do two different jobs: `y` spins the blade about its own long axis
+ * and decides whether the eye sees the flat or the edge, and `z` sweeps it
+ * around in the screen plane and IS the slash.
+ *
+ * Under three.js's default XYZ order the z term is applied to the vector first
+ * and the y term last, which means the spin-about-the-long-axis happens AFTER
+ * the sweep and drags the sweep round with it. Measured on the first render:
+ * at the contact key the blade covered 5,466 pixels inside a bounding box of
+ * 136,000 - a four per cent fill, which is a 0.36 m sword seen exactly
+ * edge-on. It was on screen, it was in the right place, and it was a wire.
+ *
+ * ZXY applies y first, then x, then z: the flat is turned to face the eye, and
+ * the sweep then happens in the plane of the screen with the flat still facing
+ * it. Which is what a slash is.
+ */
+const MELEE_ORDER = 'ZXY';
+
+/**
+ * THE TRACK IS IN THE WEAPON'S SPACE, NOT THE EYE'S, and getting that wrong
+ * halved the blade.
+ *
+ * The khopesh is a child of `group`, and `group` is already sitting at the hip
+ * pose - about 425mm in front of the eye. So a key that reads z: -0.48 does not
+ * put the blade 480mm out, it puts it at 905mm, and the render came back with
+ * the contact frame COVERING LESS of the screen than the frame before it. The
+ * numbers below are offsets FROM THE GUN: positive z is toward the eye, which
+ * is also what draws the blade in front of the weapon rather than behind it.
+ */
+const MELEE_BLADE = [
+  // Parked: low, far left, blade turned down and away, outside the frustum.
+  { t: 0.00, p: [-0.52, -0.30, 0.13], r: [0.20, -1.10, 1.70], mag: 0, bolt: 0 },
+  // Wind: back and up a touch. Short, because a long telegraph on a panic
+  // button is a panic button you cannot use in a panic.
+  { t: 0.16, p: [-0.50, -0.20, 0.11], r: [0.14, -1.30, 1.35], mag: 0, bolt: 0 },
+  // Entering frame from the left, accelerating, flat coming round to the eye.
+  { t: 0.34, p: [-0.32, -0.02, 0.04], r: [0.02, -1.50, 0.60], mag: 0, bolt: 0 },
+  // CONTACT, at 0.49 of the track. MELEE.contact / MELEE.swing = 0.22/0.45 =
+  // 0.489, and the two are meant to agree: the number that decides when damage
+  // lands and the key at the top of the arc are the same moment, or the blade
+  // hits before it arrives. Broadside, on the crosshair, and NEARER the eye
+  // than the keys either side of it - the arc punches in on the strike.
+  { t: 0.49, p: [-0.14, 0.02, 0.06], r: [-0.06, -1.58, 0.05], mag: 0, bolt: 0 },
+  // Follow through, across and down.
+  { t: 0.62, p: [0.08, -0.02, 0.04], r: [-0.05, -1.60, -0.45], mag: 0, bolt: 0 },
+  { t: 0.74, p: [0.26, -0.12, 0.02], r: [-0.02, -1.62, -0.90], mag: 0, bolt: 0 },
+  // Withdrawing, already most of the way out of frame - which is where the
+  // unwind happens, so the fast counter-rotation back to rest is not something
+  // the eye has to watch.
+  { t: 0.88, p: [-0.26, -0.30, 0.09], r: [0.10, -1.40, 0.60], mag: 0, bolt: 0 },
+  { t: 1.00, p: [-0.52, -0.30, 0.13], r: [0.20, -1.10, 1.70], mag: 0, bolt: 0 },
+];
+
+/**
+ * HOW BIG THE BLADE IS ON SCREEN, and it is a measurement rather than a taste.
+ *
+ * The viewmodel lens is 55 degrees vertical, so the frame is 2*d*tan(27.5) tall
+ * at distance d: 0.50 m at the swing's closest key. Built at full size the
+ * khopesh is 0.36 m from cuff to tip, which is 79 per cent of the frame - and
+ * that is exactly what the first render measured, a diff bounding box running
+ * from 0.14 to 1.00 of the frame height. A blade that tall does not read as a
+ * sword crossing the view, it reads as the screen going dark.
+ *
+ * At the contact key the blade sits 365mm from the eye, where the frame is
+ * 380mm tall. 0.62 puts the sword at 223mm - 59 per cent of the frame: clearly
+ * the largest thing in the shot for the fifth of a second it is there, and
+ * still leaving the world visible AROUND the swing, which is the whole
+ * difference between a melee and a screen wipe.
+ *
+ * Applied as a group scale rather than by re-authoring thirty part sizes, so
+ * the build stays legible and this number stays the one place it is decided.
+ */
+const KHOPESH_SCALE = 0.62;
+
+// What the gun does while the other hand is busy. Dropped, canted right, and
+// pushed a little out of the way - the same language as the sprint pose, at
+// about a third of the amplitude, so it reads as the weapon yielding the frame
+// rather than as a second animation competing for it.
+const MELEE_GUN = [
+  { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
+  { t: 0.22, p: [0.016, -0.030, 0.026], r: [-0.10, 0.16, -0.26], mag: 0, bolt: 0 },
+  { t: 0.49, p: [0.024, -0.042, 0.034], r: [-0.14, 0.22, -0.34], mag: 0, bolt: 0 },
+  { t: 0.72, p: [0.014, -0.026, 0.020], r: [-0.08, 0.13, -0.20], mag: 0, bolt: 0 },
+  { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
+];
+
+/** Seconds. Must match MELEE.swing in systems/melee.js; see the note there. */
+const MELEE_TIME = 0.45;
+
 // Turn the weapon over, look at the receiver, drop it back. Pure flourish.
 const INSPECT = [
   { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
@@ -4056,6 +4169,155 @@ const INSPECT = [
   { t: 0.84, p: [0.008, -0.014, 0.020], r: [-0.05, 0.16, -0.24], mag: 0, bolt: 0 },
   { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
 ];
+
+// ---------------------------------------------------------------------------
+// THE KHOPESH, as geometry
+//
+// A sickle-sword: straight from the hilt for two fifths of its length, then a
+// crescent that hooks FORWARD. It is the blade the pharaohs are holding in
+// every relief, and it is the right object for a necropolis in a way a black
+// polymer combat knife would not be.
+//
+// THE SHAPE IS THE POINT AND THE DETAIL IS NOT. This crosses the frame in 0.45
+// seconds - four rendered frames under the software renderer the harness runs
+// on - so nothing sub-millimetre survives the motion. What DOES survive is the
+// silhouette, and a curve is the one silhouette that still says "blade" while
+// blurred, because the hook tells you which way it is travelling. So the budget
+// went on the arc and the swing: seven segments along a quarter turn, a wear
+// strip down the outside so the edge catches the key light as it sweeps, and
+// nothing else.
+//
+// Local space: the grip is at the origin running down -Y, the blade runs up +Y
+// and hooks toward -Z. That orientation is chosen so the track's roll about Z
+// sweeps the blade ACROSS the screen, which is what the animation is doing;
+// authoring it any other way would mean the track had to compose two rotations
+// to do one thing.
+//
+// Every geometry comes out of the shared cache and every material out of the
+// palette. Built once, at construction, and hidden between swings - nothing in
+// the swing path allocates.
+// ---------------------------------------------------------------------------
+
+/** Where the straight section ends and the crescent starts, in local Y. */
+const KH_HINGE = 0.155;
+/** Radius of the crescent, and where its centre sits. */
+const KH_R = 0.098;
+/** How far round the crescent goes. 135 degrees: a hook, not a semicircle. */
+const KH_SWEEP = 2.36;
+const KH_SEGS = 7;
+
+function buildKhopesh(P) {
+  const g = new THREE.Group();
+  g.name = 'vm:khopesh';
+
+  const add = (m) => { g.add(m); return m; };
+
+  // --- the grip ------------------------------------------------------------
+  // Wound leather over a tang. Four bands rather than a texture, because at
+  // this size a band is a silhouette notch and a texture is one grey pixel.
+  add(rod(P.wood, 0.0125, 0.0140, 0.086, 0, -0.030, 0, 'y', 10));
+  for (let i = 0; i < 4; i++) {
+    add(rod(P.gloveDark, 0.0146, 0.0146, 0.006, 0, -0.062 + i * 0.019, 0, 'y', 10));
+  }
+
+  // The pommel: a plain disc. It is the counterweight on a real khopesh and it
+  // is the part that reads when the blade is pointing away from the eye.
+  add(rod(P.brass, 0.0215, 0.0215, 0.0095, 0, -0.076, 0, 'y', 14));
+
+  // --- the guard and the ricasso -------------------------------------------
+  //
+  // BRONZE, not gunmetal, and the two are doing different jobs. The BODY of the
+  // blade stays dark because a dark silhouette is what survives being swung
+  // across a sunlit desert at 0.45 seconds; the guard, the edge and the pommel
+  // are warm metal because that is what catches the viewmodel's key light and
+  // traces the shape of the thing that is moving. Dark mass, bright edge - the
+  // same contract the seven guns use for their chamfer wear strips.
+  add(box(P.brass, 0.062, 0.0125, 0.020, 0, 0.020, 0));
+  // One inlaid strip, in the same wear-strip material every weapon in the
+  // armoury uses for its chamfers, so the blade belongs to the same set.
+  add(box(P.edge, 0.050, 0.0035, 0.0215, 0, 0.026, 0));
+
+  // --- the straight section -------------------------------------------------
+  const straightH = KH_HINGE - 0.030;
+  add(box(P.dark, 0.032, straightH, 0.0085, 0, 0.030 + straightH / 2, 0));
+  // The fuller: a dark groove down the flat, which is what stops a blade this
+  // simple reading as a lolly stick.
+  add(box(P.seam, 0.010, straightH * 0.86, 0.0105, 0, 0.030 + straightH / 2, 0));
+
+  // --- the crescent ---------------------------------------------------------
+  //
+  // Segments laid along an arc whose centre is one radius BEHIND the hinge, so
+  // the curve leaves the straight section tangentially rather than kinking off
+  // it. A visible corner where a blade changes direction is the tell that it
+  // was assembled out of boxes.
+  const cy = KH_HINGE;
+  const cz = -KH_R;
+  const step = KH_SWEEP / KH_SEGS;
+
+  for (let i = 0; i < KH_SEGS; i++) {
+    const a = (i + 0.5) * step;
+    const y = cy + KH_R * Math.sin(a);
+    const z = cz + KH_R * Math.cos(a);
+
+    // Tapering along the arc: a khopesh is widest at the shoulder of the hook
+    // and comes to a point. 0.036 down to 0.014.
+    const wide = 0.036 - 0.022 * (i / (KH_SEGS - 1));
+    // 1.08 rather than 1.0 so consecutive segments overlap at their corners and
+    // the outside of the curve has no sawtooth on it.
+    const len = KH_R * step * 1.08;
+
+    const seg = add(box(P.dark, wide, len, 0.0080, 0, 0, 0));
+    seg.position.set(0, y, z);
+    // See the note on the local space: a rotation of -a about X carries the
+    // segment's own +Y onto the arc's tangent at that angle.
+    seg.rotation.x = -a;
+
+    // THE EDGE, and it is on the OUTSIDE of the curve, which is where a khopesh
+    // is actually sharpened. It is also the part that does the work on screen:
+    // a bright 1.5mm strip along the convex side is a moving highlight that
+    // traces the arc, and it is the only thing in this build that survives four
+    // frames of motion blur intact.
+    const outX = 0;
+    const outY = Math.sin(a);
+    const outZ = Math.cos(a);
+    const off = wide / 2 - 0.0016;
+    const edge = add(box(P.brass, 0.0038, len, 0.0090, 0, 0, 0));
+    edge.position.set(outX, y + outY * off, z + outZ * off);
+    edge.rotation.x = -a;
+  }
+
+  // The point. One small cone finishing the last segment, so the blade ends in
+  // a tip rather than in a flat cap.
+  {
+    const a = KH_SWEEP;
+    const tip = add(new THREE.Mesh(coneGeo(0.0075, 0.030, 8), P.brass));
+    tip.position.set(0, cy + KH_R * Math.sin(a), cz + KH_R * Math.cos(a));
+    tip.rotation.x = -a;
+  }
+
+  // --- the fist -------------------------------------------------------------
+  //
+  // NOT the wrapped hand the seven weapons carry. That is fourteen phalanges
+  // and twelve joints for a shape that is on screen for a fifth of a second at
+  // the far edge of the frame, and it would cost more than the blade. A gloved
+  // fist and a cuff are enough to say the sword is being HELD, which is the
+  // only claim the frame has to support.
+  add(ball(P.glove, 0.078, 0.090, 0.074, 0, -0.028, 0.002, 10));
+  for (let i = 0; i < 3; i++) {
+    add(ball(P.gloveLit, 0.024, 0.022, 0.030, -0.008 + i * 0.019, 0.008, 0.020, 6));
+  }
+  add(ball(P.glovePalm, 0.030, 0.044, 0.026, 0.030, -0.020, 0.012, 6));
+  add(rod(P.cuff, 0.042, 0.048, 0.060, 0, -0.092, -0.010, 'y', 10));
+
+  g.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = false;
+    o.userData.noHit = true;
+    o.userData.noPick = true;
+  });
+
+  return g;
+}
 
 // ---------------------------------------------------------------------------
 // weapon table
@@ -4530,6 +4792,18 @@ export function createViewmodel(host, materials) {
   let switchT = 1;                  // 0 = fully lowered, 1 = fully up
   let reloadT = 0;                  // seconds into the reload
   let inspectT = 0;
+  /**
+   * Seconds into the swing, or -1 for no swing.
+   *
+   * A sentinel rather than a phase, and that is load-bearing. The blade has to
+   * work with EMPTY HANDS - the Altar of Ptah takes the weapon for five seconds
+   * and standing in a horde holding nothing is the moment a melee is most
+   * obviously for - and `state.phase` is 'empty' there, with update() returning
+   * before the phase machine ever runs. So the swing clock lives outside the
+   * phase machine and only WRITES 'meleeing' into it when there is a weapon to
+   * take it back from.
+   */
+  let meleeT = -1;
   let highFidelity = true;
 
   const kick = { z: 0, y: 0, rx: 0, rz: 0, vz: 0, vy: 0, vrx: 0, vrz: 0 };
@@ -4537,13 +4811,30 @@ export function createViewmodel(host, materials) {
   const state = {
     weapon: null,
     name: null,
-    phase: 'empty',                 // empty | raising | ready | lowering | reloading | inspecting
+    // empty | raising | ready | lowering | reloading | inspecting | meleeing
+    phase: 'empty',
     ads: false,
     adsBlend: 0,
     sprintBlend: 0,
     reloadProgress: 0,
     shellsActive: 0,
+    /** True while the khopesh is on screen. Readable with no weapon in hand. */
+    melee: false,
+    /** 0..1 through the swing. */
+    meleeProgress: 0,
   };
+
+  // The blade. Built once, at construction, and parked invisible - so it is
+  // under the same group as the weapon and inherits the sway, the walk bob and
+  // the recoil spring, which is what keeps it in the same pair of hands rather
+  // than floating past a photograph of a gun.
+  const khopesh = buildKhopesh(P);
+  khopesh.visible = false;
+  khopesh.scale.setScalar(KHOPESH_SCALE);
+  // See MELEE_ORDER. Set once, here, because a track authored against one order
+  // and played back under another is the defect this cost a render to find.
+  khopesh.rotation.order = MELEE_ORDER;
+  group.add(khopesh);
 
   // Scratch, allocated once. Everything below runs every frame.
   const pos = new THREE.Vector3();
@@ -4846,7 +5137,62 @@ export function createViewmodel(host, materials) {
   function busy() {
     return state.phase === 'reloading'
       || state.phase === 'raising'
-      || state.phase === 'lowering';
+      || state.phase === 'lowering'
+      // A swing occupies the hands. Firing, reloading and aiming are all
+      // refused through here for the length of it, which is the reference
+      // behaviour and also the only way the blade stays a decision: a melee you
+      // can cancel into a trigger pull on the next frame costs nothing.
+      || state.phase === 'meleeing';
+  }
+
+  /**
+   * SWING THE KHOPESH. Returns false if the hands are genuinely unavailable.
+   *
+   * The only refusals are a swing already running and a weapon mid-swap, and
+   * the exclusions are as important as the inclusions:
+   *
+   *   - an EMPTY magazine is not a refusal. That is when it is for.
+   *   - EMPTY HANDS are not a refusal. See the note on meleeT: the Altar takes
+   *     the weapon, and a blade that switched off for those five seconds would
+   *     be missing from the one moment the player has nothing else.
+   *   - a RUNNING RELOAD is not a refusal either. systems/melee.js cancels it
+   *     before calling this, and no rounds are seated - the animation is simply
+   *     taken over, which is what an interrupt means.
+   *
+   * The blade is made visible here rather than in update() so a swing is on
+   * screen on the frame it started, not the frame after. Under the software
+   * renderer, one frame is a quarter of the whole swing.
+   */
+  function melee() {
+    if (meleeT >= 0) return false;
+    if (model && (state.phase === 'raising' || state.phase === 'lowering')) return false;
+
+    meleeT = 0;
+    inspectT = 0;
+    reloadT = 0;
+    khopesh.visible = true;
+    // Only claim the phase when there is something to give it back to. With
+    // empty hands the phase is 'empty' and must stay that way, or the frame the
+    // Altar hands the weapon back would find the machine in a state its equip
+    // path does not expect.
+    if (model) state.phase = 'meleeing';
+    state.melee = true;
+    return true;
+  }
+
+  /**
+   * The edge connected. A jolt into the recoil spring the weapon already owns.
+   *
+   * Through the spring rather than as a pose offset, because the spring is what
+   * every other impulse in this file goes through and two systems writing the
+   * weapon's displacement by different routes is how one of them ends up being
+   * overwritten by the other on alternate frames.
+   */
+  function meleeImpact() {
+    kick.vy += 0.42;
+    kick.vrx += 1.6;
+    kick.vrz += (Math.random() - 0.5) * 3.0;
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -5179,7 +5525,39 @@ export function createViewmodel(host, materials) {
     updateShells(dt);
     syncProjection();
 
-    if (!model) return;
+    // --- the blade ---------------------------------------------------------
+    //
+    // ABOVE the early return, deliberately. Every line after `if (!model)`
+    // assumes a weapon in hand, and the swing is the one animation in this file
+    // that has to run without one.
+    if (meleeT >= 0) {
+      meleeT += dt;
+
+      if (meleeT >= MELEE_TIME) {
+        meleeT = -1;
+        khopesh.visible = false;
+        state.melee = false;
+        state.meleeProgress = 0;
+        if (state.phase === 'meleeing') state.phase = 'ready';
+      } else {
+        state.meleeProgress = meleeT / MELEE_TIME;
+        const s = sampleTrack(MELEE_BLADE, state.meleeProgress, trackOut);
+        khopesh.position.set(s.px, s.py, s.pz);
+        khopesh.rotation.set(s.rx, s.ry, s.rz);
+      }
+    }
+
+    if (!model) {
+      // Nothing below composes `group` when the hands are empty, so a blade
+      // parented to it would swing about wherever the last lower stroke parked
+      // it - which is a foot below the frame. Neutral is the eye's own frame,
+      // which is where the track was authored.
+      if (meleeT >= 0) {
+        group.position.set(0, 0, 0);
+        group.rotation.set(0, 0, 0);
+      }
+      return;
+    }
 
     const speed = ctx.speed || 0;
     const grounded = ctx.grounded !== false;
@@ -5359,6 +5737,13 @@ export function createViewmodel(host, materials) {
       pos.x += s.px; pos.y += s.py; pos.z += s.pz;
       rot.x += s.rx; rot.y += s.ry; rot.z += s.rz;
       state.reloadProgress = 0;
+    } else if (meleeT >= 0) {
+      // The weapon yields the frame while the other hand works. Same language
+      // as the sprint pose at about a third of the amplitude - see MELEE_GUN.
+      const s = sampleTrack(MELEE_GUN, meleeT / MELEE_TIME, trackOut);
+      pos.x += s.px; pos.y += s.py; pos.z += s.pz;
+      rot.x += s.rx; rot.y += s.ry; rot.z += s.rz;
+      state.reloadProgress = 0;
     } else {
       state.reloadProgress = 0;
     }
@@ -5528,8 +5913,13 @@ export function createViewmodel(host, materials) {
     fire,
     reload,
     inspect,
+    melee,
+    meleeImpact,
     setFidelity,
     render,
+
+    /** The blade itself, for the harness. It is never a hit or pick target. */
+    khopesh,
 
     /** The Altar of Ptah's cosmetic half. Finish only: see the note above. */
     upgradeFinish,

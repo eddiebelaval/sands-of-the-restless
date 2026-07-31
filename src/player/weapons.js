@@ -320,6 +320,22 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
 
   function canFire() {
     if (state.reloading) return false;
+
+    /**
+     * THE HANDS ARE BUSY WITH A BLADE.
+     *
+     * Without this the trigger still works through a swing: canFire only ever
+     * looked at `reloading`, so a held mouse button would spend rounds and cast
+     * hitscan rays while viewmodel.fire() - which DOES refuse, through busy() -
+     * declined to draw the muzzle flash. Ammunition leaving the magazine with
+     * no flash, no shell and no kick is the exact shape of a bug that reads as
+     * the gun being broken.
+     *
+     * Read off the animation phase for the same reason the reload below is: the
+     * viewmodel is the single authority on whether the hands are free, and a
+     * second flag here would be a second opinion about one pair of arms.
+     */
+    if (viewmodel?.state?.phase === 'meleeing') return false;
     // Empty hands. Checked FIRST, because every line under it indexes a table
     // by the weapon id and there is no id.
     const s = STATS[state.current];
@@ -443,6 +459,26 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     // and finish the logical reload when the animation returns to ready.
     // The timer is only a fallback for a headless run with no viewmodel.
     state.reloadEnds = clock + 4.0 * state.reloadScale;
+    return true;
+  }
+
+  /**
+   * ABANDON A RELOAD WITH NOTHING SEATED.
+   *
+   * The khopesh interrupts one - see systems/melee.js - and this is the whole
+   * of what that means mechanically: the flag comes down, the fallback timer is
+   * pushed out of reach, and finishReload() is NOT called, so not one round
+   * moves from the reserve into the magazine. The player pressed R, took a
+   * swing instead, and has to press R again.
+   *
+   * Deliberately does not touch the viewmodel. The animation is already being
+   * taken over by the swing that caused this, and two systems both claiming to
+   * own the same stroke is how one of them silently loses.
+   */
+  function cancelReload() {
+    if (!state.reloading) return false;
+    state.reloading = false;
+    state.reloadEnds = Infinity;
     return true;
   }
 
@@ -626,6 +662,7 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     update,
     fire,
     reload,
+    cancelReload,
     equip,
     cycle,
     grant,

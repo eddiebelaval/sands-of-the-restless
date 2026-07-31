@@ -26,6 +26,7 @@ import { createSpaces } from './systems/spaces.js';
 import { createEconomy } from './systems/economy.js';
 import { createDoors } from './systems/doors.js';
 import { createCombat } from './systems/damage.js';
+import { createMelee } from './systems/melee.js';
 import { createDirector } from './enemies/director.js';
 import { createPower } from './systems/power.js';
 import { createWallBuys } from './systems/wallbuy.js';
@@ -259,6 +260,22 @@ function boot() {
   });
 
   combat.attach({ director });
+
+  /**
+   * THE KHOPESH.
+   *
+   * After the director, because a swing resolves against THIS frame's live
+   * actors - the same reason a blast does - and after combat because it damages
+   * through combat.applyMelee. Before the grenades only because nothing depends
+   * on the order of those two.
+   *
+   * It is handed `weapons` so a swing can cancel a running reload, and
+   * `viewmodel` so the state machine that owns every other animation in the
+   * player's hands owns this one too. See systems/melee.js.
+   */
+  const melee = createMelee({
+    camera, player, director, combat, viewmodel, rig, audio, weapons,
+  });
 
   /**
    * Grenades.
@@ -575,6 +592,22 @@ function boot() {
     }, 600);
   }
 
+  /**
+   * TELL THEM THE BLADE IS THERE, AT THE ONE MOMENT IT MATTERS.
+   *
+   * A mechanic nobody knows about is a mechanic that does not exist, and the
+   * controls list in the pause menu is not this pass's file to edit. A banner
+   * on a five-second timer was the first idea and it is the wrong one twice
+   * over: it teaches the player something they have no use for yet, and it
+   * teaches it while they are still looking at the pyramid.
+   *
+   * This fires the first time they are genuinely out - magazine empty, reserve
+   * empty, nothing to reload - which is the exact sentence the owner wrote when
+   * he asked for this. Once per session, watched off the numbers the HUD is
+   * already reading rather than hooked into the weapon.
+   */
+  let bladeHintShown = false;
+
   // --- weapon bindings -----------------------------------------------------
   //
   // `pause.paused` as well as `started`, and this listener is the reason
@@ -587,6 +620,23 @@ function boot() {
 
     if (e.code === 'KeyR') { weapons.reload(); return; }
     if (e.code === 'KeyV') { viewmodel.inspect(); return; }
+
+    /**
+     * Q IS THE BLADE, and the binding is chosen for one property: you can reach
+     * it without letting go of W.
+     *
+     * A melee in this genre is a panic button pressed while running backwards
+     * from four bodies with an empty magazine, so the only criterion that
+     * matters is whether the left hand can hit it without leaving the movement
+     * keys. V is the reference game's bind and is already the inspect flourish
+     * here; F is the interact and would buy a door mid-swing; anything on the
+     * right of the board means letting go of the mouse.
+     *
+     * Not routed through core/input.js because none of these bindings are - see
+     * the note above this listener. `pause.paused` is checked there for all of
+     * them, which is what stops a paused player knifing through the menu.
+     */
+    if (e.code === 'KeyQ') { melee.swing(); return; }
 
     // F goes to whatever is under the crosshair, and the two systems that can
     // claim it are arbitrated the SAME WAY the prompt is: a fixture wins over a
@@ -604,6 +654,22 @@ function boot() {
     // Digit1..Digit7 select a weapon directly.
     const n = /^Digit([1-7])$/.exec(e.code);
     if (n) weapons.equip(SLOTS[Number(n[1]) - 1]);
+  });
+
+  /**
+   * And the middle mouse button, because that is where a lot of people's melee
+   * lives and the thumb is not doing anything else.
+   *
+   * Its own listener rather than a field in core/input.js: every other binding
+   * on this page reads the event directly for the reason above, and adding a
+   * third mouse button to the input layer would mean the pause menu had to
+   * learn to clear it. preventDefault stops the browser's autoscroll cursor,
+   * which otherwise appears in the middle of the screen and stays there.
+   */
+  window.addEventListener('mousedown', (e) => {
+    if (!started || pause.paused || e.button !== 1) return;
+    e.preventDefault();
+    melee.swing();
   });
 
   // Scrolling the settings panel must not swap the weapon underneath it.
@@ -837,6 +903,35 @@ function boot() {
         payout(hits);
       }
 
+      /**
+       * The blade, on the same terms as the trigger.
+       *
+       * AFTER the weapon so a swing and a shot resolved on the same frame are
+       * paid in the order they landed, and it returns records in the same shape
+       * weapons.update does - so they go through the SAME combat resolution and
+       * the SAME payout(). That is the whole reason melee.js returns an array
+       * instead of paying itself: a melee kill pays 60 because a kill pays 60,
+       * and there is exactly one table that says so.
+       *
+       * The hitmarker is fired with `false` unconditionally: a blade cannot land
+       * a headshot, so the crit mark would be teaching a lie about which payout
+       * was just earned. See systems/damage.js's applyMelee.
+       */
+      const swung = melee.update(dt);
+      if (swung && swung.length && swung[0].enemy) {
+        readouts.hitmarker(false);
+        payout(swung);
+      }
+
+      // See bladeHintShown. The one moment the lesson is worth teaching.
+      if (!bladeHintShown
+        && weapons.STATS[weapons.state.current]
+        && weapons.magazine === 0
+        && weapons.reserve === 0) {
+        bladeHintShown = true;
+        showNotice('OUT OF AMMUNITION - Q FOR THE KHOPESH', 3600);
+      }
+
       // Doors resolve after the camera too: the prompt is whatever the
       // crosshair is on THIS frame, and a frame of lag on a prompt reads as the
       // prompt being wrong rather than late.
@@ -1005,7 +1100,7 @@ function boot() {
     THREE, renderer, scene, camera, post, world, player, rig, input, sky,
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
-    director, combat,
+    director, combat, melee,
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     pause,

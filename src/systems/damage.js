@@ -296,6 +296,78 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
   }
 
   /**
+   * Resolve a blade.
+   *
+   * THE THIRD DOOR, and it is here for the reason the second one is: the three
+   * entry points differ by WHERE THE NUMBER CAME FROM, and merging any two of
+   * them would mean one of the callers lying about it.
+   *
+   *   applyHits  - the damage is a property of a gun. It looks the weapon up in
+   *                STATS and multiplies by the region, because a headshot with a
+   *                bolt rifle is a fact about the bolt rifle.
+   *   applyBlast - the damage is a function of a distance. The caller owns the
+   *                falloff curve because the caller owns the geometry.
+   *   applyMelee - the damage is a property of the SWING, and there is exactly
+   *                one swing. See systems/melee.js.
+   *
+   * It is not applyBlast with a different name, and the difference is not
+   * cosmetic. BLAST_EXECUTE exists because there is no second grenade half a
+   * second away; there IS a second swing, so a blade that left a sliver is a
+   * blade the player has to use again, which is the whole cost of running out of
+   * ammunition. And BLAST_VOICES caps a dozen simultaneous thuds - a blade
+   * strikes one body, so the cap would only ever be a line that never ran.
+   *
+   * What it shares with both is the only thing that matters downstream: it
+   * writes `killed` onto the record exactly as they do, so a melee kill reaches
+   * the frozen payout table through the same path a bullet kill does and pays
+   * what a kill pays. No new payout is invented here or anywhere else.
+   *
+   * The region is forced to 'body'. A blade cannot land a headshot for the same
+   * reason a blast cannot: the two cues exist to tell the player which of two
+   * payouts they earned, and 60 is the one this pays.
+   *
+   * @param {Array<{enemy:object, damage:number, killed:boolean}>} records
+   * @param {number} [count]
+   * @returns {number} how many connected with something living
+   */
+  function applyMelee(records, count = records ? records.length : 0) {
+    if (!records || count <= 0) return 0;
+
+    let connected = 0;
+
+    for (let i = 0; i < count; i++) {
+      const h = records[i];
+      if (!h) continue;
+
+      h.killed = false;
+      if (!h.enemy || !h.enemy.live || h.enemy.dying) continue;
+      if (!(h.damage > 0)) continue;
+
+      // Away from the player, because the player is where the arm was. The
+      // horizontal component only, exactly as applyHits does it.
+      const dx = h.enemy.position.x - player.position.x;
+      const dz = h.enemy.position.z - player.position.z;
+
+      h.region = 'body';
+      const damage = state.instaKill ? Math.max(1, h.enemy.health) : h.damage;
+
+      // No hit point passed. A swipe has a direction and an arc rather than a
+      // single struck texel, so the actor gets its whole-body reaction, which is
+      // the correct read for something that was cut across rather than shot
+      // through.
+      h.killed = h.enemy.hurt(damage, 'body', dx, dz);
+      state.dealt += damage;
+      connected++;
+      if (h.killed) announceKill(h.enemy, 'body');
+
+      impacts?.spawnEnemyHit?.(h.point, 'body');
+      audio?.bodyHit?.({ pitch: h.enemy.spec?.voicePitch || 1 });
+    }
+
+    return connected;
+  }
+
+  /**
    * The player takes a hit.
    *
    * The position is used for the shake magnitude only. A directional indicator
@@ -357,6 +429,7 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
     state,
     applyHits,
     applyBlast,
+    applyMelee,
     damagePlayer,
     update,
 
