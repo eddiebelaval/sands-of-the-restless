@@ -1533,6 +1533,36 @@ const nukeAfterShot = await shoot('pw-nuke-2-after', 'the same view, everything 
 
 const saleFrames = [];
 
+/**
+ * UNHOOK THE WEAPON HERE TOO. Same defect the framed measurement above already
+ * fixed, in the one section that needed it most and never got it.
+ *
+ * `the live one is left alone` compares the home plinth's changed-pixel count
+ * against the two the sale wakes, and the note at the head of the framed section
+ * records exactly what leaving the gun in costs: the mystery box hands the player
+ * a RANDOM weapon, the viewmodel is drawn inside the measured patch, and that
+ * check "flipped between pass and fail on an unchanged build" as the gun changed
+ * underneath it. The home plinth's own number ranged 3.26 to 4.02 across runs of
+ * one unchanged tree.
+ *
+ * Which is why this check has now been red on two trees and green on a third with
+ * no change to the drops at all - including red on a build whose only difference
+ * was a melee weapon that cannot touch a plinth.
+ *
+ * THE THRESHOLD IS NOT THE THING TO RELAX. A wider gate keeps the noise and moves
+ * the goalposts around it: the check then passes for a reason unrelated to what
+ * it measures, and loses the ability to fail for the right one. Take the gun out
+ * of the frame instead, exactly as the framed section does, and the measurement
+ * is about the drops - which is what it claims to be about.
+ */
+const saleGunOff = await page.evaluate(() => {
+  for (const p of window.__SANDS__.post.composer.passes) {
+    if (p.constructor.name === 'ViewmodelPass') { p.__vm = p.viewmodel; p.viewmodel = null; return true; }
+  }
+  return false;
+});
+if (!saleGunOff) throw new Error('ViewmodelPass not found - the fire sale frames cannot be trusted with the weapon in shot');
+
 await page.evaluate(async () => {
   const g = window.__SANDS__;
   g.spaces.enter('interior', { x: 0, z: -143.5, rot: 0 });
@@ -1644,6 +1674,15 @@ const saleWideOff = await page.evaluate(async () => {
 
 const saleWideColdShot = await shoot('pw-sale-wide-off', 'the same view with the sale over');
 const saleWideDiff = diff(saleWideShot.patchRaw, saleWideColdShot.patchRaw);
+
+// The gun goes back. Every fire-sale frame above - the three plinths and the two
+// wide shots - was photographed without it, so the whole section is measuring the
+// drops rather than whatever the box happened to hand the player. See saleGunOff.
+await page.evaluate(() => {
+  for (const p of window.__SANDS__.post.composer.passes) {
+    if (p.constructor.name === 'ViewmodelPass' && p.__vm) { p.viewmodel = p.__vm; p.__vm = null; }
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 14. THE SOUND, counted at the context
