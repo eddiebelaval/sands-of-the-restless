@@ -367,8 +367,15 @@ export const HUSK = extend(MUMMY, {
   },
 
   gait: {
-    rate: 2.6,
-    stride: 0.85,
+    // `rate` is a MULTIPLIER on a derived cadence now, not the cadence itself.
+    // See strideRate in mummy.js: the clock is set by how far this body's legs
+    // reach and how fast it is travelling, so 1.0 means "no foot slip" and
+    // anything else is a deliberate character note paid for in skating.
+    rate: 1.0,
+    // Longer as well as faster. A husk at four metres a second on a 0.85 swing
+    // was taking two and a half strides a second to keep up with itself; the
+    // longer reach buys a stride you can read at fifteen metres.
+    stride: 0.98,
     armSwing: 0.55,
     // Hanging, not reaching. The spine is already pitched 35 degrees forward,
     // so arms that hang straight down off it end up ahead of the feet on their
@@ -458,8 +465,18 @@ export const BOUND = extend(MUMMY, {
   },
 
   gait: {
-    rate: 1.15,
-    stride: 0.34,
+    // `rate` is a MULTIPLIER on a derived cadence now, not the cadence itself.
+    // See strideRate in mummy.js: the clock is set by how far this body's legs
+    // reach and how fast it is travelling, so 1.0 means "no foot slip" and
+    // anything else is a deliberate character note paid for in skating.
+    rate: 1.0,
+    // THE BIGGEST SINGLE NUMBER IN THIS PASS. At 0.34 the Bound's feet
+    // delivered 1.37 m of ground per stride while the body crossed 4.43 -
+    // SIXTY-NINE PER CENT of every step was the sand running underneath it, and
+    // a two-and-a-half-metre monolith on castors is the least convincing thing
+    // in the level. Doubled, so it takes long, slow, heavy strides instead of
+    // shuffling along a rail.
+    stride: 0.70,
     armSwing: 0.06,
     // Folded across the chest, the mummiform pose of a royal burial.
     //

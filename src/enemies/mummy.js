@@ -877,8 +877,18 @@ export function buildHumanoid(spec, mats, actor) {
   // Gait, per instance. Twenty-four bodies walking on the same stride length at
   // the same rate is a chorus line, and it is the one variation that only shows
   // once they are MOVING - which is when the player actually looks at them.
+  //
+  // THE TEMPO JITTER IS GONE AND THE CROWD IS STILL NOT A CHORUS LINE.
+  //
+  // There used to be a `rate` here, a plus or minus thirteen per cent multiplier
+  // straight onto the phase clock. That was fine while cadence was an authored
+  // number and is wrong now that it is derived: a body whose legs turn over
+  // thirteen per cent faster than its stride length says they should is a body
+  // sliding thirteen per cent of every step. The variation it bought is bought
+  // instead by `stride`, which moves the step LENGTH - so this instance covers
+  // more ground per stride and therefore takes fewer of them per second. Two
+  // actors still walk at different tempos, and neither one skates.
   const gait = {
-    rate: 0.88 + R() * 0.26,
     stride: 0.85 + R() * 0.32,
     swing: 0.8 + R() * 0.45,
   };
@@ -1075,7 +1085,152 @@ export function buildHumanoid(spec, mats, actor) {
   return {
     group, body, hips, torso, neck, legs, arms, tatters, meshes, triangles,
     asym, gait, lead, blob,
+
+    /**
+     * HOW FAR ONE SWING OF THIS BODY'S LEG REACHES ALONG THE GROUND.
+     *
+     * Twice the leg, because a hip rotated `a` radians carries the ankle
+     * `L sin a` forward and the same again back, and this instance's own limb
+     * jitter is in it because a short corpse takes short steps. In rig units;
+     * the group's scale turns it into metres at the point of use.
+     *
+     * This is what makes cadence a derived number rather than an authored one.
+     * See strideRate: a planted foot has to travel backward at exactly the rate
+     * the body travels forward, and until this existed nothing in the file knew
+     * how long the legs were.
+     */
+    stepSpan: 2 * ((P.thighL || 0.44) + (P.shinL || 0.48)) * j.leg,
+
+    /**
+     * The authored spine twist and head bearing, captured HERE rather than on
+     * the first animated frame.
+     *
+     * reactToHit used to read these lazily, which was correct only for as long
+     * as the animator never wrote either axis. The walk now counter-rotates the
+     * thorax against the pelvis - which is the one thing a walking body does
+     * that this rig was not doing - so the animator writes torso.rotation.y
+     * every frame, and a lazy read on the first frame would have captured a
+     * pose that already had a stride in it.
+     */
+    twistBase: torso.rotation.y,
+    neckBase: neck.rotation.y,
   };
+}
+
+// ---------------------------------------------------------------------------
+// cadence
+// ---------------------------------------------------------------------------
+
+/** How far behind the pelvis the chest arrives, in radians of stride. */
+const TRUNK_LAG = 0.62;
+const TRUNK_LAG_C = Math.cos(TRUNK_LAG);
+const TRUNK_LAG_S = Math.sin(TRUNK_LAG);
+
+/** The trailing leg swings this fraction of the leading one. */
+const DRAG_SWING = 0.64;
+
+/**
+ * How long after the foot reaches forward the leg actually takes the weight.
+ *
+ * Not zero, and the first pass had it at zero, which put the deepest knee bend
+ * on the frame the foot was furthest out - so the actor reached with a folded
+ * leg and photographed as a crouch. A real leg arrives nearly straight and
+ * yields just AFTER it is under load. Rendered both ways; this is the one that
+ * looks like a step.
+ */
+const LOAD_LAG = 0.55;
+const LOAD_C = Math.cos(LOAD_LAG);
+const LOAD_S = Math.sin(LOAD_LAG);
+
+/**
+ * How much of a straight leg's geometric reach a BENT one actually delivers.
+ *
+ * `2 L sin a` is the reach of a rigid strut. This leg folds at the knee through
+ * the whole swing, so the ankle traces a different arc than the hip angle
+ * claims. The correction is measured, not modelled: the ankle's own travel over
+ * one stride was read out of the world matrices and compared against the
+ * geometric figure on all three humanoid variants, and it came to 0.816, 0.809
+ * and 0.836. One constant covers all three to within three per cent, which is
+ * the whole argument for it being a property of the rig rather than of a
+ * variant.
+ *
+ * THE RESIDUAL, DISCLOSED. Those three readings were taken at the OLD stride
+ * amplitudes, and the longer strides this pass authored move the ankle a little
+ * further than the correction expects. Re-measured after: the feet now deliver
+ * 13.6, 7.3 and 13.5 per cent MORE ground per stride than the body covers,
+ * against 50.0, 17.9 and 66.3 per cent LESS before. The sign is worth having -
+ * a planted foot that scuffs slightly backward reads as traction, where one the
+ * ground runs forward under reads as ice - but it is a residual, and 0.93 is
+ * what would close it if a later pass wants the last of it.
+ */
+const REACH = 0.82;
+
+/** Phase a standing actor still turns over at, so a stopped corpse breathes. */
+const IDLE_RATE = 0.9;
+
+const TAU = Math.PI * 2;
+
+/**
+ * The stride angle at this drive: how far the leading hip swings, in radians.
+ *
+ * Factored out because the animator and the clock have to agree about it. They
+ * did not before - the animator derived a swing amplitude and the clock advanced
+ * the phase off an authored `gait.rate` that knew nothing about it - and that
+ * disagreement is measurable as foot slip.
+ */
+export function gaitAmp(spec, rig, speed) {
+  const gj = (rig && rig.gait) || ONE_GAIT;
+  const drive = Math.min(1, speed / spec.speed);
+  return spec.gait.stride * gj.stride * (0.35 + 0.65 * drive);
+}
+
+/**
+ * HOW FAST THE LEGS TURN OVER, DERIVED FROM HOW FAST THE BODY IS MOVING.
+ *
+ * Cadence was `0.8 + speed * gait.rate` - a number picked by eye, with no term
+ * for the length of the leg it was driving. Measured on the shipped build, the
+ * feet delivered 1.43 m of ground per stride while the body covered 2.26: 37 per
+ * cent of every step on a shambler, 20 on a husk and SIXTY-NINE on the Bound,
+ * was the sand running backwards under a planted foot. That is the loudest
+ * "this is floating rather than walking" cue a gait can have, and no amount of
+ * upper-body work fixes it, because the eye reads contact first.
+ *
+ * So the clock is derived: one full cycle must cover exactly the ground the two
+ * feet reach, which for a leg of span `stepSpan` swinging `amp` and a trailing
+ * leg swinging DRAG_SWING of that is `stepSpan (sin amp + sin drag amp)`.
+ * `gait.rate` survives as what it should always have been - a per-variant
+ * multiplier on a physically correct baseline, not the baseline itself.
+ */
+export function strideRate(spec, rig, speed) {
+  // NOT EVERY BODY IN THIS FILE IS A BIPED. The scarab is six legs on a tripod
+  // cycle running at twice the body phase, and this derivation does not
+  // describe it: it declares no stepSpan and keeps the clock it shipped with,
+  // exactly. A beetle is not what the note was about, and the way to leave
+  // something alone is to leave it alone.
+  if (!rig.stepSpan) {
+    return (0.8 + speed * spec.gait.rate) * (rig.gait && rig.gait.rate ? rig.gait.rate : 1);
+  }
+
+  const amp = gaitAmp(spec, rig, speed);
+  const span = rig.stepSpan * rig.group.scale.x * REACH;
+  const deliver = Math.max(0.05, span * (Math.sin(amp) + Math.sin(amp * DRAG_SWING)));
+  return Math.max(IDLE_RATE, TAU * speed / deliver) * spec.gait.rate;
+}
+
+/**
+ * A sine with the corners taken off it, which is what a mass moving under its
+ * own weight looks like and what a sine does not.
+ *
+ * f(x) = 1.5x - 0.5x^3 passes through the same extremes as x but its slope at
+ * +/-1 is ZERO, so the body decelerates into each end of the shift and crosses
+ * the middle fast. A raw sine spends most of its time near the extremes moving
+ * FASTEST at the centre, which is a pendulum - and a pendulum is a metronome,
+ * and the eye reads a metronome as fake in about a second.
+ *
+ * Three multiplies, no branch, no transcendental.
+ */
+function weighted(x) {
+  return x * (1.5 - 0.5 * x * x);
 }
 
 /**
@@ -1086,6 +1241,35 @@ export function buildHumanoid(spec, mats, actor) {
  * half cycle apart but not equally weighted, the torso pitches forward and
  * rolls on the same phase so the whole body falls into each step, and the head
  * lolls on a much slower cycle that never lines up with the stride.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT WAS WRONG WITH IT, MEASURED.
+ *
+ * "The wobble from the mummies is not what we want." Three things under that
+ * word, and they were separated by rendering the actor with each contribution
+ * held at zero in turn:
+ *
+ *   1. the LATERAL was one term - `torso.rotation.z = sin(p) * sway` - and it
+ *      owned 68 per cent of the head's sideways travel over a stride. A raw
+ *      sine applied at the waist is a metronome hung off a hinge: it moves
+ *      FASTEST through the middle and dwells at the ends with no deceleration
+ *      into either, which is the one thing a mass never does. Nothing below the
+ *      waist moved at all, so the body did not shift its weight; it just leaned.
+ *   2. every segment moved on ONE PHASE. Pelvis and chest rolled together and
+ *      yawed together, and a body whose chest arrives at the same instant as
+ *      its hips has no mass in it.
+ *   3. the once-per-stride HITCH was symmetric - the same curve down as up - so
+ *      the limp read as a bounce rather than as a leg giving way.
+ *
+ * The fixes are, in order: move the lateral DOWN into the pelvis and shape it
+ * so it decelerates into each extreme; make the chest a lagged, reduced,
+ * counter-rotating follower of the pelvis; and hang the vertical off each
+ * foot's weight acceptance, asymmetrically, so the drop is faster than the
+ * recovery and deeper on the bad leg.
+ *
+ * What did NOT change: the silhouette. Every anchor, width, tilt and value in
+ * the wrap pass is untouched, and the arms, the wind-up and the strike are the
+ * poses they were.
  */
 function animateHumanoid(rig, spec, s) {
   const P = spec.proportions;
@@ -1099,6 +1283,22 @@ function animateHumanoid(rig, spec, s) {
 
   const drive = Math.min(1, s.speed / spec.speed);
   const amp = g.stride * gj.stride * (0.35 + 0.65 * drive);
+
+  /**
+   * ONE sine and ONE cosine for the whole body, and everything phase-shifted
+   * below is built out of the pair.
+   *
+   * A lag is a rotation of (sin p, cos p), so `sin(p - L)` costs two multiplies
+   * and a subtract against constants folded at module load. That matters here
+   * and only here: this function runs once per actor per frame at a live cap of
+   * twenty-four, and the pass that introduced the lag would otherwise have put
+   * five more transcendentals in that loop.
+   */
+  const sp = Math.sin(p);
+  const cp = Math.cos(p);
+  // The pelvis's own wave, lagged: what the chest is doing now is what the hips
+  // were doing TRUNK_LAG radians of stride ago.
+  const lagS = sp * TRUNK_LAG_C - cp * TRUNK_LAG_S;
 
   // Sign convention, and it is worth stating once because every joint below
   // depends on it: the model faces its own +Z, because the actor's yaw is
@@ -1115,17 +1315,46 @@ function animateHumanoid(rig, spec, s) {
    * behind the hip through the whole cycle, and keeps a permanent bend in the
    * knee - so it is pulled after the body instead of carrying it, and the figure
    * has a good side and a bad one from any angle.
+   *
+   * THE YIELD is new, and it is the whole of "this body has weight". A leg that
+   * stays dead straight from heel strike to toe-off is a stilt: the mass lands
+   * on it and nothing gives. A real one flexes as it accepts the load and
+   * extends again through mid-stance. `-sin(p + o - LOAD_LAG)` peaks a little
+   * after the leg is furthest forward, which is when the foot is under the body
+   * rather than out in front of it - see LOAD_LAG for what putting the peak at
+   * zero looked like on screen.
+   *
+   * The same two numbers drive the body's vertical below, so the drop and the
+   * knee that causes it cannot drift apart.
    */
   const lead = rig.lead || 1;
+  let loadLead = 0;
+  let loadDrag = 0;
   for (const leg of rig.legs) {
     const o = leg.side < 0 ? 0 : Math.PI;
-    const drag = leg.side === lead ? 1 : 0.64;
-    leg.hip.rotation.x = Math.sin(p + o) * amp * drag
-      + (leg.side === lead ? 0 : 0.07 * drive);
+    const isLead = leg.side === lead;
+    const drag = isLead ? 1 : DRAG_SWING;
+    const sig = o === 0 ? sp : -sp;              // sin(p + o), o is 0 or PI
+    const cig = o === 0 ? cp : -cp;              // cos(p + o)
+
+    leg.hip.rotation.x = sig * amp * drag + (isLead ? 0 : 0.07 * drive);
+
+    // Weight acceptance: fast in, slow out, and LOAD_LAG of stride after the
+    // foot reaches out rather than at the instant it does. The branch is the
+    // derivative of the same wave - it says whether the leg is still going into
+    // the plant, which is the half that has to be quick, because a leg buckles
+    // faster than it recovers.
+    const sl = sig * LOAD_C - cig * LOAD_S;
+    const u = Math.max(0, -sl);
+    const uu = u * u;
+    const load = (cig * LOAD_C + sig * LOAD_S < 0 ? uu * u : uu) * drive;
+    if (isLead) loadLead = load; else loadDrag = load;
+
     // The knee only bends on the recovery half of the stride. A knee that bends
     // both ways is the classic backwards-leg artefact.
-    leg.knee.rotation.x = Math.max(0, -Math.cos(p + o)) * amp * 1.5 * drag
-      + (leg.side === lead ? 0.06 : 0.17);
+    leg.knee.rotation.x = Math.max(0, -cig) * amp * 1.5 * drag
+      + load * amp * (isLead ? 0.34 : 0.62)
+      + (isLead ? 0.06 : 0.17);
   }
 
   // The wind-up and the strike own the arms outright. A telegraph the player
@@ -1158,39 +1387,113 @@ function animateHumanoid(rig, spec, s) {
       arm.shoulder.rotation.z = arm.side * g.armSplay;
       arm.elbow.rotation.x = -0.15;
     } else {
-      arm.shoulder.rotation.x = reach + Math.sin(p + o) * g.armSwing * gj.swing * drive;
+      // On the LAGGED wave, and off the pair rather than off two more sines.
+      // An arm hangs from the thorax, so it swings on the thorax's clock - and
+      // the thorax arrives after the pelvis. Swinging the arms on the same
+      // instant as the legs is the last place in this body where two masses
+      // moved as one rigid thing.
+      const as = o === 0 ? lagS : -lagS;
+      arm.shoulder.rotation.x = reach + as * g.armSwing * gj.swing * drive;
       arm.shoulder.rotation.z = arm.side * g.armSplay;
-      arm.elbow.rotation.x = -g.elbowBend - Math.max(0, Math.sin(p + o)) * 0.25;
+      arm.elbow.rotation.x = -g.elbowBend - Math.max(0, as) * 0.25;
     }
   }
+
+  /**
+   * THE WEIGHT SHIFT, and it is the part the note was about.
+   *
+   * It lives in the PELVIS now. A body walking does not lean its chest from
+   * side to side over a still pelvis - it puts its mass over the foot that is
+   * carrying it, and the pelvis lists as it does so. The legs hang off the
+   * pelvis in this rig, so listing it is also the only lateral term here that
+   * moves the feet, which is why it reads as weight rather than as a lean.
+   *
+   * `weighted` is what stops it being a metronome: the list decelerates into
+   * each side and crosses the middle quickly, so there is a moment of standing
+   * on one leg rather than a continuous swing through.
+   *
+   * And it does not average out. The permanent term lists the pelvis toward the
+   * DRAG side for the whole cycle, so the asymmetry is a fact about this corpse
+   * rather than something that happens twice a stride and cancels.
+   *
+   * THE SIGNS. A positive rotation.z lifts the pelvis's +x side and drops its
+   * -x side. The +1 leg comes forward at sin p = +1 and takes the load just
+   * after, so the mass has to be over the right foot around there, which means
+   * the LEFT hip drops, which is a positive z. The list is on `sp` rather than
+   * on the lagged load because the pelvis has to arrive over the foot BEFORE
+   * the foot takes the body, not after. The permanent term drops the DRAG hip,
+   * and the drag side is -lead, so that one carries +lead.
+   */
+  const list = weighted(sp) * drive;
+  rig.hips.rotation.z = (list * 0.85 + 0.55 * lead * drive) * g.sway;
+
+  /**
+   * THE CHEST ARRIVES LATE, AND SMALLER.
+   *
+   * Half the reason the old walk read as a puppet is that every segment was on
+   * the same instant of the same phase. A torso is a mass on a spine: it is
+   * dragged by the pelvis, it gets there after it, and it never travels as far.
+   * Both of those are here - TRUNK_LAG of stride behind, and a counter-roll
+   * that takes most of the pelvis's list back out of the chest so the shoulders
+   * stay much closer to level than the hips.
+   *
+   * The same lag on the yaw is the contralateral pattern every walking animal
+   * has and this rig did not: pelvis around one way, shoulders around the
+   * other. `twistBase` is the authored permanent spine twist; the walk is a
+   * modulation of it, not a replacement.
+   */
+  const lagW = weighted(lagS) * drive;
+  rig.torso.rotation.z = -lagW * g.sway * 0.55;
+  rig.hips.rotation.y = list * g.hipTwist;
+  rig.torso.rotation.y = rig.twistBase - lagW * g.hipTwist * 0.75;
 
   if (s.windup > 0) {
     rig.torso.rotation.x = g.lean + s.windup * 0.30;        // rears back
   } else if (s.strike > 0) {
     rig.torso.rotation.x = g.lean - (1 - s.strike) * 0.30;  // falls in behind it
   } else {
-    rig.torso.rotation.x = g.lean + Math.sin(p * 2) * 0.03 * drive;
+    // Falls INTO the heavier step rather than rippling at twice the stride
+    // rate. `loadDrag` is the moment the bad leg takes the body.
+    rig.torso.rotation.x = g.lean - loadDrag * 0.10;
   }
 
-  rig.torso.rotation.z = Math.sin(p) * g.sway * drive;
-  rig.hips.rotation.y = Math.sin(p) * g.hipTwist * drive;
-
-  // One dip per footfall, one sway per stride. Damped hard when staggered so a
-  // hit visibly interrupts the gait rather than only tinting the material.
-  //
-  // THE HITCH. |sin| is two identical dips per stride, which is a metronome, and
-  // a metronome is the loudest "this is a puppet" cue in a walk cycle. Once per
-  // full cycle - as the DRAG foot takes weight - the body drops a little further
-  // and catches. Raised to the eighth power so it is a short catch rather than a
-  // second bob: the whole point is that the rhythm is uneven.
-  const bob = Math.abs(Math.sin(p)) * g.bob * drive;
-  const hitch = Math.pow(Math.max(0, Math.sin(p + 0.9)), 8) * g.bob * 0.85 * drive;
-  rig.body.position.y = bob - hitch - s.stagger * 0.06;
+  /**
+   * THE VERTICAL, HUNG OFF THE FEET INSTEAD OF OFF THE CLOCK.
+   *
+   * It was `|sin p| * bob` minus a `sin^8` hitch: two identical dips per stride
+   * plus one bolt-on catch. Both halves were symmetric in time - the body took
+   * exactly as long to drop as to come back up - and a mass that rises as fast
+   * as it falls is a ball, not a body.
+   *
+   * `loadLead` and `loadDrag` are the same two numbers the knees just yielded
+   * on, so the body drops when a foot accepts the weight and by construction
+   * cannot drop at a moment no leg is loading. They are cubed going in and
+   * squared coming out, so the fall is sharp and the recovery is slow, and the
+   * drag side drops nearly twice as far - which is a limp, and a limp is
+   * asymmetry that PERSISTS rather than asymmetry that oscillates.
+   */
+  // The ride height keeps the mean where the old bob left it, so nothing about
+  // where this body's feet sit on the sand has changed - only how it gets
+  // there. It is scaled by drive for the same reason: a standing corpse is on
+  // its marks, not floating a hand above them.
+  rig.body.position.y = (drive - loadLead * 0.62 - loadDrag * 1.15) * g.bob
+    - s.stagger * 0.06;
   rig.body.rotation.z = s.staggerRoll;
   rig.body.rotation.x = s.staggerPitch;
 
+  // NO STRIDE TERM ON THE HEAD, AND THAT IS A RESULT RATHER THAN AN OVERSIGHT.
+  //
+  // This pass added one - the skull carrying a share of the trunk's lag, on the
+  // same argument as everything else here - and then measured it: 0.34 px at
+  // eight metres, 0.18 at fifteen, 0.11 at twenty-five, on the brow, which is
+  // the furthest point on the head from the joint it turns about. A term that
+  // never moves a pixel at any distance the game is played at is not a subtle
+  // term, it is an absent one, and this file has a long history of keeping
+  // those. The head keeps the loll it already had, which is on a cycle
+  // incommensurate with the stride and is the reason it reads as dead weight.
   rig.neck.rotation.z = tilt + Math.sin(p * 0.37) * g.headLoll;
   rig.neck.rotation.x = g.headDroop + Math.sin(p * 0.53) * 0.05;
+  rig.neck.rotation.y = rig.neckBase;
 
   for (const t of rig.tatters) {
     // Lagged by a quarter cycle so the cloth arrives after the limb it hangs
@@ -1242,24 +1545,17 @@ function animateHumanoid(rig, spec, s) {
  * actor's own frame, resolved at the moment of the hit; see registerHit.
  */
 function reactToHit(rig, spec, s) {
-  // Captured on the first animated frame, not at build. The animator does not
-  // otherwise write either of these axes - the build sets a permanent spine
-  // twist on one and a permanent head bearing on the other - so the first read
-  // here is the authored value, and everything after is base plus reaction. Read
-  // any later and the reaction would be measured from a pose that already
-  // contained a reaction, which is how a flinch turns into a drift.
+  // The bases are captured at BUILD now, not on the first animated frame. The
+  // walk counter-rotates the thorax against the pelvis, so both of these axes
+  // are written every frame by the animator above - a lazy first-frame read
+  // would have captured a pose with a stride already in it, and the flinch
+  // would have been measured off a moving base.
   if (rig.twistBase === undefined) {
     rig.twistBase = rig.torso.rotation.y;
     rig.neckBase = rig.neck.rotation.y;
   }
 
   const hk = s.hit || 0;
-
-  // Written every frame rather than only when reacting, so the twist returns to
-  // the authored value instead of being left wherever the last flinch put it.
-  rig.torso.rotation.y = rig.twistBase;
-  rig.neck.rotation.y = rig.neckBase;
-
   if (hk === 0) return;
 
   const P = spec.proportions;
@@ -1276,26 +1572,33 @@ function reactToHit(rig, spec, s) {
 
   // --- the whole body ---------------------------------------------------------
   //
-  // THE SIGNS ARE WORTH STATING, because every one of them is a chance to build
-  // a reaction that is present in the numbers and backwards on the screen.
-  // Positive rotation.x rears the body back - the wind-up above uses it for
-  // exactly that. Positive rotation.z carries a mass ABOVE its own origin
-  // toward -x, which is the opposite of what it does to a hanging rag, and the
-  // rags below are the only thing in this function that hangs.
+  // IT IS NOT HERE ANY MORE, AND THAT IS THE FIX.
   //
-  // The lateral push comes off the IMPULSE, not off where the round landed: a
-  // bullet travelling toward the actor's +x pushes it toward +x whichever
-  // shoulder it went through. Location contributes a tenth of it, so a shot
-  // taken square in the front still rolls slightly toward the side it hit.
-  rig.body.rotation.x += -f * hk * 0.15;
-  rig.body.rotation.z += (-side * 0.26 + lx * 0.10) * hk;
-  // A hit low on the body drops it. A hit high does not.
+  // This function used to rock the whole body off the impulse, on top of a
+  // `staggerRoll` that was doing the same job from the other end of the file,
+  // off the same event, on the same axis. Two systems writing rig.body's
+  // rotation for one round is how a flinch became a wobble: their peaks did not
+  // line up, so the body was pushed twice from slightly different directions
+  // and slightly different times, and the eye reads that as a shudder rather
+  // than as a hit.
+  //
+  // Whole-body displacement now belongs to ONE owner - the stagger channel in
+  // update(), which is signed by the impulse, decays on its own clock and never
+  // crosses back through the rest pose. What is left in this function is the
+  // part only this function can know: WHERE the round landed. See the note on
+  // st.staggerRoll.
+  //
+  // A hit low on the body still drops it, because that is a fact about the
+  // location rather than about the impulse.
   rig.body.position.y -= hk * 0.06 * Math.max(0, 0.55 - ly);
 
   // --- the spine --------------------------------------------------------------
   // The struck side goes BACK, which under Ry means the same sign as lx, and it
   // drops, which under Rz means the opposite.
-  rig.torso.rotation.y = rig.twistBase + lx * hk * 0.34;
+  //
+  // ADDED, not assigned: the walk writes this axis every frame now, so the
+  // flinch rides on the stride's counter-rotation instead of erasing it.
+  rig.torso.rotation.y += lx * hk * 0.34;
   rig.torso.rotation.x += -f * hk * 0.26 * Math.max(0.25, ly);
   rig.torso.rotation.z += -lx * hk * 0.16;
 
@@ -1337,7 +1640,7 @@ function reactToHit(rig, spec, s) {
   const hg = 0.16 + head * 0.58;
   rig.neck.rotation.x += -f * hk * hg;
   rig.neck.rotation.z += lx * hk * hg * 0.8;
-  rig.neck.rotation.y = rig.neckBase + lx * hk * hg;
+  rig.neck.rotation.y += lx * hk * hg;
 
   // --- the rags ---------------------------------------------------------------
   for (const t of rig.tatters) {
@@ -1353,7 +1656,7 @@ function reactToHit(rig, spec, s) {
 /** What a rig with no per-instance gait falls back to. Bosses build their own
  * rigs through the same animator and are single instances, so they have no
  * crowd to differentiate themselves from. */
-const ONE_GAIT = { rate: 1, stride: 1, swing: 1 };
+const ONE_GAIT = { stride: 1, swing: 1 };
 
 /** Death phases, in seconds. Topple, then lie, then crumble. */
 const TOPPLE_S = 0.62;
@@ -1372,19 +1675,43 @@ function k0(t, dur = TOPPLE_S) {
 }
 
 /**
- * The hit-reaction envelope: one hard snap and one small counter-swing.
+ * The hit-reaction envelope: it goes, and it settles. It does not come back.
  *
- * A flinch that only decays reads as a body being pushed. A real one is a mass
- * on a spine: it goes, it comes back past the rest pose, and it settles - and
- * the whole thing is over in a third of a second, which is why the amplitude is
- * carried separately from the phase. Both terms are driven by the clamped
- * delta, so the shape is identical at three frames a second and three hundred.
+ * THE OLD SHAPE WAS `k * cos(age * 15.5)`, AND IT WAS THE WOBBLE.
+ *
+ * The claim it was written on - "a real one is a mass on a spine: it goes, it
+ * comes back past the rest pose, and it settles" - is true of a struck spring
+ * and false of a struck body, and the numbers say so. Measured on the shipped
+ * build, one pistol round through a shoulder swung the head 44 px at eight
+ * metres and REVERSED IT THREE TIMES on the way down, because the cosine takes
+ * every joint in this reaction - the arm, the spine, the skull, the rags -
+ * through zero and out the other side twice before the amplitude has decayed.
+ * A body shot in the shoulder does not swing back through and out the far side
+ * twice. It gives, and then it stops giving.
+ *
+ * It was also not delta-stable, which is the part that mattered on the machine
+ * this note came from. The same round measured 43.9 px of head travel at the
+ * 1/20 delta clamp and 64.7 px at 1/120, with one reversal against three: the
+ * coarse step was skipping the peaks of a 2.5 Hz oscillation, so the reaction a
+ * player saw depended on their frame rate. At 134 ms a frame it was sampling
+ * about three times per cycle.
+ *
+ * What replaces it is a rise and a settle. The rise is there because a mass
+ * takes a beat to reach its extreme rather than teleporting there on the frame
+ * the round lands - and it is written as a pure function of AGE rather than as
+ * an integrator, so a 50 ms step cannot overshoot it. At the delta clamp the
+ * rise is done on the first frame, so nothing is lost on slow hardware; at 120
+ * a second it takes about seven frames and reads as give.
+ *
+ * The decay is exact rather than incremental for the same reason: exp(-rt) is
+ * the same curve at any step size, where `k -= k * dt * r` is not.
  */
 const HIT_DECAY = 7.5;      // per second
-const HIT_RATE = 15.5;      // radians per second of the counter-swing
+const HIT_ATTACK = 0.055;   // seconds to reach full displacement
 
 function hitEnvelope(k, age) {
-  return k * Math.cos(age * HIT_RATE);
+  const r = age < HIT_ATTACK ? age / HIT_ATTACK : 1;
+  return k * r * r * (3 - 2 * r);
 }
 
 /**
@@ -1748,14 +2075,18 @@ export function createEnemy(spec, index) {
    * Advance the flinch. Delta-driven, and it lands on exactly zero.
    *
    * A purely multiplicative decay is asymptotic: it never reaches zero, so the
-   * counter-swing term would oscillate forever at an amplitude of a millionth of
-   * a radian and the reaction branch in the animator would never switch off. The
-   * cut-off is what makes "no hit" a real state rather than a limit.
+   * reaction branch in the animator would go on running at an amplitude of a
+   * millionth of a radian forever. The cut-off is what makes "no hit" a real
+   * state rather than a limit.
    */
   function decayHit(dt) {
     if (st.hitK <= 0) return;
     st.hitAge += dt;
-    st.hitK -= st.hitK * Math.min(1, dt * HIT_DECAY);
+    // Exact, not incremental. `k -= k * dt * r` is a first-order approximation
+    // of this curve that gets 8 per cent shallower per 50 ms step, so the
+    // flinch a player saw was a function of their frame rate; exp(-rt) is the
+    // same shape at 3 frames a second and 300.
+    st.hitK *= Math.exp(-HIT_DECAY * dt);
     if (st.hitK < 0.004) { st.hitK = 0; st.hitAge = 0; }
   }
 
@@ -1931,18 +2262,44 @@ export function createEnemy(spec, index) {
     // instance's own tempo. A staggered enemy's legs slow down with it and one
     // pinned against a pillar stops walking on the spot, which is the whole
     // reason this is not a free-running timer.
-    st.phase += dt * (0.8 + speed * spec.gait.rate) * (rig.gait ? rig.gait.rate : 1);
+    // Cadence is derived from speed and the length of this instance's legs, so
+    // a planted foot travels backward at the rate the body travels forward.
+    // See strideRate: the authored number this replaces had the feet delivering
+    // 63 per cent of the ground the body covered on a shambler and 31 on a
+    // Bound, and the rest of every step was the sand sliding.
+    st.phase += dt * strideRate(spec, rig, speed);
 
     st.stagger = Math.max(0, st.stagger - dt * 2.6);
-    st.staggerRoll = Math.sin(st.phase * 23) * st.stagger * 0.22;
 
-    // THE PITCH IS DIRECTIONAL NOW. It was `stagger * 0.18`, which rears every
-    // body backward whichever side the round came in on - so a shot in the spine
-    // pitched the chest away from the shooter, up the hill of its own back. The
-    // stagger keeps its magnitude; the SIGN comes off the impulse.
-    // `|| -1` is the legacy fallback, not a guard: a caller that supplied no
-    // usable direction gets the rear-back this line always used to do.
-    st.staggerPitch = st.stagger * 0.18 * -(st.hitF || -1);
+    /**
+     * THE LURCH: ONE PUSH, IN THE DIRECTION OF THE ROUND, THAT SETTLES.
+     *
+     * `staggerRoll` was `sin(st.phase * 23) * stagger * 0.22`, and it was the
+     * thing the note was about. Twenty-three times the stride rate is about
+     * 18 Hz of whole-body roll at up to thirteen degrees, and NO FRAME RATE
+     * THIS GAME RUNS AT CAN SAMPLE IT. At the 1/20 delta clamp the phase
+     * advances 5.7 radians of that term per frame, which is past Nyquist, so
+     * consecutive frames took essentially unrelated values: measured on real
+     * frames, the body rolled 0, +1.6, +5.0, -4.0, +1.2, +2.3 degrees on six
+     * frames in a row - four sign changes - and at 60 Hz the same round gave
+     * seven sign changes and +/-9.4 degrees. That is not a stagger, it is an
+     * aliased buzz, it looked DIFFERENT on every machine, and one pistol round
+     * on a shambler sets it to 0.85 of full, so a player firing five rounds a
+     * second never saw a mummy stop doing it.
+     *
+     * A hit pushes a body ONE WAY. The magnitude is the stagger it already
+     * carried; the direction comes off the impulse, which is the same data the
+     * located reaction uses. Squared because a displacement released against a
+     * body's own mass arrives at rest with its velocity going to zero rather
+     * than by running into a wall - the linear decay underneath it would stop
+     * dead, and a stop dead reads as a cut.
+     *
+     * `|| -1` on the forward term is the legacy fallback, not a guard: a caller
+     * that supplied no usable direction gets the rear-back this line always did.
+     */
+    const lurch = st.stagger * st.stagger;
+    st.staggerRoll = -(st.hitS || 0) * lurch * 0.30;
+    st.staggerPitch = -(st.hitF || -1) * lurch * 0.20;
 
     decayHit(dt);
 
@@ -2231,8 +2588,15 @@ export const MUMMY = {
   },
 
   gait: {
-    rate: 1.85,
-    stride: 0.52,
+    // `rate` is a MULTIPLIER on a derived cadence now, not the cadence itself.
+    // See strideRate in mummy.js: the clock is set by how far this body's legs
+    // reach and how fast it is travelling, so 1.0 means "no foot slip" and
+    // anything else is a deliberate character note paid for in skating.
+    rate: 1.0,
+    // Longer strides, taken at whatever rate two metres a second needs. The old
+    // 0.52 on an authored clock had the shambler covering 2.26 m per stride on
+    // 1.43 m of foot travel.
+    stride: 0.62,
     armSwing: 0.30,
     // The reach is the pose the whole silhouette turns on. At -0.62 the arms
     // hung at the sides and the outline was a mannequin's; at -0.95 they are

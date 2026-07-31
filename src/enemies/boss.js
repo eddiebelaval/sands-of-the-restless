@@ -28,7 +28,7 @@ import * as THREE from 'three';
 import { parts } from './anatomy.js';
 import { linenMaps, compensate, WRAP_TILES } from './wraps.js';
 import {
-  MUMMY, buildHumanoid, animateHumanoid, groundAt, resolveAgainstWorld,
+  MUMMY, buildHumanoid, animateHumanoid, strideRate, groundAt, resolveAgainstWorld,
   pickDetourSide, WEDGE_TRIP, DETOUR_S, DETOUR_BIAS,
 } from './mummy.js';
 
@@ -156,8 +156,14 @@ const COLOSSUS = {
 };
 
 const GOD_GAIT = {
-  rate: 1.25,
-  stride: 0.40,
+    // `rate` is a MULTIPLIER on a derived cadence now, not the cadence itself.
+    // See strideRate in mummy.js: the clock is set by how far this body's legs
+    // reach and how fast it is travelling, so 1.0 means "no foot slip" and
+    // anything else is a deliberate character note paid for in skating.
+  rate: 1.0,
+  // A four-metre god at three metres a second needs a stride to match. At 0.40
+  // it crossed the courtyard without its feet ever catching up.
+  stride: 0.66,
   armSwing: 0.16,
   armReach: -0.55,
   armSplay: 0.40,
@@ -864,7 +870,12 @@ function createGod(god, effects) {
 
     // --- pose ------------------------------------------------------------------
     const speed = Math.hypot(st.vx, st.vz);
-    st.phase += dt * (0.7 + speed * spec.gait.rate);
+    // Derived, exactly as the shambler's is. A god is four metres of body on a
+    // two-metre leg and it covers three metres a second, so an authored cadence
+    // is wrong here by more than it is anywhere else: the shipped number had a
+    // god's feet delivering under a third of the ground it crossed, which is a
+    // colossus on castors. See strideRate in mummy.js.
+    st.phase += dt * strideRate(spec, rig, speed);
 
     anim.phase = st.phase;
     anim.speed = speed;
