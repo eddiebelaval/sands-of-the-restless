@@ -190,10 +190,10 @@ Act 1 is low. Act 2 is low and med. Act 3 is med and high.
 | Tier | Weapon | Where | Cost |
 |---|---|---|---|
 | LOW | MK9 | start | - |
-| LOW | triple-shot | Act 1 wall | ~400 |
+| LOW | **B3AR** (triple-shot) | Act 1 wall | ~400 |
 | LOW | SMG | Act 1 wall | ~700 |
 | LOW | shotgun | Act 2, Hall of Offerings | ~1000 |
-| MED | battle rifle (NEW, unnamed) | Act 2, Chamber of Ascent | ~1400 |
+| MED | **THE IBIS** (battle rifle, NEW) | Act 2, Chamber of Ascent | ~1400 |
 | MED | carbine | Act 2, Great Gallery | 1500 |
 | MED | bolt rifle | box exclusive | - |
 | HIGH | LMG | Act 3, Star Shaft | 1600 |
@@ -208,7 +208,7 @@ describes, and gets better at it: the first thing you see after paying 1000g is 
 **med-tier** gun. Paying the door visibly buys access to a better band, which
 teaches the entire tier system in one glance without a line of text.
 
-### The triple-shot pistol needs a real burst mode
+### B3AR: the triple-shot pistol needs a real burst mode
 
 `weapons.js:611` is the whole fire system and it is binary:
 
@@ -288,7 +288,19 @@ One data move, and it stitches the acts into one arc instead of three.
 
 ---
 
-## Names still open
+## Names, locked 2026-07-31
 
-The battle rifle and the triple-shot pistol are both unnamed. Weapon names are
-the owner's call.
+**B3AR** - the Act 1 triple-shot pistol. Owner's name. The 3 is the burst count
+sitting inside the word, which is the kind of joke a player finds on their second
+run and likes more for having found it.
+
+**THE IBIS** - the Act 2 battle rifle. Thoth's bird, and Thoth is already the
+shrine that doubles gold on headshots, so the precision weapon carries the name of
+the god whose boon pays for precision. It also draws the right line against B3AR:
+one is the brute you can afford in the first two minutes, the other is the surgeon
+you graduate to on the far side of a thousand-gold door.
+
+**The death card stays UNWORTHY**, with THE HEART OUTWEIGHS THE FEATHER beneath it.
+
+**The curtain stays under the HUD** (z-index 10). Confirmed by the owner. The world
+darkens as you approach a threshold; gold, ammo and the minimap stay lit.
