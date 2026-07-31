@@ -213,6 +213,20 @@ function applyModifiers() {
     live.pellets = b.pellets;
     live.range = b.range;
     live.audio = b.audio;
+
+    /**
+     * BURST, carried through rather than derived, and undefined on a weapon that
+     * has none so `if (s.burst)` in the fire loop stays a cheap falsy test.
+     *
+     * The between-bursts cadence takes the global rpm multiplier because that is
+     * what the Shrine of Set is buying - a faster trigger. The INTRA-burst rate
+     * deliberately does not: the mechanism inside the weapon cycles at whatever
+     * the mechanism cycles at, and speeding it up would collapse three cracks
+     * into one noise and delete the read the weapon exists for.
+     */
+    live.burst = b.burst;
+    live.burstRpm = b.burstRpm;
+
     live.upgraded = !!w;
   }
 }
@@ -290,6 +304,18 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     upgraded: new Set(),       // weapons put through the Altar of Ptah
 
     /**
+     * ROUNDS LEFT IN THE BURST IN FLIGHT, and when the next one is due.
+     *
+     * A burst runs itself once started. `burstLeft` is what makes it a burst
+     * rather than three separate trigger pulls, and it is the reason a burst
+     * weapon needs state at all: the trigger begins the burst and then stops
+     * being consulted until it has finished, which is exactly what the player
+     * feels as three cracks they cannot interrupt.
+     */
+    burstLeft: 0,
+    burstNext: 0,
+
+    /**
      * Multiplier on how long a reload takes. The Shrine of Ptah sets 0.5.
      *
      * The AUTHORITY on when a reload finishes is the viewmodel animation
@@ -315,8 +341,23 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
 
   let clock = 0;
 
-  /** Seconds between shots, from rounds per minute. */
-  const interval = (id) => 60 / STATS[id].rpm;
+  /**
+   * Seconds until this weapon may fire again.
+   *
+   * TWO RATES ON ONE WEAPON is the whole burst mechanic. `rpm` is the cadence
+   * BETWEEN trigger pulls, and for a burst weapon `burstRpm` is the cadence
+   * INSIDE one - a much faster number, running independently. Without the split
+   * the rate limiter below refuses the second and third rounds of every burst,
+   * which is a burst weapon that fires once.
+   *
+   * A weapon with no `burst` never reaches the second branch, so every one of
+   * the seven in BASE_STATS resolves to exactly the expression this used to be.
+   */
+  const interval = (id) => {
+    const s = STATS[id];
+    if (s.burst && state.burstLeft > 0) return 60 / s.burstRpm;
+    return 60 / s.rpm;
+  };
 
   function canFire() {
     if (state.reloading) return false;
@@ -504,6 +545,9 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     state.current = id;
     state.reloading = false;
     state.lastShot = -Infinity;
+    // A burst does not survive a weapon swap. Left standing, the counter would
+    // spend the next gun's rounds finishing the last gun's burst.
+    state.burstLeft = 0;
 
     viewmodel?.equip(id);
     audio?.weaponSwitch?.();
@@ -553,6 +597,7 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     state.firing = false;
     state.reloading = false;
     state.lastShot = -Infinity;
+    state.burstLeft = 0;
 
     // Ordered so exactly one of the two animations runs. equip() drives the
     // viewmodel's own lower-and-swap; stow() drives the lower with nothing on
@@ -641,9 +686,55 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
       return null;
     }
 
+    /**
+     * THREE FIRE MODES, AND THE THIRD ONE IS NOT A FLAVOUR OF THE OTHER TWO.
+     *
+     * This used to be one line - `if (s.auto || !state.firing)` - which is
+     * automatic, or one round per click, and nothing else. Burst is a genuinely
+     * third path: a counter that survives across frames plus an inter-shot timer
+     * that runs INDEPENDENTLY of the between-bursts cadence.
+     *
+     * IT IS NOT `pellets: 3`. That fires three rounds in the same instant, which
+     * makes the weapon a small shotgun, and the shotgun already exists at eight.
+     * The feel is the point and it is entirely temporal: three distinct cracks
+     * about forty milliseconds apart, recoil climbing across them, and then a
+     * pause you can hear. A pellet count cannot imitate any of it, and a weapon
+     * that tried would be indistinguishable from the one two rows above it in
+     * BASE_STATS.
+     *
+     * The burst is UNINTERRUPTIBLE by design - releasing the trigger mid-burst
+     * does not cancel it - because that is what a real burst mechanism does and
+     * because a cancellable burst is just an automatic with extra bookkeeping.
+     * What DOES stop it is `fire()` refusing: an empty magazine or a reload that
+     * starts mid-burst zeroes the counter rather than leaving a phantom round
+     * queued to go off after the weapon comes back up.
+     */
+    let hits = null;
+
+    if (s.burst) {
+      // Start one. Held triggers repeat, gated by the rate limiter in canFire,
+      // which is reading the BETWEEN-bursts interval while burstLeft is zero.
+      if (input.fire && state.burstLeft === 0 && canFire()) {
+        state.burstLeft = s.burst;
+        state.burstNext = clock;
+      }
+
+      if (state.burstLeft > 0 && clock >= state.burstNext) {
+        hits = fire(ads);
+        if (hits === null) {
+          state.burstLeft = 0;
+        } else {
+          state.burstLeft -= 1;
+          state.burstNext = clock + 60 / s.burstRpm;
+        }
+      }
+
+      state.firing = !!input.fire;
+      return hits;
+    }
+
     // Automatic weapons fire while held; everything else needs a fresh press,
     // which is what `firing` latches.
-    let hits = null;
     if (input.fire) {
       if (s.auto || !state.firing) hits = fire(ads);
       state.firing = true;

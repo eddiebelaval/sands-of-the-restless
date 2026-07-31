@@ -1,23 +1,50 @@
 /**
- * Can you train in this map? A loop is the core survival mechanic, so ask the
- * room graph directly instead of reading the layout by eye.
+ * CAN YOU TRAIN IN THIS MAP?
+ *
+ * Herding is the core survival mechanic of this genre. You pull the horde into a
+ * line behind you, run a circuit, and turn and cut them down when the line is
+ * long and you have room. A space you cannot run a circuit in is a space you die
+ * in, and no amount of ammo or damage fixes it. So:
+ *
+ *   Every room with spawn points must be in a cycle, or be able to become one
+ *   for a price.
+ *
+ * That is the whole law and it admits no exemption. A dead end you can buy your
+ * way out of is a difficulty choice; a dead end with no exit at any price is a
+ * bug.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS ASKS THE GRAPH RATHER THAN COUNTING DOORS
+ * ---------------------------------------------------------------------------
+ *
+ * The first version of this file scored a room by its DEGREE: one portal was a
+ * DEAD END, two was a through-route, more was a hub. That is the reading a level
+ * designer does by eye, and it is wrong in exactly the way eyes are wrong about
+ * topology. The Star Shaft has two portals and scored 'through-route', but its
+ * second portal goes to the Serdab, which has no third door - so everything that
+ * follows you into the shaft has to come back out the way it went in. Degree two
+ * into a dead end IS a dead end, and no amount of staring at the room finds it.
+ *
+ * CYCLE MEMBERSHIP is the property the mechanic actually needs, so cycle
+ * membership is what gets asserted. It costs a graph walk and it cannot be
+ * fooled by a corridor.
+ *
+ * The map is data with no THREE import, which is what lets any of this be
+ * checked without a GPU - the same property the module graph test relies on.
  */
+
 import { ROOMS, allPortals, neighbors } from '../src/world/rooms.js';
 
 const ids = ROOMS.map((r) => r.id);
 
-// --- degree: a room with one portal is a place you get cornered in ---
-console.log('ROOM                  portals  area     h   verdict');
-for (const r of ROOMS) {
-  const n = neighbors(r.id);
-  const area = r.bounds.w * r.bounds.d;
-  const verdict = n.length <= 1 ? 'DEAD END' : n.length === 2 ? 'through-route' : 'hub';
-  console.log(
-    `${r.id.padEnd(20)}  ${String(n.length).padStart(4)}  ${String(area).padStart(6)}  ${String(r.height).padStart(3)}   ${verdict}`
-  );
-}
+let failures = 0;
+const fail = (msg) => { failures++; console.log(`  FAIL  ${msg}`); };
+const pass = (msg) => { console.log(`  ok    ${msg}`); };
 
-// --- cycles: enumerate every simple cycle in the undirected graph ---
+// ---------------------------------------------------------------------------
+// every simple cycle in the undirected room graph
+// ---------------------------------------------------------------------------
+
 const adj = new Map(ids.map((id) => [id, neighbors(id)]));
 const cycles = [];
 const seen = new Set();
@@ -33,6 +60,29 @@ function walk(start, node, path) {
   }
 }
 for (const id of ids) walk(id, id, [id]);
+
+/** Rooms that lie on at least one cycle. The only rooms you can train in. */
+const onACycle = new Set(cycles.flat());
+
+// ---------------------------------------------------------------------------
+// the report
+// ---------------------------------------------------------------------------
+
+console.log('ROOM                  portals  spawns  area     h   verdict');
+for (const r of ROOMS) {
+  const n = neighbors(r.id);
+  const spawns = (r.spawnPoints || []).length;
+  const area = r.bounds.w * r.bounds.d;
+
+  const verdict = onACycle.has(r.id)
+    ? (n.length > 2 ? 'hub, on a loop' : 'on a loop')
+    : spawns === 0 ? 'no spawns, exempt' : 'NO LOOP';
+
+  console.log(
+    `${r.id.padEnd(20)}  ${String(n.length).padStart(4)}  ${String(spawns).padStart(6)}  ` +
+    `${String(area).padStart(6)}  ${String(r.height).padStart(3)}   ${verdict}`
+  );
+}
 
 console.log('\nCYCLES (a loop you can actually train on):');
 if (!cycles.length) console.log('  NONE');
@@ -52,15 +102,73 @@ for (const c of cycles) {
   console.log(`    doors: ${doors.join(', ')}   TOTAL TO UNLOCK: ${cost}g`);
 }
 
-// --- the upper level of the gallery: ring or two shelves? ---
+// ---------------------------------------------------------------------------
+// THE LAW
+// ---------------------------------------------------------------------------
+
+console.log('\nTHE LAW: every room with spawn points is in a cycle');
+for (const r of ROOMS) {
+  const spawns = (r.spawnPoints || []).length;
+  if (!spawns) continue;
+  if (onACycle.has(r.id)) pass(`${r.id} (${spawns} spawns) is on a loop`);
+  else fail(`${r.id} spawns ${spawns} enemies and is on NO loop at any price`);
+}
+
+// ---------------------------------------------------------------------------
+// each act has its own train
+// ---------------------------------------------------------------------------
+//
+// The act breaks already existed in the economy and were never named: the sealed
+// doorway is the 1 -> 2 break and the gallery's three gates are the 2 -> 3
+// break. An act has to be survivable on its own terms, so a loop that leaves the
+// act does not count - it is only reachable once the next door is paid for.
+//
+// AN ACT'S HUB COUNTS AS INSIDE IT. Act 3's five rooms all hang off the Great
+// Gallery and nothing in the design proposes they should not; the ratified loop
+// is written `gallery -> embalming -> kings -> crypt -> gallery` in MAP.md
+// itself. A player standing in Act 3 has already paid for the gallery and is
+// never sent back through a door to reach it, so a loop through the hub is a
+// loop they can actually run. Scoring it as leaving the act was this check
+// over-specifying its own rule, and it failed a map the design says is correct.
+
+const ACTS = {
+  2: { rooms: ['chamber-of-ascent', 'hall-of-offerings', 'granary-vault'], hub: 'great-gallery' },
+  3: { rooms: ['embalming-chamber', 'canopic-crypt', 'star-shaft', 'kings-chamber', 'serdab'], hub: 'great-gallery' },
+};
+
+console.log('\nEACH ACT HAS ITS OWN TRAIN');
+for (const [act, { rooms, hub }] of Object.entries(ACTS)) {
+  const set = new Set([...rooms, hub]);
+  // A loop that lies entirely in the hub's own act does not count as this act's
+  // train, so it has to touch at least one room the act actually owns.
+  const own = cycles.filter((c) => c.every((id) => set.has(id)) && c.some((id) => rooms.includes(id)));
+  if (own.length) pass(`act ${act}: ${own.length} loop(s), e.g. ${own[0].join(' -> ')}`);
+  else fail(`act ${act} has no loop of its own`);
+}
+
+// ---------------------------------------------------------------------------
+// the gallery's upper level: a ring, or shelves?
+// ---------------------------------------------------------------------------
+//
+// The two shelves used to span the same z on opposite walls and never meet, so
+// going up meant the only way down was back past whatever had followed you. This
+// is the same question as above asked of walkable surfaces instead of rooms, and
+// it is asked the same way: build the adjacency and walk it. Two spans are
+// adjacent when their footprints touch or overlap in BOTH axes - touching
+// counts, because the builder butts slabs edge to edge on purpose and `heightAt`
+// reads inclusive bounds, so a shared edge is walkable.
+
 const g = ROOMS.find((r) => r.id === 'great-gallery');
 console.log('\nGREAT GALLERY UPPER LEVEL');
-const spans = g.ramps.map((r) => ({
+
+const spans = g.ramps.map((r, i) => ({
+  i,
   x: [r.x - r.w / 2, r.x + r.w / 2],
   z: [r.z - r.d / 2, r.z + r.d / 2],
   flat: r.y0 === r.y1,
   y: [r.y0, r.y1],
 }));
+
 for (const s of spans) {
   console.log(
     `  x ${String(s.x[0]).padStart(6)}..${String(s.x[1]).padEnd(6)}  ` +
@@ -68,8 +176,38 @@ for (const s of spans) {
     `y ${s.y[0]}->${s.y[1]}  ${s.flat ? 'LEDGE' : 'ramp'}`
   );
 }
-// Do the two ledges touch anywhere?
-const ledges = spans.filter((s) => s.flat);
-const overlap = (a, b) => a[0] < b[1] && b[0] < a[1];
-const joined = ledges.length === 2 && overlap(ledges[0].x, ledges[1].x) && overlap(ledges[0].z, ledges[1].z);
-console.log(`  the two ledges ${joined ? 'CONNECT - upper level is a ring' : 'DO NOT CONNECT - upper level is two dead-end shelves'}`);
+
+const EPS = 1e-6;
+const touches = (a, b) => a[0] <= b[1] + EPS && b[0] <= a[1] + EPS;
+const adjacent = (a, b) => touches(a.x, b.x) && touches(a.z, b.z);
+
+// One connected component over the spans, seeded anywhere.
+const reached = new Set([0]);
+for (let changed = true; changed;) {
+  changed = false;
+  for (const a of spans) {
+    if (!reached.has(a.i)) continue;
+    for (const b of spans) {
+      if (reached.has(b.i) || !adjacent(a, b)) continue;
+      reached.add(b.i);
+      changed = true;
+    }
+  }
+}
+
+const oneSurface = reached.size === spans.length;
+const rampsUp = spans.filter((s) => !s.flat && reached.has(s.i)).length;
+
+console.log(
+  `  ${oneSurface ? 'ONE CONNECTED SURFACE' : 'SPLIT INTO PIECES'}` +
+  `, reachable by ${rampsUp} ramp(s) from the floor`
+);
+
+if (!oneSurface) fail('the gallery upper level is not one connected surface');
+else if (rampsUp < 2) fail('the gallery upper level has only one way up and down');
+else pass('the gallery upper level is a ring: up one ramp, across, down the other');
+
+// ---------------------------------------------------------------------------
+
+console.log(`\n${failures ? `TRAINABILITY: ${failures} VIOLATION(S)` : 'TRAINABILITY: the law holds'}`);
+process.exit(failures ? 1 : 0);

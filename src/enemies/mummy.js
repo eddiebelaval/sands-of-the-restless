@@ -1943,8 +1943,48 @@ export function createEnemy(spec, index) {
     // so a round taken square in the chest arrives as hitF near -1.
     const len = Math.hypot(dirX, dirZ) || 1;
     const ix = dirX / len, iz = dirZ / len;
-    st.hitS = c * ix - sn * iz;
-    st.hitF = sn * ix + c * iz;
+    const nextS = c * ix - sn * iz;
+    const nextF = sn * ix + c * iz;
+
+    /**
+     * A BODY ALREADY GOING ONE WAY DOES NOT REVERSE ON THE NEXT LIGHT ROUND.
+     *
+     * This assigned `st.hitS` outright, and that is the wobble the owner is
+     * still seeing after the aliased 18 Hz roll was removed. The roll itself is
+     * now a single signed push - see the LURCH note in update() - but its
+     * DIRECTION was being replaced by every round that landed, and the lurch
+     * settles over a few tenths of a second while a pistol fires five times in
+     * one.
+     *
+     * Two things make consecutive rounds disagree about which way is sideways,
+     * and neither is a bug on its own:
+     *
+     *   - Spread. Two rounds a few centimetres apart on a body a metre wide are
+     *     genuinely different impacts.
+     *   - THE TARGET IS TURNING. hitS is the lateral component in the ACTOR'S
+     *     frame, taken through its own yaw, and a shambler tracks the player
+     *     continuously. The same world-space round arriving half a second later
+     *     maps to a different local sideways because the body rotated underneath
+     *     it.
+     *
+     * So the sign flipped round to round, each new lurch cancelled and reversed
+     * the one still settling, and a body being shot rocked left-right-left
+     * instead of taking a beating. One hit looked correct, which is why this
+     * survived: it only appears under sustained fire, which is the only way
+     * anybody actually shoots.
+     *
+     * The blend weights the incoming direction by how much of the previous
+     * lurch is LEFT. Mid-lurch, `st.stagger` is near one and the established
+     * direction dominates, so a new round deepens the push it is already in.
+     * Once the body has settled, `st.stagger` is near zero and the new round
+     * sets the direction outright, exactly as before. Nothing is clamped and no
+     * hit is ignored - a genuinely harder impulse from the other side still
+     * turns the body, it just has to overcome a body already in motion, which
+     * is the thing being modelled.
+     */
+    const committed = Math.min(1, Math.max(0, st.stagger));
+    st.hitS = st.hitS * committed + nextS * (1 - committed);
+    st.hitF = st.hitF * committed + nextF * (1 - committed);
 
     if (point) {
       const ox = point.x - rig.group.position.x;

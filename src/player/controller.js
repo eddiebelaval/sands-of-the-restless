@@ -276,9 +276,21 @@ export function createPlayer(world) {
       state.health = Math.min(state.maxHealth, state.health + n);
     },
 
+    /**
+     * Put the player somewhere. `v.y` is the FLOOR they arrive standing on, not
+     * the eye - the eye is added here, because a caller that had to know
+     * EYE_HEIGHT would be a second copy of it.
+     *
+     * It used to force y to the eye height unconditionally, which meant the one
+     * thing teleport could not do was reach an upper level. That was invisible
+     * while the gallery's ledges were two dead-end shelves nothing needed to be
+     * placed on; with the bridge joined and the Altar of Ptah standing on it,
+     * "ground floor only" is a hole. Every existing caller passes y: 0 and is
+     * therefore unchanged to the millimetre.
+     */
     teleport(v) {
       position.copy(v);
-      position.y = EYE_HEIGHT;
+      position.y = (v.y || 0) + EYE_HEIGHT;
       velocity.set(0, 0, 0);
     },
   };

@@ -76,10 +76,10 @@ window.__E__ = {
    * placement change in rooms.js silently turning this suite into a test of
    * seventeen photographs of a wall.
    */
-  face(x, z, rot, dist = 3.0) {
+  face(x, z, rot, dist = 3.0, y = 0) {
     const g = window.__SANDS__;
     const fx = -Math.sin(rot), fz = -Math.cos(rot);
-    g.player.teleport({ x: x + fx * dist, y: 0, z: z + fz * dist });
+    g.player.teleport({ x: x + fx * dist, y, z: z + fz * dist });
     g.rig.reset(rot + Math.PI, -0.02);
   },
 
@@ -574,7 +574,16 @@ const altar = await page.evaluate(async () => {
     f++;
   }
 
-  window.__E__.face(0, -258, Math.PI, 4.0);
+  // THE ALTAR MOVED, and this is the one fixture position in this suite that was
+  // hand-authored rather than derived, so it is the one that broke when the map
+  // changed. It now stands on the gallery bridge six units up rather than in the
+  // King's Chamber - a tier promotion belongs in Act 2, where 5000 for a band
+  // plays against 3250 to open all three gates into Act 3.
+  //
+  // The fifth argument is the FLOOR the player arrives on. Without it `face`
+  // could only ever stand on the ground, and the whole point of this fixture's
+  // new home is that you have to climb to it.
+  window.__E__.face(0, -193, Math.PI, 4.0, 6);
   g.economy.reset(3000);
   await window.__E__.frames(3);
 
@@ -587,7 +596,7 @@ const altar = await page.evaluate(async () => {
   };
 });
 
-await shoot('eco-11-altar', "the Altar of Ptah in the King's Chamber, 5000 short");
+await shoot('eco-11-altar', 'the Altar of Ptah on the gallery bridge, 5000 short');
 
 /**
  * THE ALTAR IS A RITUAL AND NOT A VENDING MACHINE, so this drives all four beats.
@@ -1086,7 +1095,7 @@ const checks = {
 
   // the altar
   'the altar is the look target':     altar.candidate === 'altar',
-  'the altar is in the sanctum':      altar.room === 'kings-chamber',
+  'the altar is on the bridge':       altar.room === 'great-gallery',
   'the first upgrade costs 5000':     altar.cost === 5000,
   'a short altar prompt is red':      altar.denyWhenShort === true,
   'the upgrade debited 5000':         upgraded.spent === 5000,

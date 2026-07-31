@@ -1881,6 +1881,64 @@ export function buildCourtyard(scene) {
   group.add(leaner);
   addCollider(-8.0, 24.6, 1.0, 3.2);
 
+  // -------------------------------------------------------------------------
+  // the first canopic jar
+  // -------------------------------------------------------------------------
+
+  /**
+   * THE EASTER-EGG CHAIN STARTS OUTSIDE.
+   *
+   * Imsety, the first of the four sons of Horus, used to stand in the Granary
+   * Vault, which is to say the whole four-jar chain began and ended on the far
+   * side of a thousand-gold door. Out here the mission starts before the pyramid
+   * does: the player finds a piece of it in the first minute of the run and
+   * carries it across the threshold, so three acts read as one arc rather than
+   * as three rooms that happen to be adjacent.
+   *
+   * IN THE FIRST WEST CHAPEL, at bay 1 (z = 22.5), which is the first recess the
+   * player passes walking down the avenue from the spawn at (0, 30). The alcoves
+   * were built to give the eye somewhere to travel into and until now had nothing
+   * in them worth travelling to.
+   *
+   * NOT ONE RANDOM DRAW IN HERE, and that is load-bearing rather than tidy. Every
+   * placement in this file downstream of a draw moves when the number of draws
+   * above it changes, so a jar that rolled its own jitter would have shifted the
+   * outer ruins, the palms and the near-field dressing that the finished avenue
+   * was tuned around. Authored coordinates cost nothing and move nothing.
+   */
+  const JAR = { x: -19.0, z: 22.5, index: 1, son: 'imsety' };
+  {
+    const g = new THREE.Group();
+    const y = groundY(JAR.x, JAR.z);
+
+    // Same three parts, same proportions and same materials as the three jars
+    // inside, because they are four of one set and the player has to recognise
+    // the fourth from having seen the first.
+    const plinth = slabMesh(1.1, 0.9, 1.1, M.limestone, DENSITY.limestone);
+    plinth.position.y = 0.45;
+    g.add(plinth);
+
+    const jar = new THREE.Mesh(
+      cylinderUV(new THREE.CylinderGeometry(0.30, 0.22, 0.72, 14), 0.30, 0.72, DENSITY.carved),
+      M.carved
+    );
+    jar.position.y = 1.26;
+    jar.castShadow = true;
+    g.add(jar);
+
+    // The stopper is the son's head. At this scale the shape is a silhouette, so
+    // the gold is doing the identifying.
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), M.gold);
+    head.position.y = 1.76;
+    head.scale.set(1, 1.15, 0.9);
+    g.add(head);
+
+    g.position.set(JAR.x, y, JAR.z);
+    group.add(g);
+    addCollider(JAR.x, JAR.z, 0.62, 1.9);
+    JAR.group = g;
+  }
+
   const dust = makeDust(M, 1600, 110);
   group.add(dust.points);
 
@@ -1997,6 +2055,14 @@ export function buildCourtyard(scene) {
     batched,
     dust,
     dressing,
+
+    /**
+     * Canopic jars standing outside, in the same shape build.js publishes for
+     * the ones inside. One entry today. The puzzle chain is unbuilt, so this is
+     * what stops the exterior jar being invisible to it when it lands - a jar
+     * the chain cannot enumerate is a jar the player can never hand in.
+     */
+    jars: [JAR],
     /**
      * The walkable exterior, as a rectangle rather than a square.
      *

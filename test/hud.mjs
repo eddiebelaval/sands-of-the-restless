@@ -915,36 +915,54 @@ await page.evaluate(() => {
   check(step.stage === 'boon', 'objective h: on the boon rung', step.stage);
 }
 
-// i. carrying one. Next is the Altar, which is behind two more doorways.
+// i. carrying one. Next is the Altar, and it is now in a room already open.
+//
+// THESE TWO STAGES USED TO TEST THE ROUTER, and they cannot any more, because
+// the thing they routed to has moved. The Altar stood in the King's Chamber,
+// two closed doorways deep, so the ladder answered "open the way to canopic
+// crypt" and then "open the way to king's chamber" - naming the next barrier
+// rather than the prize behind it. The Altar now stands on the Great Gallery
+// bridge (see rooms.js), which is the room the player is standing in by this
+// point in the run, so the correct answer is the Altar itself and any assertion
+// that a door stands in the way would be asserting a map that no longer exists.
+//
+// The router behaviour is NOT left uncovered. "Name the next closed barrier" is
+// still asserted at objective f above, and the power gate's condition-not-a-
+// price refusal - which is what stage j was really protecting - is covered
+// directly against the door in test/interior.mjs, by three checks rather than
+// one, and against the fixture rather than through the objective ladder.
 {
   const { step } = await stage('one boon held', () => {
     const g = window.__SANDS__;
     g.economy.grant(4000, 'harness');
     g.shrines.grant('sekhmet');
   });
-  check(step.text === 'OPEN THE WAY TO CANOPIC CRYPT',
-    'objective i: the crypt gate stands between here and the Altar', step.text);
+  check(step.text === 'RENEW YOUR WEAPON AT THE ALTAR',
+    'objective i: the Altar, in a room already open', step.text);
   check(step.stage === 'altar', 'objective i: on the altar rung', step.stage);
 }
 
-// j. the power gate. It has a condition, not a price, and says so.
+// j. and it quotes the wall: 5000, against the 4000 granted above.
 {
   const { step } = await stage('crypt open', () => {
     window.__SANDS__.doors.all.find((x) => x.id === 'great-gallery/canopic-crypt').open();
   });
-  check(step.text === "OPEN THE WAY TO KING'S CHAMBER",
-    'objective j: the power gate', step.text);
-  check(step.cost === 0 && step.detail === 'PRESS F',
-    'objective j: no price, because the Kindling already paid for it', step.detail);
+  check(step.text === 'RENEW YOUR WEAPON AT THE ALTAR',
+    'objective j: opening an unrelated door does not move the rung', step.text);
+  check(step.cost === 5000 && /1000 SHORT/.test(step.detail),
+    'objective j: the first price is the wall, and the shortfall is quoted', step.detail);
 }
 
-// k. in the arena with the Altar in it
+// k. into the arena. The Altar is no longer in it - the King's Chamber is the
+//    boss arena and holds jar 4, and a boss arena wants floor rather than
+//    furniture - so the rung does not move when the player walks in, which is
+//    the property worth asserting now.
 {
   const { step } = await stage("in the king's chamber", () => {
     window.__SANDS__.doors.all.find((x) => x.id === 'canopic-crypt/kings-chamber').open();
     window.__H__.goRoom('kings-chamber');
   });
-  check(step.text === 'RENEW YOUR WEAPON AT THE ALTAR', 'objective k: the Altar', step.text);
+  check(step.text === 'RENEW YOUR WEAPON AT THE ALTAR', 'objective k: the Altar, still', step.text);
   check(step.cost === 5000, 'objective k: the first price is the wall', String(step.cost));
   check(step.affordable === false && /SHORT/.test(step.detail),
     'objective k: shortfall quoted', step.detail);

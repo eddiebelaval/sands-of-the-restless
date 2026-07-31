@@ -241,7 +241,17 @@ export function buildInterior(scene, rooms = ROOMS) {
    * turns them into invisible posts standing on the ledge they are carrying.
    */
   const colliders = [];
-  const addCollider = (x, z, r, h) => colliders.push({ x, z, r, h, y0: 0 });
+  /**
+   * `base` is the absolute y the cylinder STARTS at, and it defaults to the
+   * ground because almost everything in the map stands on it. A fixture on the
+   * gallery bridge does not: at base 0 the Altar's 2.1-metre cylinder would run
+   * from the walkway all the way down through the gallery floor and stand as an
+   * invisible pillar in the middle of the room, two metres from the crypt gate.
+   * Both the player controller and the mummies already read `c.y0` (they take
+   * `c.y0 === undefined ? floorY : c.y0`), so honouring it here is wiring a
+   * contract that was already written on the other side.
+   */
+  const addCollider = (x, z, r, h, base = 0) => colliders.push({ x, z, r, h, y0: base });
 
   /** { x, z, w, d, y0, y1 } axis-aligned boxes, for the player's bounds check. */
   const walls = [];
@@ -619,11 +629,26 @@ function buildLevels(ctx) {
 
     // A kerb along the open edge of a flat ledge. It is the only thing that
     // stops the upper level reading as a floating slab from below.
+    //
+    // WHICH EDGE IS OPEN DEPENDS ON WHICH WAY THE LEDGE RUNS, and this used to
+    // assume every ledge ran along Z because every ledge did. The gallery's two
+    // side shelves run along Z and open toward the centreline in X; the bridge
+    // that now joins them runs along X and opens toward the centreline in Z, and
+    // under the old rule it got a half-metre stub of kerb dropped at one end
+    // instead of a parapet along its length. A ledge is a rectangle either way,
+    // so the rule is the same rule with the axes swapped rather than a case.
     if (rise === 0) {
-      const inner = r.x < room.bounds.x ? r.x + r.w / 2 : r.x - r.w / 2;
-      const kerb = slab(0.5, 0.55, r.d, M.carved, DENSITY.carved);
-      kerb.position.set(inner, r.y0 + 0.27, r.z);
-      group.add(kerb);
+      if (r.d >= r.w) {
+        const inner = r.x < room.bounds.x ? r.x + r.w / 2 : r.x - r.w / 2;
+        const kerb = slab(0.5, 0.55, r.d, M.carved, DENSITY.carved);
+        kerb.position.set(inner, r.y0 + 0.27, r.z);
+        group.add(kerb);
+      } else {
+        const inner = r.z < room.bounds.z ? r.z + r.d / 2 : r.z - r.d / 2;
+        const kerb = slab(r.w, 0.55, 0.5, M.carved, DENSITY.carved);
+        kerb.position.set(r.x, r.y0 + 0.27, inner);
+        group.add(kerb);
+      }
     }
   }
 }
@@ -965,17 +990,25 @@ const PROPS = {
 // ---------------------------------------------------------------------------
 
 function buildInteracts(ctx) {
-  const { room, group, interacts } = ctx;
+  const { room, group, interacts, colliders } = ctx;
 
   for (const slot of room.interactSlots || []) {
     ctx.lastVisuals = null;
+    const before = colliders.length;
 
     const g = INTERACTS[slot.type] && INTERACTS[slot.type](ctx, slot);
     if (!g) continue;
 
     g.position.x = slot.x;
+    // A fixture may stand on an upper level. Unlike propSlots, whose elevated
+    // entries are decoration and drop their colliders, an interact HAS to keep
+    // its collider - it is a solid object the player walks up to - so it is
+    // re-based onto the surface it stands on instead. See addCollider.
+    g.position.y = slot.y || 0;
     g.position.z = slot.z;
     g.rotation.y = slot.rot || 0;
+
+    if (slot.y) for (let i = before; i < colliders.length; i++) colliders[i].y0 = slot.y;
 
     const record = { ...slot, room: room.id, group: g, visuals: ctx.lastVisuals };
     // Tagged on every mesh, not just the group, so a raycast hit resolves to
