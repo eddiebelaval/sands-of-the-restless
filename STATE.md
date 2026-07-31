@@ -151,42 +151,87 @@ different name, is a genuine regression.
 
 `node test/ao-ab.mjs` separately measures whether the AO pass contributes.
 
-## IN FLIGHT as of 2026-07-30 evening - six lanes, none committed
+## ALL SIX LANES LANDED, 2026-07-31
 
-All six work in isolated trees under the session scratchpad and report back
-separately. Each was given an explicit no-touch list so they cannot collide. When one
-lands, verify it yourself, then commit ONLY its own files.
+Every owner playtest note from the 2026-07-30 sessions is in.
 
-| lane | port | owns | building |
-|---|---|---|---|
-| difficulty | 4531 | `ui/pause.js`, `index.html` | Easy / Normal / Hard + a real start menu |
-| melee + ammo | 4551 | `weapons.js`, `powerups.js`, `damage.js` | melee, and ammo drops that stop you getting caught empty |
-| gait | 4561 | `enemies/*` | the mummy "wobble" |
-| door | 4581 | `spaces.js`, `doors.js`, `post.js` | pyramid entry: door opens, fade to black, fade up |
-| death | 4591 | `damage.js`, new `ui/death.js`, `camera.js` | death animation, title card, gated restart |
-| perf | - | **COMMITTED** | pixel budget; see below |
+| lane | commit | what shipped |
+|---|---|---|
+| melee + ammo | `0c5a370` + `a1f4846` | khopesh on Q / middle mouse, 250 flat, 2.2m, 50-degree cone; ammo weight 26 -> 34 plus a SUPPLY floor with a low-reserve tilt and a pity floor |
+| gait | `0b7063c` | lead leg / drag leg at DRAG_SWING 0.64, weight transfer, torso lag; measured ratio 0.64 invariant to speed |
+| pyramid entry | `f000841` | black held until the room has RENDERED (counts frames, not time); curtain moved under the HUD |
+| difficulty | `bee7a25` | Easy / Normal / Hard as curves through 1.00x at wave one; Normal is the shipped game to the digit; cartouche start screen |
+| death | `a8baa5b` | 1s camera fall, UNWORTHY card, and a confirm gate with NO timeout - Enter only, refused if held from before the death |
+| perf | `8dd5dd8` | pixel budget; see below |
 
-**`src/main.js` is the contended file.** Four of these lanes need a wiring hunk in it.
-The working method, used successfully four times already: copy the lane's other files
-in, apply ONLY its main.js hunk by hand, verify `git diff --stat src/main.js` shows just
-that hunk, commit, then restore the other lanes' in-progress main.js content. Never
-`git commit --only src/main.js` while another session has uncommitted work in it - that
-commits their work too.
+**The cross-lane assumption held.** The death lane exempts `doors.update(dt)` from its
+freeze, assuming a transition lifts its own curtain from there. The door lane drives its
+curtain through `spaces.veilTick(dt, want)` called from `doors.js:520` and `:524` -
+inside `doors.update`. Dying mid-transition cannot strand the player under a black sheet.
 
-**Two cross-lane assumptions that must be reconciled when landing:**
+**The ammo split held too.** Melee owns the supply floor and annotated it as the surface
+a tier scales; difficulty deliberately touched nothing in the ammo economy and moved only
+starting gold (750/500/400). They compose.
 
-- **Dying mid-transition.** The door lane raises a black curtain; the death lane resets
-  the run. If the player dies while the curtain is up it must not be left up. Both were
-  told to state their assumption; check they agree.
-- **Ammo pressure.** The melee lane owns the ammo economy and was told to expose named
-  knobs. The difficulty lane was told NOT to touch ammo but that Easy should ease
-  resource pressure and Hard tighten it. Land melee first, then wire difficulty to its
-  knobs.
+## WHAT VERIFICATION COST, AND THE ONE RULE THAT PAID FOR ITSELF
 
-**Owner playtest notes still open** (all from real play on real hardware, all confirmed
-real): the mummy wobble; the pyramid entry showing through walls and under the pyramid;
-no death animation or card; and the run auto-restarting so an idle player dies on a
-loop forever.
+Every lane self-reported green. Every lane had something. Not carelessness - a lane
+verifies against the tree it built in, and the defects live in the interaction.
+
+Three real bugs were caught only by landing and re-running:
+
+- **The curtain dimmed the entire HUD.** At z-index 50 it covered the interface, and it
+  is driven by PROXIMITY as well as by transitions - so standing three metres inside the
+  Chamber of Ascent held it at opacity 0.365 forever, multiplying the page by 0.635. HUD
+  text peak 216 -> 137; six contrast gates that pass at 5.7-14.9:1 failed at 2.8-6.2:1
+  with the HUD unchanged.
+- **The death gate froze `powerups.mjs`.** The suite stages fields of six-plus enemies,
+  dies partway through, and then photographed a stopped world. Seven checks red at once.
+  The tell: drops that "read at four metres" earlier in the same run matched an empty
+  floor to a hundredth, 41.74 against 41.78.
+- **The flaky powerups check was the gun in the frame**, not the threshold. The mystery
+  box hands the player a random weapon and the viewmodel sits inside the measured patch.
+
+**THE RULE: A/B against a clean baseline BEFORE writing a fix.** It found the real cause
+twice. The one time it was skipped, a fix was written for a theory that changed the
+numbers by 0.01 and had to be reverted.
+
+## THE HARNESS LIED MORE THAN THE CODE DID
+
+Four instruments were wrong today, and the code was right:
+
+- `shot.mjs` held `waitForTimeout(1800)`. Under swiftshader a busy machine renders at
+  ~2fps, so 1.8s can be one frame. It reported `the world did not render` THREE times on
+  builds that were fine and nearly cost the gait lane a revert. **Measured: alone
+  meanLuma 44.88, with nine concurrent browsers 0.00, same server same commit.** The
+  first diagnosis was "stale http.server" and that was WRONG - replacing the server
+  changed nothing; dropping the load fixed it every time. Now polls `readPixels` until
+  something is drawn.
+- `test/gaitstrip.mjs` first searched the scene graph for nodes named `/hip/i` and found
+  none - the legs are a plain `{hip, knee, side}` array on the rig. It printed an empty
+  list and would have announced a limp it never measured.
+- The same file then pointed the camera at yaw PI, which faces +Z, and wrote eight
+  immaculate frames of empty avenue with the subject behind the lens. It now projects the
+  subject to screen space and refuses to photograph what it cannot see.
+- `${PIPESTATUS[0]}` is bash; this shell is zsh. `timeout` is not on macOS.
+
+**If a verification run matters, restart the static server and run it on a quiet
+machine.** A black frame is load until proven otherwise.
+
+## STILL OPEN
+
+- **Three flaky pixel-threshold checks**, all comparing small deltas near a gate:
+  `powerups`'s `the live one is left alone` (FIXED by unhooking the gun), `and from
+  across the hall`, and `grenades`'s `the aftermath is a different frame` - which has now
+  been observed BOTH red and green on the same tree, so it is intermittent rather than
+  broken. Do not loosen thresholds; find the variance.
+- **Names, owner's call:** the death card verdict (currently UNWORTHY), the new med-tier
+  battle rifle, the Act 1 triple-shot pistol.
+- **The map rebuild** - see `MAP.md`, ratified 2026-07-30. Three acts, three loops. The
+  trainability law and `tools/trainability.mjs` are in; nothing in `rooms.js` or
+  `courtyard.js` has been touched yet.
+- **Dying sweeps ground drops.** Deliberate and documented, but it now interacts with the
+  ammo scarcity the melee lane was built to fix. Worth feeling in play before deciding.
 
 ## Done and working
 
