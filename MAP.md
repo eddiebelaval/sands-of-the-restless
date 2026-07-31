@@ -32,7 +32,7 @@ land, that tool graduates from `tools/` to `test/` and gets wired into
 `npm test`. It is deliberately NOT in `npm test` today, because it fails, and a
 test file sitting in `test/` that nothing runs is this project's oldest defect.
 
-### What it says today
+### What it said when this document was written, and why that reading was wrong
 
 ```
 ROOM                  portals  area    verdict
@@ -41,7 +41,7 @@ chamber-of-ascent        2      432    through-route
 hall-of-offerings        2      684    through-route
 granary-vault            2      468    through-route
 canopic-crypt            2     1008    through-route
-star-shaft               2      936    through-route
+star-shaft               2      936    through-route      <- WRONG
 embalming-chamber        1     1080    DEAD END
 kings-chamber            1     1600    DEAD END
 serdab                   1      196    DEAD END
@@ -49,6 +49,43 @@ serdab                   1      196    DEAD END
 CYCLES:
   ascent -> hall -> gallery -> granary -> ascent
     doors: debris 750, open, open, debris 750    TOTAL TO UNLOCK: 1500g
+```
+
+**That verdict column is DEGREE, and degree is not the property the mechanic
+needs.** One portal is a dead end, two a through-route, more a hub: that is the
+reading a level designer does by eye, and it is wrong in exactly the way eyes are
+wrong about topology.
+
+The Star Shaft scored `through-route` on two portals. Its second portal goes to
+the Serdab, which has no third door, so everything that follows you into the
+shaft has to come back out the way it came. **Degree two into a dead end IS a
+dead end**, and no amount of staring at the room finds it. So the Act 3 section
+below was written against a map with THREE dead ends while seeing only two, and
+it fixed the two it could see.
+
+The tool now asks for CYCLE MEMBERSHIP instead, which is the property herding
+actually requires. It costs a graph walk and it cannot be fooled by a corridor.
+It also asserts rather than reports, and exits non-zero.
+
+### What it says now
+
+```
+ROOM                  portals  spawns  area     h   verdict
+chamber-of-ascent        2       3     432    7   on a loop
+hall-of-offerings        2       4     684    9   on a loop
+granary-vault            2       3     468    7   on a loop
+great-gallery            5       5    1976   16   hub, on a loop
+embalming-chamber        2       3    1080    8   on a loop
+canopic-crypt            2       4    1008    6   on a loop
+star-shaft               3       4     936   30   hub, on a loop
+kings-chamber            3       5    1600   12   hub, on a loop
+serdab                   1       0     196    5   no spawns, exempt
+
+EACH ACT HAS ITS OWN TRAIN
+  ok    act 2: 1 loop
+  ok    act 3: 3 loops
+
+TRAINABILITY: the law holds
 ```
 
 **Exactly one loop exists in the entire nine-room map, and it costs 1500g.**
@@ -130,7 +167,13 @@ stacked on the first: up one ramp, across the back, down the other.
 Highest-value single geometry change in the map, because everything already
 routes through that room.
 
-### Act 3 - one portal fixes both dead ends
+### Act 3 - two portals, because there were three dead ends
+
+> **Amended after the fixes landed.** This section originally read "one portal
+> fixes both dead ends" and it was written against the degree table above, which
+> could not see that the Star Shaft was a third one. The embalming portal below
+> is correct and shipped as specified. A second, mirrored portal was needed and
+> is recorded at the end of this section.
 
 The Embalming Chamber spans x -44..-14 at z=-232. The King's Chamber spans
 x -20..20 at z=-232. **They share six units of wall line at x -20..-14.**
@@ -148,6 +191,32 @@ becomes somewhere you can circle.
 **Drop the serdab spawn point.** It is a 196-unit reward closet behind a puzzle;
 it should not be spawning anything, and with no spawns it is exempt from the law
 without needing an exemption written into it.
+
+#### The mirror portal, into the Star Shaft
+
+The map is symmetric and nobody had noticed the east side has the same six units
+of shared wall as the west. The Star Shaft spans x 14..40 at z=-232; the King's
+Chamber spans x -20..20 on the same line. **They share x 14..20.**
+
+```
+embalming  x -44..-14 ┐                       ┌ star-shaft x 14..40
+                      ├   both meet z = -232  ┤
+kings      x -20..20  ┘                       └ kings      x -20..20
+      overlap -20..-14                              overlap 14..20
+      portal at x = -17                             portal at x = 17
+```
+
+A portal at `(x: 17, z: -232)`, width 4.0, the same fit with a unit of margin
+each side. Act 3 goes from one loop to three and every spawning room in the map
+is on a cycle. The Serdab stays a dead end and stays legal, because it spawns
+nothing.
+
+**On Hard, both sides wall**, which is the intent in the difficulty section below
+rather than a doubling of it: the boss arena falls back to its one crypt door and
+the wave five fight really is a fight in a dead end until the way out is earned.
+What the second portal adds is a CHOICE of which 1250 to pay - west into the
+Kindling and the embalming chamber, or east into the LMG, the Thoth shrine and
+box spawn C. Same price, same relief, two different runs.
 
 ---
 
