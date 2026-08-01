@@ -880,6 +880,21 @@ export function createPost(renderer, scene, camera) {
     fog,
     viewmodelPass,
 
+    /**
+     * Exposed because there is now a FOURTH caller that changes which passes
+     * are on, and it is not in this file.
+     *
+     * core/retro.js turns GTAO, bloom and SMAA off together while keeping the
+     * fog, which is a combination none of the setters below describe - setAO
+     * pairs fog with GTAO, and it is right to, because in the shipping chain
+     * fog borrows GTAO's depth. Retro mode supplies depth another way and is
+     * therefore the one caller allowed to break that pairing. Rather than add a
+     * fifth setter for one consumer, it gets the helper every caller needs
+     * anyway: whatever is last and still enabled has to write to the screen, or
+     * the frame goes black.
+     */
+    retarget,
+
     /** Wire the viewmodel in once it exists. */
     setViewmodel(vm) { viewmodelPass.viewmodel = vm; },
 

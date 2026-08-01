@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { createRenderer, bindResize, resolutionScale, setGovernorScale } from './core/renderer.js';
 import { createGovernor } from './core/governor.js';
 import { createPost } from './core/post.js';
+import { createRetro } from './core/retro.js';
 import { createInput } from './core/input.js';
 import { createSky } from './world/sky.js';
 import { buildCourtyard } from './world/courtyard.js';
@@ -562,6 +563,13 @@ function boot() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     post.composer.setSize(window.innerWidth, window.innerHeight);
 
+    // PS1 mode owns the composer's pixel ratio while it is on, and this
+    // function has just overwritten it with the shipping convention. Without
+    // this, changing fidelity from the panel while the mode is live leaves the
+    // post chain rendering at window resolution into a canvas a third that
+    // size: the picture survives, the entire performance argument does not.
+    retro?.resize();
+
     btnHigh.setAttribute('aria-pressed', String(high));
     btnLow.setAttribute('aria-pressed', String(!high));
   }
@@ -579,6 +587,11 @@ function boot() {
     renderer.setPixelRatio(high ? resolutionScale() : k);
     renderer.setSize(window.innerWidth, window.innerHeight);
     post.composer.setSize(window.innerWidth, window.innerHeight);
+    // Same reason as in setFidelity. In practice this path cannot run while
+    // PS1 mode is on - choosing it stands the governor down for the session -
+    // but `governor.force()` exists for the harness and does not, so the two
+    // writers are reconciled here rather than assumed apart.
+    retro?.resize();
   }
 
   /**
@@ -587,6 +600,18 @@ function boot() {
    * tell it to stand down, and those are wired at this point in the file.
    */
   let governor = null;
+
+  /**
+   * The PS1 render mode, for the same reason and one more.
+   *
+   * It is built after the governor, because it has to be able to tell it to
+   * stand down, and the settings panel is built between the two - so the panel
+   * gets an accessor pair over this binding rather than the object itself,
+   * exactly as it already does for `fidelity`. Declared null here so that a
+   * player who opens Settings before the mode exists gets a control that reads
+   * Off and does nothing, rather than a thrown error over a menu.
+   */
+  let retro = null;
 
   // An explicit choice by the player ends the automatic one for the session. A
   // system that argues with a button the player just pressed is a bug.
@@ -619,6 +644,13 @@ function boot() {
     fidelity: {
       get: () => high,
       set: (v) => { governor?.yieldToPlayer(); setFidelity(!!v); },
+    },
+    // Same shape, same rule. core/retro.js stands the governor down itself,
+    // because the key binding can reach it without going through this panel.
+    retro: {
+      get: () => !!(retro && retro.enabled),
+      set: (v) => retro && retro.set(!!v),
+      stats: () => (retro ? retro.stats() : null),
     },
     onResume: () => {
       // Settings is also reachable from the title screen, where there is no
@@ -665,6 +697,52 @@ function boot() {
     // frame and would look like free headroom.
     paused: () => pause.paused || spaces.transition.phase !== 'idle',
   });
+
+  /**
+   * THE PS1 MODE, and P is the key.
+   *
+   * The binding had to be one that is free with both hands on the controls and
+   * free of any meaning the player already carries. Digit1-8 are the weapons, Q
+   * is the khopesh, R reloads, V inspects, F interacts, G cooks a grenade, C
+   * and Ctrl crouch, Esc is the menu. P is untouched anywhere in src/, it is
+   * nowhere near WASD so it cannot be hit by accident during a wave, and it is
+   * the one letter in the alphabet that already means "PlayStation" to anyone
+   * who would want this mode. The panel carries the same switch on the Video
+   * tab, because a keystroke nobody is told about is a feature that does not
+   * exist - which is the lesson the CONTROLS tab in ui/pause.js was built out
+   * of.
+   *
+   * It flips in place: no reload, no respawn, and the player does not move. The
+   * mode's whole argument is a comparison, and a comparison you have to walk
+   * back to is not one.
+   */
+  retro = createRetro({
+    renderer, scene, canvas, post, viewmodel, governor,
+    onChange: (state) => {
+      showNotice(state
+        ? 'PS1 mode on - 270 lines, no AO, no bloom, no AA'
+        : 'PS1 mode off');
+      pause.refresh();
+    },
+  });
+
+  window.addEventListener('keydown', (e) => {
+    // Not gated on `started`: the mode is worth seeing on the title card too,
+    // which is a full render of the courtyard. It IS gated on the menu, for the
+    // same reason every other binding in this file is - a keystroke meant for a
+    // text field or a menu button is not a keystroke meant for the renderer.
+    if (e.code !== 'KeyP' || pause.paused) return;
+    retro.toggle();
+  });
+
+  /**
+   * The jitter grid is in pixels of the drawing buffer, so it has to follow the
+   * window. bindResize() above already re-derives the pixel ratio - retro mode
+   * is inside resolutionScale(), so it gets the right one for free - but
+   * nothing else knows the composer's own pixel ratio and the vertex snap have
+   * to move with it.
+   */
+  window.addEventListener('resize', () => retro.resize());
 
   /**
    * The title screen reuses the existing settings panel rather than owning a
@@ -1397,6 +1475,11 @@ function boot() {
     // actually settled on - a claim about performance that cannot be measured
     // from outside the page is not a claim worth making.
     governor,
+    // The PS1 mode, so tools/perf-retro.mjs can flip it and read what it cost.
+    // A render mode whose performance claim cannot be measured from outside the
+    // page is not a claim worth making, which is the same argument the governor
+    // above is exposed for.
+    retro,
     composer: post.composer,
     get elapsed() { return elapsed; },
     // Frames the loop has run, INCLUDING paused ones. Against `elapsed`, which

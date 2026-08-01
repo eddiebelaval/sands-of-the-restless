@@ -119,6 +119,10 @@ export const BINDINGS = [
     rows: [
       { keys: ['F'], what: 'Buy, open, and use - whatever is under the crosshair' },
       { keys: ['Esc'], what: 'Pause, and this panel' },
+      // The same switch as the Video tab's PS1 mode row. Both are listed on
+      // purpose: a player looking for a key looks here, and a player looking
+      // for a setting looks there.
+      { keys: ['P'], what: 'PS1 mode - flip the whole renderer back to 1997' },
     ],
   },
 ];
@@ -208,7 +212,7 @@ export const PAD_BINDINGS = [
  * slider that reports what it asked for rather than what happened is the same
  * class of lie as a HUD that reads its own last write.
  */
-function buildSpec({ rig, audio, mute, fidelity, pad }) {
+function buildSpec({ rig, audio, mute, fidelity, retro, pad }) {
   const deg = (n) => `${Math.round(n)}°`;
 
   return [
@@ -469,6 +473,32 @@ function buildSpec({ rig, audio, mute, fidelity, pad }) {
             ? 'Shadows, full post chain, device pixel ratio'
             : 'No shadows, thinned post chain, one pixel per pixel'),
         },
+        {
+          id: 'retro',
+          kind: 'toggle',
+          label: 'PS1 mode',
+          read: () => retro.get(),
+          write: (v) => retro.set(v),
+          value: () => (retro.get() ? 'On' : 'Off'),
+          /**
+           * The note prints the LIVE buffer size rather than the setting,
+           * because the setting is a number of lines and what the player wants
+           * to know is how few pixels that turned out to be in their window.
+           * It is also the cheapest possible check that the mode did what it
+           * says: a row that reads On over an unchanged pixel count is the
+           * whole of this project's defining bug, visible from the menu.
+           */
+          note: () => {
+            const s = retro.stats && retro.stats();
+            if (!s) return 'Press P. 1997 rendering: low resolution, vertex'
+              + ' jitter, warped textures, five-bit colour';
+            const px = `${s.width}x${s.height}`;
+            return retro.get()
+              ? `Rendering ${px} and scaling up hard. No AO, no bloom, no AA,`
+                + ' no shadows. Fog stays'
+              : `Press P at any time. Currently rendering ${px}`;
+          },
+        },
       ],
     },
     {
@@ -558,7 +588,7 @@ const HEADINGS = {
  * @param {{get: function, set: function}} o.fidelity
  * @param {function} [o.onResume]    called after the menu closes
  */
-export function createPauseMenu({ root, rig, audio, input, fidelity, onResume }) {
+export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onResume }) {
   if (!root) {
     return {
       get paused() { return false; },
@@ -592,6 +622,15 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, onResume })
   };
 
   /**
+   * The same idea one file over. The panel is constructed BEFORE core/retro.js
+   * exists - main.js declares the binding, builds this, then builds the mode -
+   * and it is also reachable from the title screen. Both cases want a control
+   * that reads Off and does nothing rather than a thrown error over an open
+   * menu.
+   */
+  const NO_RETRO = { get: () => false, set: () => {}, stats: () => null };
+
+  /**
    * WHAT THE PLAYER CHOSE, kept separately from what the bus is doing.
    *
    * The menu ducks the game while it is up, so for the entire time the audio
@@ -613,7 +652,7 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, onResume })
     },
   };
 
-  const spec = buildSpec({ rig, audio, mute, fidelity, pad: (input && input.pad) || NO_PAD });
+  const spec = buildSpec({ rig, audio, mute, fidelity, retro: retro || NO_RETRO, pad: (input && input.pad) || NO_PAD });
 
   const tabsEl = root.querySelector('[data-pause-tabs]');
   const bodyEl = root.querySelector('[data-pause-body]');

@@ -66,7 +66,48 @@ export function setGovernorScale(k) {
   governorScale = Math.max(0.5, Math.min(1, k));
 }
 
+/**
+ * THE ONE MODE THAT IS ALLOWED UNDER THE GOVERNOR'S FLOOR, AND WHY IT IS A
+ * SEPARATE LEVER RATHER THAN A LOWER CLAMP.
+ *
+ * `setGovernorScale` clamps at 0.5, and core/retro.js needs about 0.31 - a
+ * fixed 270 lines, which on a 1440x860 window is a ratio of 0.314. The obvious
+ * change is to lower that clamp. It is the wrong change, because the clamp is
+ * not a limit on what the renderer can do, it is a PROMISE THE GOVERNOR MAKES:
+ * an automatic system is allowed to take half your pixels to keep the game
+ * playable and is not allowed to go further than that on its own. Widening it
+ * would let a machine having a bad thirty seconds quietly ship the player a
+ * quarter-resolution frame they never asked for, and nothing in that file could
+ * tell the difference between that and this.
+ *
+ * So retro mode gets its own lever, sitting beside the governor's rather than
+ * inside it, and it expresses the thing it actually means. The setting is not a
+ * ratio at all, it is a VERTICAL RESOLUTION, because that is the form the era's
+ * hardware came in: 240 lines, or 270 for a widescreen window, whatever the
+ * window happens to be. Being an absolute overrides both the pixel budget and
+ * MIN_RATIO on purpose - the budget describes what nine fullscreen passes cost
+ * and retro mode is not running nine passes, and the MIN_RATIO floor exists
+ * because SMAA has too little signal below it, which is a true statement about
+ * an anti-aliasing pass that this mode has switched off. A jagged edge is the
+ * REQUIREMENT here, not the cost.
+ *
+ * Two properties make this safe to leave in the file. It is off by default and
+ * exactly one caller ever sets it. And it is only ever reached through an
+ * explicit player action, which under core/governor.js's own rule stands the
+ * automatic system down for the session - so the two levers can never be
+ * fighting over the same frame.
+ */
+let retroHeight = 0;
+
+export function setRetroHeight(px) {
+  retroHeight = Math.max(0, Math.floor(px || 0));
+}
+
 export function resolutionScale(w = window.innerWidth, h = window.innerHeight) {
+  // Retro mode answers the question outright: this many lines, whatever the
+  // window is. Deliberately above every clamp below, including MIN_RATIO.
+  if (retroHeight > 0) return retroHeight / Math.max(1, h);
+
   const device = Math.min(window.devicePixelRatio || 1, MAX_RATIO);
   const area = Math.max(1, w * h);
   const affordable = Math.sqrt(PIXEL_BUDGET / area);
