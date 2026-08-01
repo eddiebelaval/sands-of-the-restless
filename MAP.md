@@ -281,8 +281,8 @@ Act 1 is low. Act 2 is low and med. Act 3 is med and high.
 | Tier | Weapon | Where | Cost |
 |---|---|---|---|
 | LOW | MK9 | start | - |
-| LOW | **B3AR** (triple-shot) | Act 1 wall | ~400 |
-| LOW | SMG | Act 1 wall | ~700 |
+| LOW | **B3AR** (triple-shot) | Act 1 wall - **the ONLY gun outside** | ~400 |
+| LOW | ~~SMG~~ | ~~Act 1 wall~~ **stays in the Chamber of Ascent** | ~~700~~ 1000 |
 | LOW | shotgun | Act 2, Hall of Offerings | ~1000 |
 | MED | **THE IBIS** (battle rifle, NEW) | Act 2, Chamber of Ascent | ~1400 |
 | MED | carbine | Act 2, Great Gallery | 1500 |
@@ -290,9 +290,34 @@ Act 1 is low. Act 2 is low and med. Act 3 is med and high.
 | HIGH | LMG | Act 3, Star Shaft | 1600 |
 | HIGH | Sunspear | Act 3, Serdab puzzle | - |
 
-Only two weapons actually move: SMG out to Act 1, and the carbine stays put while
-a new med-tier gun takes the Chamber of Ascent wall. The existing placements were
-already close to correct; what was missing was the framing.
+> **OWNER DECISION, 2026-07-31: the B3AR is the ONLY weapon buyable outside.**
+>
+> The row above is struck through rather than deleted, because the reasoning
+> that put the SMG in Act 1 was sound and someone will otherwise re-derive it.
+>
+> One wall gun in the courtyard, and it is the B3AR. The SMG stays inside at
+> 1000, where it has always been. What this buys is that the ONLY armed choice
+> in Act 1 is the one the act is about: keep the MK9 and its 2.6 headshot
+> multiplier, or take the burst. Two guns on the same stretch of avenue makes
+> that a shopping trip; one makes it a decision.
+>
+> It also keeps Act 1 honest about what it is. The courtyard is the spawn area,
+> not a sandbox - `courtyard.js:69` says so - and putting half the low tier out
+> there before the player has paid the thousand for the doorway drains the
+> moment that door is supposed to be.
+>
+> There is no mystery box outside either, and there should not be: all three box
+> spawns are interior by design. A random weapon source in Act 1 would defeat
+> this the moment it rolled an LMG.
+>
+> The exterior wall-buy MECHANISM is still built general, because THE IBIS and
+> any future move needs it. The constraint is on what is placed, not on what is
+> possible.
+
+So no existing weapon moves at all. The carbine stays put while a new med-tier
+gun takes the Chamber of Ascent wall, and the two additions - B3AR outside and
+THE IBIS inside - are the whole change. The existing placements were already
+close to correct; what was missing was the framing.
 
 The Chamber of Ascent keeps the tutorial placement its comment in `rooms.js`
 describes, and gets better at it: the first thing you see after paying 1000g is a
