@@ -18,6 +18,8 @@ import { buildTemple } from './temple.js';
 import { buildScatter } from './scatter.js';
 import { dressAvenue } from './dressing.js';
 import { batchStatics } from './batch.js';
+import { buildQuarry, QUARRY } from './quarry.js';
+import { buildCanal, canalDepthAt, cutCanalIntoGround, CANAL } from './canal.js';
 
 /** Tiles per world unit, per surface. Roughly one masonry course per metre. */
 const DENSITY = {
@@ -96,6 +98,37 @@ const WALL = 52;
  */
 const PLAY = { minX: -23.2, maxX: 23.2, minZ: -33.0, maxZ: 38.4 };
 
+/**
+ * The walkable exterior INCLUDING the two Act 1 spaces, which is what the
+ * player controller and the wave director are handed.
+ *
+ * PLAY above is not widened to cover them and that is not an oversight. PLAY is
+ * read twice more in this file, by `outsidePlay`, which decides whether a
+ * backdrop ruin or a palm is far enough out to be allowed to exist - and that
+ * decision sits INSIDE two loops that have already drawn from `rand` and will
+ * draw again if the test passes. Widening PLAY changes how many of those seven
+ * chunks and forty palm attempts survive, which changes the number of draws
+ * taken, which moves every placement downstream of them. The avenue is finished
+ * work and the whole of this file is arranged so that nothing can move it.
+ *
+ * So PLAY keeps its old meaning - the avenue and its forecourt, the region the
+ * backdrop must stay out of - and this is the separate, wider rectangle that
+ * answers "where may the player be". The numbers sit outside real geometry on
+ * every edge, exactly as PLAY's do: the canal's west wall stops the player at
+ * x = -43.6 and this says -46, the quarry's bedrock face stops them at 37.6 and
+ * this says 41. Nothing here is an invisible wall; it is a backstop against a
+ * collider gap.
+ *
+ * The corners of this rectangle that are neither avenue nor quarry nor canal -
+ * the strip north of the quarry's spoil bank, for instance - are sealed off by
+ * that authored geometry and are unreachable. The wave director does a flood
+ * fill over this rectangle and only ever spawns in the player's own connected
+ * component, so an unreachable corner cannot become a spawn pocket. That is the
+ * same mechanism that keeps enemies out of the two new spaces until they are
+ * bought: while the barricades are up, they are simply not the player's island.
+ */
+const EXTERIOR = { minX: -46.0, maxX: 41.0, minZ: -33.0, maxZ: 38.4 };
+
 /** Deterministic PRNG so the courtyard is identical every run. */
 function rng(seed) {
   let s = seed >>> 0;
@@ -120,6 +153,21 @@ export function buildCourtyard(scene) {
    */
   const brand = rng(51501);
 
+  /**
+   * A THIRD stream, for the Act 1 pass: the Quarry, the Canal, and the mass at
+   * the forecourt centre.
+   *
+   * Same argument as `brand` above, one step further on. The two new spaces are
+   * built after the last existing draw, so they could in fact have shared
+   * `rand` safely today - but "safely today" is a property of the current line
+   * ordering and nothing enforces it. The day somebody inserts a prop above
+   * them, a shared stream silently redresses the avenue and the failure shows
+   * up as a screenshot that looks subtly wrong with no diff to explain it. An
+   * independent stream makes the ordering irrelevant, which is the only version
+   * of this that stays true.
+   */
+  const qrand = rng(30731);
+
   const group = new THREE.Group();
   group.name = 'courtyard';
   scene.add(group);
@@ -131,9 +179,22 @@ export function buildCourtyard(scene) {
   const SPAWN = { x: 0, z: 30 };
   const SPAWN_CLEARANCE = 9;
 
-  /** { x, z, r, h } cylinders. The single source of truth for collision. */
+  /**
+   * { x, z, r, h } cylinders. The single source of truth for collision.
+   *
+   * `y0` is optional and it is what the Act 1 spaces are built on. A collider
+   * that declares no base is measured from whatever the local floor happens to
+   * be, which is right for a palm on a dune and wrong for anything that can be
+   * stood on: the test is "are your feet within h of my base", so with the base
+   * tracking your own floor the answer is always yes and the thing blocks
+   * forever. Declaring a base is what lets a cut block stop being solid once
+   * you are on top of it, and the player and the mummies read the field from
+   * the same array with the same rule, so no surface is climbable by one and
+   * not the other.
+   */
   const colliders = [];
-  const addCollider = (x, z, r, h = 4) => colliders.push({ x, z, r, h });
+  const addCollider = (x, z, r, h = 4, y0) =>
+    colliders.push(y0 === undefined ? { x, z, r, h } : { x, z, r, h, y0 });
 
   /**
    * Seal a straight wall run with overlapping cylinders.
@@ -144,14 +205,61 @@ export function buildCourtyard(scene) {
    * enclosing. Spacing is derived from the radius so the run can never
    * un-seal if either is retuned.
    */
-  const addWallRun = (x, z, r, h, axis, length) => {
+  const addWallRun = (x, z, r, h, axis, length, y0) => {
     const step = r * 1.4;                       // < 2r, so consecutive discs overlap
     const n = Math.max(2, Math.ceil(length / step));
+    const out = [];
     for (let i = 0; i <= n; i++) {
       const t = (i / n - 0.5) * length;
-      addCollider(axis === 'z' ? x : x + t, axis === 'z' ? z + t : z, r, h);
+      addCollider(axis === 'z' ? x : x + t, axis === 'z' ? z + t : z, r, h, y0);
+      out.push(colliders[colliders.length - 1]);
     }
+    return out;
   };
+
+  /**
+   * Seal a rectangular footprint, rather than inscribe a disc in it.
+   *
+   * The wall run above solves a line; this solves an area, and the two are the
+   * same fix to the same defect. One cylinder inside an eight metre block
+   * leaves all four corners open and the player walks into the middle of the
+   * stone. A grid of overlapping cylinders costs about a dozen entries per
+   * block and cannot be walked into from any angle.
+   *
+   * Spacing is derived from the radius for the same reason the wall run derives
+   * its own: whoever retunes the radius later must not be able to un-seal the
+   * mass by doing it.
+   */
+  const fillMass = (cx, cz, w, d, h, y0) => {
+    const r = 1.35;
+    const step = r * 1.35;
+    const nx = Math.max(1, Math.ceil((w - r) / step));
+    const nz = Math.max(1, Math.ceil((d - r) / step));
+    const out = [];
+    for (let i = 0; i <= nx; i++) {
+      for (let j = 0; j <= nz; j++) {
+        const x = cx + (i / nx - 0.5) * Math.max(0, w - r);
+        const z = cz + (j / nz - 0.5) * Math.max(0, d - r);
+        addCollider(x, z, r, h, y0);
+        out.push(colliders[colliders.length - 1]);
+      }
+    }
+    return out;
+  };
+
+  /**
+   * Walkable surfaces above the sand: `{ x, z, w, d, y0, y1 }`, rise along the
+   * longer horizontal axis, y0 at the low-coordinate end.
+   *
+   * Deliberately the SAME record shape and the same semantics build.js uses for
+   * the interior's ramps and ledges, read by the same kind of foot-gated
+   * sampler at the bottom of this file. The exterior did not need one until Act
+   * 1 got a terrace and two causeways; inventing a second vocabulary for it
+   * would have meant two answers to "how high is the floor" living in one
+   * process, which is how the gallery ledge became walkable from underneath.
+   */
+  const decks = [];
+  const addDeck = (deck) => { decks.push(deck); return deck; };
 
   /**
    * A cut stone block: chamfered edges, optional erosion, world-scale UVs.
@@ -199,6 +307,26 @@ export function buildCourtyard(scene) {
   // Dunes, not a plane. A perfectly flat floor is unmistakably synthetic, and
   // the swells also give the low sun something to rake across.
   const dunes = duneField(420, 160, DENSITY.sand, { amplitude: 1.25, seed: 7 });
+
+  /**
+   * CUT THE CANAL INTO THE GROUND ITSELF, before anything reads it.
+   *
+   * The Canal's job is the sunken read, which means the floor has to actually
+   * be lower there - for the picture, for the player, for the mummies coming
+   * down the bank and for a grenade rolling into the channel. There is exactly
+   * one floor in this game's exterior and it is this mesh and the function it
+   * was built from, so the trench is a subtraction applied to both at once
+   * rather than a second surface dropped through a hole. `canal.js` explains
+   * why every breakpoint in the profile is a multiple of 2.625 and what the
+   * residual error is where the two ramps cross.
+   *
+   * This runs here, at the top, rather than beside the rest of the Act 1 pass,
+   * because `groundY` immediately below is what every placement in the file
+   * seats itself on. A trench cut after the fact would leave anything standing
+   * in it hanging three metres in the air.
+   */
+  cutCanalIntoGround(dunes.geometry);
+
   const ground = new THREE.Mesh(dunes.geometry, M.sand);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -212,8 +340,12 @@ export function buildCourtyard(scene) {
    * ground contact": the dunes swell to +/-0.55 under the perimeter, so a block
    * seated at zero either hovers or sinks by up to half a metre. Measured on
    * the shipped build, 73 percent of backdrop meshes were off the surface.
+   *
+   * It is the dune sampler MINUS the canal cut, and the same subtraction the
+   * mesh above just took, so anything seated through this function stands on
+   * the ground that is actually drawn whichever side of the bank it is on.
    */
-  const groundY = dunes.heightAt;
+  const groundY = (x, z) => dunes.heightAt(x, z) - canalDepthAt(x, z);
 
   /** Rubble, seated on the real surface and bedded slightly into it. */
   const bedded = (w, h, d, mat, density, x, z, { eroded = 0.17, bed = 0.35, yaw = null, tilt = 0.35 } = {}) => {
@@ -640,6 +772,191 @@ export function buildCourtyard(scene) {
   const chapelSpots = [];
 
   /**
+   * THE ACT 1 CIRCUIT: where the avenue opens onto the two new spaces.
+   *
+   * MAP.md ratifies Avenue -> Quarry -> Canal -> Avenue as one circuit of
+   * roughly 150 metres, each space opened by a purchase of about 500. Two
+   * spaces on opposite flanks of a corridor need four holes in that corridor,
+   * and four holes is two prices unless one of them is one-way. So each space
+   * gets exactly one BOUGHT mouth and one free BREACH, and the breach is a hole
+   * high in the wall with the spoil banked against it on the outside only:
+   * walk up the talus from inside the space and step down into the avenue, and
+   * from the avenue side it is a sill you cannot climb. One price per space,
+   * one direction round the circuit, and the direction is legible from the
+   * geometry rather than from a sign.
+   *
+   *   quarry  in  east bay 1  (z =  22.5)   out  east bay 5  (z = -13.5)
+   *   canal   in  west bay 5  (z = -13.5)   out  west bay 2  (z =  13.5)
+   *
+   * The two z = -13.5 mouths face each other across the avenue on purpose. The
+   * chapels were deliberately staggered so that no recess is ever read against
+   * another recess, and this is the opposite case rather than a violation of
+   * it: a crossroads wants to be symmetric, because the whole value of it is
+   * that from the middle of the avenue you can see both ways out at once.
+   *
+   * Neither of these bays is a chapel bay and neither is one of the two breached
+   * east bays, so nothing here competes with geometry that was already authored.
+   */
+  const GATE_BAYS = new Map([['1:1', 'quarry'], ['-1:5', 'canal']]);
+  const BREACH_BAYS = new Map([['1:5', 'quarry'], ['-1:2', 'canal']]);
+
+  /** Every mouth built, in build order, collected for the claim records. */
+  const mouths = [];
+
+  /**
+   * One opening in the avenue wall.
+   *
+   * `sill` is zero for a bought gate and the height of the step for a breach.
+   * Everything else is the same: two returns of solid wall, a jamb pier either
+   * side of the hole, a lintel where the bay is tall enough to carry one, and
+   * the wall closed back up above it.
+   *
+   * THE COLLIDER STORY IS THE WHOLE THING. The returns are wall runs like any
+   * other. Across the opening there is no collider at all, which is what makes
+   * it an opening. A breach then puts back a run at the sill height with an
+   * explicit base of the local ground, so it blocks anybody standing on the
+   * avenue floor and is skipped by anybody who has walked up the talus - the
+   * same rule the quarry's terrace runs on, and the reason both had to declare
+   * bases before either could work.
+   */
+  const buildMouth = ({ side, x, z, h, claim, sill }) => {
+    const HALF = 2.6;                     // a 5.2 metre hole, two abreast
+    const RETURN = (BAY + 0.4) / 2 - HALF;
+
+    for (const j of [-1, 1]) {
+      const rz = z + j * (HALF + RETURN / 2);
+      const w = stone(2.6, h, RETURN, M.limestone, DENSITY.limestone,
+        { eroded: 0.07, chamfer: 0.14 });
+      w.position.set(x, h / 2, rz);
+      group.add(w);
+      addWallRun(x, rz, 1.7, h, 'z', RETURN);
+
+      // The jamb, standing proud on the avenue face so the hole is framed
+      // rather than merely absent. Without it the opening reads as a missing
+      // wall segment, which is what the first pass looked like.
+      const jamb = stone(3.4, h * 0.96, 1.5, M.carved, DENSITY.carved, { eroded: 0.05 });
+      jamb.position.set(x - side * 0.5, h * 0.48, z + j * (HALF + 0.6));
+      group.add(jamb);
+      addCollider(x - side * 0.5, z + j * (HALF + 0.6), 1.5, h * 0.96);
+    }
+
+    // A lintel only where there is wall left to carry one. Some bays roll
+    // ruined and stand at three and a half metres, and a header beam pinned at
+    // a fixed height over a stub is a stone slab in clear sky - the exact
+    // failure the architraves had to be fixed for.
+    const head = Math.min(h - 1.1, 5.8);
+    if (head > sill + 2.0) {
+      const lint = stone(3.2, 1.2, HALF * 2 + 1.6, M.carved, DENSITY.carved);
+      lint.position.set(x, head + 0.6, z);
+      group.add(lint);
+
+      if (h > head + 1.8) {
+        const above = stone(2.6, h - head - 1.2, HALF * 2 + 1.0,
+          M.limestone, DENSITY.limestone, { chamfer: 0.1 });
+        above.position.set(x, (h + head + 1.2) / 2, z);
+        group.add(above);
+      }
+    }
+
+    const record = { side, x, z, h, claim, sill, blockers: [], parts: [] };
+
+    if (sill > 0) {
+      // The step. Masonry rather than loose rubble, because it has to read as
+      // something you can stand ON from one side, and a heap of stones reads as
+      // something you climb over from both.
+      const step = stone(2.9, sill + 1.2, HALF * 2, M.limestone, DENSITY.limestone,
+        { eroded: 0.12, chamfer: 0.12 });
+      step.position.set(x, sill - (sill + 1.2) / 2, z);
+      group.add(step);
+      addWallRun(x, z, 1.5, sill - 0.2, 'z', HALF * 2, 0);
+
+      // The talus on the far side, which is the only way up to the sill. It is
+      // a deck record, so the sampler gates it on foot height and nobody gets
+      // snapped up it from the avenue.
+      // Six metres of run, and it has to stay LONGER than the mouth is wide.
+      // The deck record puts its rise on the longer horizontal axis, which is
+      // the interior's rule and is what lets one sampler serve a ramp and a
+      // flat ledge without a second record type; a talus five metres long and
+      // five point two wide would have been read as rising sideways.
+      const run = 6.0;
+      const xIn = x + side * 1.6;                  // clear of the wall's own skirt
+      const xOut = x + side * (1.6 + run);
+      const lo = Math.min(xIn, xOut);
+      const hi = Math.max(xIn, xOut);
+
+      addDeck({
+        x: (lo + hi) / 2, z, w: run, d: HALF * 2,
+        y0: side > 0 ? sill : 0,
+        y1: side > 0 ? 0 : sill,
+      });
+
+      // The wedge under it, placed by working backward from where its top face
+      // has to land. Same construction as the quarry's ramps and the same
+      // reason: a stair of slabs leaves the player's feet half a step above the
+      // stone they look like they are standing on.
+      const theta = Math.atan2(side > 0 ? -sill : sill, run);
+      const THICK = 4.4;
+      const wedge = stone(Math.hypot(run, sill), THICK, HALF * 2,
+        M.limestone, DENSITY.rubble, { eroded: 0.16, chamfer: 0.14 });
+      wedge.rotation.z = theta;
+      wedge.position.set(
+        (lo + hi) / 2 + (THICK / 2) * Math.sin(theta),
+        sill / 2 - (THICK / 2) * Math.cos(theta),
+        z,
+      );
+      group.add(wedge);
+
+      // Its two shoulders. Each cylinder carries the talus height at its own x
+      // less a margin, so from beside it the slope is solid and from on it
+      // every cylinder within reach is already under your feet. A single
+      // constant height here would either wall the talus off at its foot or
+      // leave the player able to walk into the side of a four metre wedge.
+      for (const j of [-1, 1]) {
+        const ez = z + j * (HALF + 0.35);
+        for (let i = 0; i <= 4; i++) {
+          const px = lo + (i / 4) * run;
+          const t = side > 0 ? (hi - px) / run : (px - lo) / run;
+          const eh = sill * t - 0.35;
+          if (eh <= 0.15) continue;
+          addCollider(px, ez, 0.9, eh, 0);
+        }
+      }
+    } else {
+      // A bought gate: choked with what came off the wall when they cut it.
+      //
+      // The blockers are held by reference rather than by index, because
+      // doors.js splices the pyramid's own disc out of this same array when the
+      // sealed doorway is paid for, and an index taken before that is an index
+      // to somebody else's collider afterwards.
+      record.blockers = addWallRun(x, z, 1.6, 3.6, 'z', HALF * 2, 0);
+
+      const CHOKE = [
+        { dz: -1.85, w: 2.4, hh: 3.1, dd: 2.2, yaw: 0.4, tilt: 0.12 },
+        { dz: 0.15, w: 2.8, hh: 3.5, dd: 2.4, yaw: -0.25, tilt: -0.08 },
+        { dz: 2.05, w: 2.3, hh: 2.9, dd: 2.1, yaw: 0.7, tilt: 0.16 },
+        { dz: -0.9, w: 1.9, hh: 1.6, dd: 1.8, yaw: 1.2, tilt: 0.3 },
+        { dz: 1.2, w: 2.0, hh: 1.4, dd: 1.9, yaw: -0.9, tilt: -0.25 },
+      ];
+
+      for (const c of CHOKE) {
+        const chunk = stone(c.w, c.hh, c.dd, M.limestone, DENSITY.rubble,
+          { eroded: 0.18 });
+        chunk.position.set(x, groundY(x, z + c.dz) + c.hh * 0.42, z + c.dz);
+        chunk.rotation.set(c.tilt * 0.6, c.yaw, c.tilt);
+        // NOT STATIC. The batcher stops at this tag, which it has to: these
+        // meshes move when the claim is bought, and a mesh whose matrix has
+        // been baked into a shared buffer cannot move.
+        chunk.userData.noBatch = true;
+        group.add(chunk);
+        record.parts.push({ mesh: chunk, y0: chunk.position.y });
+      }
+    }
+
+    mouths.push(record);
+    return record;
+  };
+
+  /**
    * Per-bay wall height, keyed `${side}:${bay}`.
    *
    * The bays vary in height and some are ruined to a stub, which is good for
@@ -654,7 +971,9 @@ export function buildCourtyard(scene) {
     for (let b = 0; b < bays; b++) {
       const z = AVENUE.zNear - b * BAY - BAY / 2;
       const x = side * AVENUE.halfWidth;
-      const isChapel = CHAPEL_BAYS[side].has(b);
+      const gateOf = GATE_BAYS.get(`${side}:${b}`);
+      const breachOf = BREACH_BAYS.get(`${side}:${b}`);
+      const isChapel = CHAPEL_BAYS[side].has(b) && !gateOf && !breachOf;
 
       // The east wall has taken a hit across two bays. A single localised
       // collapse is worth more than evenly-distributed damage: even damage
@@ -731,6 +1050,40 @@ export function buildCourtyard(scene) {
         // clear sky beside a stub - a red rectangle floating over nothing, which
         // is exactly the "half rendered" read this pass is chasing out.
         chapelSpots.push({ x: x + side * (DEPTH - 2.2), z, side, h });
+
+      } else if (gateOf || breachOf) {
+        /**
+         * BURN THE DRAWS THIS BAY WOULD HAVE TAKEN.
+         *
+         * The solid-wall branch below pulls one number off `rand` per projecting
+         * string course, and it only lays courses on bays 0 and 1, and it stops
+         * early once the wall runs out of height. East bay 1 is the quarry's way
+         * in, so it takes that branch's draws and never lays its courses - and
+         * every placement in the rest of this file reads from the same stream.
+         * This file has burned draws twice before for exactly this reason, once
+         * for the old pyramid's thirty-three and once for the boundary pass, and
+         * the rule it learned both times is that the FINISHED AVENUE IS THE
+         * QUALITY BAR and nothing may move it by so much as a bay.
+         *
+         * The condition below is a literal copy of the one it is standing in for
+         * rather than a count, because the count depends on `h`, which is drawn.
+         */
+        if (b <= 1) {
+          for (let c = 0; c < 3; c++) {
+            if (2.9 + c * 2.5 > h - 1) break;
+            rand();
+          }
+        }
+
+        buildMouth({
+          side, x, z, h,
+          claim: gateOf || breachOf,
+          // A breach's sill is a fraction of the bay rather than a fixed number,
+          // so a bay that rolled ruined at three and a half metres still gets a
+          // step it can carry. Floored at 1.3, because a step under a metre is
+          // a step the player can walk up and the mouth stops being one-way.
+          sill: breachOf ? Math.min(2.9, Math.max(1.3, h * 0.45)) : 0,
+        });
 
       } else {
         // Where a coping is going on, the wall runs up INTO it rather than
@@ -1681,6 +2034,25 @@ export function buildCourtyard(scene) {
   const outsidePlay = (x, z) =>
     x < PLAY.minX - 3 || x > PLAY.maxX + 3 || z < PLAY.minZ - 3 || z > PLAY.maxZ + 3;
 
+  /**
+   * What the two loops below actually put on the ground, so the Act 1 pass can
+   * deal with the ones that are no longer backdrop.
+   *
+   * These loops place mid-ground ruins and palms OUTSIDE the avenue's walkable
+   * rectangle, on the reasonable assumption that outside the avenue means out
+   * of reach. The Quarry and the Canal are outside the avenue, so some of these
+   * now stand in rooms the player walks through - and none of them registers a
+   * collider, because scenery nothing can touch does not need one.
+   *
+   * The fix is not to move them and it is CERTAINLY not to widen the rectangle
+   * they are tested against: the test sits between two draws, so changing its
+   * answer changes the length of the stream and redresses the finished avenue.
+   * They are recorded here and adopted at the end of the build, where a ruin
+   * standing in the quarry can simply be given the collider it should have had
+   * and become a block among blocks. Nothing moves; something solid is added.
+   */
+  const backdropProps = [];
+
   for (let i = 0; i < 7; i++) {
     const a = rand() * Math.PI * 2;
     const d = 26 + rand() * 20;
@@ -1704,6 +2076,7 @@ export function buildCourtyard(scene) {
     chunk.rotation.y = rand() * Math.PI;
     chunk.rotation.z = (rand() - 0.5) * 0.14;
     group.add(chunk);
+    backdropProps.push({ mesh: chunk, x, z, r: Math.max(w, dd) * 0.45, h });
   }
 
   // Four palms, not eleven, and every one of them beyond the walkable edge.
@@ -1719,7 +2092,9 @@ export function buildCourtyard(scene) {
 
     if (!outsidePlay(x, z)) continue;
 
-    group.add(makePalm(x, z, groundY(x, z) - 0.15, rand, M));
+    const palm = makePalm(x, z, groundY(x, z) - 0.15, rand, M);
+    group.add(palm);
+    backdropProps.push({ mesh: palm, x, z, r: 0.75, h: 4.5 });
     palms++;
   }
 
@@ -2022,6 +2397,195 @@ export function buildCourtyard(scene) {
   });
 
   // -------------------------------------------------------------------------
+  // Act 1: the courtyard opens up
+  // -------------------------------------------------------------------------
+  //
+  // The two authored spaces MAP.md ratifies, plus the mass at the forecourt
+  // centre, and they run HERE, after the last existing draw in the file and
+  // after the dressing pass, for two separate reasons that both matter.
+  //
+  // The first is the stream. Everything above this line was tuned against a
+  // particular sequence of random numbers, and the whole file is arranged so
+  // that a later pass cannot disturb it. This pass draws from `qrand`, which is
+  // its own stream, AND sits below everything that draws from `rand` or
+  // `brand`, so it is safe twice over.
+  //
+  // The second is the scatter, which is handed the collider list as its
+  // exclusion set and rejects samples against it. Roughly three hundred new
+  // colliders arriving before that call would have changed how many samples it
+  // rejects and reshuffled the ground detail down the entire avenue - a real
+  // change to finished work, produced by geometry forty metres away from it.
+  // Running after the scatter has already been built means the exclusion list
+  // it saw is exactly the list it used to see.
+  //
+  // What this pass may NOT do is widen `PLAY`, remove a bound, or open the
+  // perimeter. MAP.md is explicit: the map grows by authoring spaces, never by
+  // unlocking backdrop, and `courtyard.js:62` records what happened the last
+  // time the walkable area was a rectangle drawn round some blockout.
+
+  /**
+   * The mass at the forecourt centre: THE PANIC CIRCLE.
+   *
+   * MAP.md asks for two loop scales in Act 1, "the circuit for when you have
+   * room to run, and the panic circle for when you do not", and this is the
+   * second one. The forecourt is the room the sealed doorway wants around it
+   * and it is the one place on the route with nothing in it, which means the
+   * fight you have while waiting for the door to be affordable is a fight in an
+   * empty box against a wall.
+   *
+   * A sledge with its block still on it, abandoned at the temple front, and it
+   * is deliberately NOT centred on the axis. Dead centre in the forecourt puts
+   * it exactly between the player and the doorway they walk toward for the
+   * whole session, which is the one sightline in the exterior that is not
+   * allowed to be blocked. Offset west it is a mass you circle without ever
+   * being a mass you look through.
+   *
+   * Three metres of clear floor all round, measured against the collider
+   * skirts rather than the meshes and against the two things that nearly ate
+   * it: the west colonnade's terrace runs down to x = -9.4 and the pyramid's
+   * own 32-unit disc reaches z = -30, so the first placement at (-4.6, -24.6)
+   * had one and a half metres of floor on two of its four sides. A circle with
+   * a metre and a half on one leg is not a circle, it is a place the horde
+   * closes both ends of at once.
+   */
+  {
+    const cx = -3.5;
+    const cz = -23.0;
+
+    const bed = new THREE.Group();
+    bed.position.set(cx, groundY(cx, cz), cz);
+    bed.rotation.y = 0.36;
+
+    for (const side of [-1, 1]) {
+      const runner = slabMesh(0.5, 0.5, 6.6, M.palmTrunk, DENSITY.rubble);
+      runner.position.set(side * 1.35, 0.25, 0);
+      bed.add(runner);
+    }
+    for (let i = 0; i < 5; i++) {
+      const tie = slabMesh(3.4, 0.32, 0.5, M.palmTrunk, DENSITY.rubble);
+      tie.position.set(0, 0.62, -2.5 + i * 1.3);
+      bed.add(tie);
+    }
+
+    // The block itself, tipped off its bed at one end. A block sitting square
+    // on its sledge reads as cargo; a block that has slipped reads as the
+    // moment the work stopped, which is what the whole necropolis is about.
+    const load = stone(3.0, 2.4, 4.6, M.limestone, DENSITY.limestone,
+      { eroded: 0.12, chamfer: 0.2 });
+    load.position.set(0.2, 1.85, -0.3);
+    load.rotation.set(0.07, 0.05, -0.11);
+    bed.add(load);
+
+    group.add(bed);
+    fillMass(cx, cz, 4.4, 6.4, 2.6, 0);
+  }
+
+  const act1 = {
+    group, M, DENSITY, stone, slabMesh,
+    addCollider, addWallRun, fillMass, addDeck, groundY, rand: qrand,
+  };
+
+  const quarry = buildQuarry(act1);
+  const canal = buildCanal(act1);
+
+  /**
+   * Adopt the backdrop props that now stand inside a room.
+   *
+   * See `backdropProps` above for why they cannot simply be moved. A ruin or a
+   * palm inside the quarry gets the collider it should have had and becomes
+   * part of the yard; one that has landed in a doorway or on a walkable deck is
+   * removed outright, because a block in a mouth is a mouth nobody can use and
+   * a palm growing out of a terrace is a palm nobody believes.
+   */
+  const inSpace = (x, z) =>
+    (x > QUARRY.minX && x < QUARRY.maxX && z > QUARRY.minZ && z < QUARRY.maxZ) ||
+    (x > CANAL.minX && x < CANAL.maxX && z > CANAL.minZ && z < CANAL.maxZ);
+
+  const adopted = { kept: 0, removed: 0 };
+  for (const p of backdropProps) {
+    if (!inSpace(p.x, p.z)) continue;
+
+    const inDoorway = mouths.some((m) =>
+      Math.abs(p.x - m.x) < 9 && Math.abs(p.z - m.z) < 5.5);
+    const onDeck = decks.some((d) =>
+      p.x > d.x - d.w / 2 - 1 && p.x < d.x + d.w / 2 + 1 &&
+      p.z > d.z - d.d / 2 - 1 && p.z < d.z + d.d / 2 + 1);
+
+    if (inDoorway || onDeck) {
+      p.mesh.parent.remove(p.mesh);
+      adopted.removed++;
+    } else {
+      addCollider(p.x, p.z, p.r, p.h, groundY(p.x, p.z));
+      adopted.kept++;
+    }
+  }
+
+  /**
+   * The two claims, in the shape doors.js already knows how to drive.
+   *
+   * This file owns what a barrier IS - the meshes, the colliders, the animation
+   * that clears it - and doors.js owns what it COSTS and whether it may be
+   * bought, which is the split its own header states and the reason the sealed
+   * doorway is read out of the scene graph rather than built inside it. So the
+   * record below carries `open()` and `advance(dt)` fully working, and what it
+   * is still missing is the half that is not this file's to write: nothing
+   * raycasts these meshes, nothing prices them, nothing takes the gold. Until
+   * doors.js adopts them the two spaces are sealed. See the note at the return.
+   */
+  const claims = [];
+  for (const [key, spec] of [
+    ['quarry', { label: 'The Quarry', cost: 500 }],
+    ['canal', { label: 'The Canal', cost: 500 }],
+  ]) {
+    const gate = mouths.find((m) => m.claim === key && m.sill === 0);
+    if (!gate) continue;
+
+    let t = 0;
+    const record = {
+      type: 'door',
+      id: `courtyard/${key}`,
+      kind: 'debris',
+      cost: spec.cost,
+      label: spec.label,
+      x: gate.x, z: gate.z,
+      opened: false,
+      opening: false,
+
+      open() {
+        if (record.opened || record.opening) return false;
+        record.opening = true;
+
+        // The colliders go IMMEDIATELY and the meshes take a moment, which is
+        // the order the sealed doorway uses too. A player who has paid and is
+        // already walking must not be held by a barrier that is visibly moving.
+        for (const c of gate.blockers) {
+          const i = colliders.indexOf(c);
+          if (i >= 0) colliders.splice(i, 1);
+        }
+        return true;
+      },
+
+      advance(dt) {
+        if (!record.opening) return;
+        t = Math.min(1, t + dt / 1.5);
+        const k = 1 - Math.pow(1 - t, 3);
+        for (const p of gate.parts) p.mesh.position.y = p.y0 - 4.4 * k;
+        if (t >= 1) {
+          record.opening = false;
+          record.opened = true;
+          for (const p of gate.parts) p.mesh.visible = false;
+        }
+      },
+
+      /** The meshes a look-at ray has to hit for this to be buyable. */
+      parts: gate.parts.map((p) => p.mesh),
+    };
+
+    for (const p of gate.parts) p.mesh.userData.door = record;
+    claims.push(record);
+  }
+
+  // -------------------------------------------------------------------------
   // batching
   // -------------------------------------------------------------------------
   //
@@ -2063,6 +2627,36 @@ export function buildCourtyard(scene) {
      * the chain cannot enumerate is a jar the player can never hand in.
      */
     jars: [JAR],
+
+    /** The two Act 1 spaces, for the harness and for anything that wants to
+     *  ask where they are without importing their modules. */
+    quarry,
+    canal,
+
+    /** How many backdrop ruins the Act 1 pass had to make solid, and how many
+     *  it had to delete. Reported rather than silent: if either number moves,
+     *  the mid-ground loops have started landing somewhere new. */
+    adopted,
+
+    /**
+     * THE TWO ACT 1 CLAIMS, AND WHAT IS STILL MISSING.
+     *
+     * Each record is complete on this side: it has a price, a label, a position,
+     * the meshes tagged with `userData.door`, a working `open()` that releases
+     * the colliders, and a working `advance(dt)` that sinks the rubble. Calling
+     * `courtyard.claims[0].open()` opens the Quarry today, which is how the
+     * spaces were photographed.
+     *
+     * What does not exist is the other half of the mechanic, and it lives in
+     * `systems/doors.js`, which builds exactly one exterior barrier by looking
+     * up the mesh named 'sealed-doorway' and wrapping it by hand. Nothing in it
+     * enumerates courtyard barriers, so nothing raycasts these meshes, nothing
+     * shows a price, nothing takes gold, and nothing calls `advance`. Until that
+     * file iterates this array the way it already iterates `interior.barriers`,
+     * both spaces are built, sealed, and unreachable in play.
+     */
+    claims,
+
     /**
      * The walkable exterior, as a rectangle rather than a square.
      *
@@ -2072,15 +2666,66 @@ export function buildCourtyard(scene) {
      * so the exterior can stop pretending to be a 99-metre square without a
      * change anywhere downstream. It also means enemies now spawn in the space
      * the player is actually in, instead of over a field they can never enter.
+     *
+     * It is EXTERIOR and not PLAY, because Act 1 added two rooms outside the
+     * avenue. See the comment on both constants at the top of the file for why
+     * they are two constants and not one.
      */
-    bounds: PLAY,
+    bounds: EXTERIOR,
 
     /**
      * Floor height at a world position. The controller samples the same
      * function the dune mesh was built from, so collision can never drift out
      * of agreement with what is rendered.
+     *
+     * Two layers, and the order is the contract.
+     *
+     * The TERRAIN is `groundY`, which is the dune sampler less the canal cut,
+     * and it is unconditional: the trench is the ground out there, not a thing
+     * standing on it, so an actor in the channel is three metres down whatever
+     * else is true.
+     *
+     * The DECKS are the quarry's terrace, its two ramps, the canal's two
+     * causeways and the two talus slopes at the breaches, and every one of them
+     * is gated on where the actor's feet already are. That clause is the entire
+     * reason a causeway can be walked over AND under: standing on the bank you
+     * are within a step of the deck and it is your floor, standing in the
+     * channel you are three metres below it and it is a ceiling. Without the
+     * gate the sampler returns the highest surface at a point, and the first
+     * player to run under a bridge is teleported onto it.
+     *
+     * `footY` undefined means "what is the highest surface here", which is what
+     * a spawn placement wants and what the director asks. Same contract as
+     * build.js:397, deliberately, so the controller can call one function
+     * either side of the doorway and never know which space it is standing in.
      */
-    heightAt: dunes.heightAt,
+    heightAt(x, z, footY) {
+      let y = groundY(x, z);
+      // 0.65 is build.js's STEP_UP and it is repeated rather than imported
+      // because that module is the interior's and this is the exterior's; what
+      // matters is that they agree, and a comment naming the other one is a
+      // cheaper coupling than an import that makes each file depend on the
+      // other's private constants.
+      const reach = footY === undefined ? Infinity : footY + 0.65;
+
+      for (const d of decks) {
+        if (x < d.x - d.w / 2 || x > d.x + d.w / 2) continue;
+        if (z < d.z - d.d / 2 || z > d.z + d.d / 2) continue;
+
+        const alongZ = d.d >= d.w;
+        const t = alongZ
+          ? (z - (d.z - d.d / 2)) / d.d
+          : (x - (d.x - d.w / 2)) / d.w;
+
+        const h = d.y0 + (d.y1 - d.y0) * t;
+        if (h > y && h <= reach) y = h;
+      }
+
+      return y;
+    },
+
+    /** The walkable surfaces above the sand, for the harness. */
+    decks,
 
     /** Spawn point, mid-yard, looking down the colonnade at the pyramid. */
     spawn: new THREE.Vector3(SPAWN.x, 0, SPAWN.z),
@@ -2091,6 +2736,10 @@ export function buildCourtyard(scene) {
       for (const b of braziers) b.update(dt, t);
       dust.update(dt);
       scatter.update(dt, t);
+      // Off the clamped delta like every other rate in the game, so a
+      // backgrounded tab resumes with the rubble part way down rather than
+      // having finished the animation while nobody was watching.
+      for (const c of claims) c.advance(dt);
     },
 
     setFidelity(high) {
