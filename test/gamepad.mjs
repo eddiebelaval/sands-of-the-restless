@@ -39,13 +39,21 @@
  *      the assertions on ui/pause.js's own cursor and on the settings the rows
  *      actually wrote.
  *
- * ON THE ONE LINE THIS SUITE HAS TO SUPPLY ITSELF. src/main.js is owned by
- * another lane and the poll call belongs in its frame loop, so the browser
- * section calls input.pollPad(rig, dt) from the harness's own animation frame -
- * which is the same call, at the same point in the frame, and is exactly the
- * patch handed over with this work. Everything downstream of it is the real
- * game: the loop drains input.consumeLook() and hands it to rig.look() without
- * knowing where the counts came from.
+ * WHO POLLS. THE FRAME LOOP DOES, and this file no longer does - which is a
+ * correction rather than a preference. An earlier version supplied the poll
+ * itself, because it was written before src/main.js carried the call. Once the
+ * call landed, every look measurement was the sum of two polls, at two different
+ * deltas, and read about four times the predicted angle. That suite was green
+ * against a tree where nothing else polled, and it was measuring a path
+ * production does not use. See the long note above section 2 for the whole
+ * reconstruction; the rule that came out of it is that the harness sets the pad
+ * and reads the camera, and the only thing between those two is the shipping
+ * game.
+ *
+ * There are exactly TWO deliberate calls to pollPad left in this file. Both are
+ * labelled where they appear, both exist to exercise something the environment
+ * refuses to vary on its own, and both account for the loop's own polls rather
+ * than pretending they do not happen.
  *
  * WHAT THIS CANNOT TEST. There is no DualShock 4 attached to the machine this
  * ran on. Every layout claim below is made against a synthetic pad shaped like
@@ -245,15 +253,83 @@ notes.push('\n--- the maths ---');
 // ---------------------------------------------------------------------------
 // 2. THE WIRE, IN A REAL BROWSER, WITH A SYNTHETIC PAD
 // ---------------------------------------------------------------------------
+//
+// EVERYTHING BELOW LETS THE REAL FRAME LOOP DO THE POLLING, and the first
+// version of this file did not, which is worth writing down because the way it
+// broke is the way this project's defining bug class always breaks.
+//
+// src/main.js now calls `input.pollPad(rig, raw)` once per frame. This suite was
+// written before that landed, so it supplied the poll itself from its own
+// animation frame and then awaited a requestAnimationFrame - during which the
+// real loop polled AGAIN, at its own delta. Every measurement was the sum of two
+// polls and read about four times the predicted angle. The suite was green
+// against a tree where nothing else polled, and the patch landing is what
+// invalidated it. A harness that drives a path production does not use is not
+// testing production; it is testing the harness.
+//
+// So the model here is: SET THE PAD, WAIT FOR GAME FRAMES, MEASURE THE CAMERA.
+// Nothing calls pollPad except the frame loop, with two deliberate and
+// clearly-labelled exceptions: THE PACING TEST below, which exists because of
+// what the clamp does to this environment, and the IDEMPOTENCE CHECK in section
+// 3, whose entire subject is what happens when pollPad is called more than once
+// in a frame. Both of them are about the poll itself rather than about any
+// binding, and neither is used to measure a rate the loop should have measured.
+//
+// ---------------------------------------------------------------------------
+// HOW MUCH TIME THE LOOP SPENT, WITHOUT THE LOOP TELLING US
+// ---------------------------------------------------------------------------
+//
+// A rate can only be checked against the time it was spent over, and the loop
+// polls at whatever delta the machine gave it. That number is not exported -
+// but it does not have to be, because it is already observable:
+//
+//   main.js:  input.pollPad(rig, raw)          <- pad clamps raw to [0, 1/20]
+//             if (pause.paused) { ...; return }
+//             const dt = Math.min(raw, MAX_DELTA)   <- the SAME 1/20
+//             elapsed += dt
+//
+// For any raw >= 0 those two clamps are identical, so on every unpaused frame
+// the pad is handed exactly the delta that `elapsed` advances by. The total time
+// the pad was polled over IS the change in `__SANDS__.elapsed`, exactly, with no
+// new instrumentation in the production files. Paused frames poll the pad but
+// generate no look at all - it routes to menu mode - and do not advance elapsed,
+// so the identity survives them too.
+//
+// ---------------------------------------------------------------------------
+// AND WHY FRAME-RATE INDEPENDENCE CANNOT BE TESTED THROUGH THE LOOP HERE
+// ---------------------------------------------------------------------------
+//
+// Measured on this machine, before writing any of this, at four different render
+// costs:
+//
+//     viewport / fidelity      wall ms/frame     sim ms/frame
+//     1280x760 high              1286.4             50.000
+//     320x240  low                157.8             50.000
+//     240x180  low                130.0             50.000
+//
+// A TEN-FOLD change in how fast the browser painted moved the delta the loop
+// hands out by nothing at all, because every frame under software rendering is
+// slower than MAX_DELTA and is clamped to exactly 1/20. The loop's delta is a
+// CONSTANT in this harness.
+//
+// That has a sharp consequence and it is the reason the pacing test below is
+// shaped the way it is: while dt is constant, an implementation that multiplies
+// by dt and one that adds a fixed amount per frame produce identical output. No
+// test that only watches the shipping loop under swiftshader can tell them
+// apart. The variation has to be injected, and the honest place to inject it is
+// the argument itself.
 
 /**
  * WHICH TREE IS BEING TESTED, and it is checked rather than trusted.
  *
  * A stale http.server has silently made agents test the wrong tree twice on
- * this project. The bytes the server hands out for the three files this work
- * touches are hashed and compared against the bytes on disk before a single
- * assertion is made, so "the suite was green" cannot mean "the suite was green
- * against something else".
+ * this project. The bytes the server hands out are hashed against the bytes on
+ * disk before a single assertion is made.
+ *
+ * src/main.js IS IN THIS LIST even though this work does not own it. The poll
+ * call lives there now, so a tree serving a main.js without it would fail every
+ * assertion below for a reason that has nothing to do with the pad, and the
+ * suite should say which file was wrong rather than leave it to be guessed.
  */
 const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 console.log(`testing ${BASE}`);
@@ -261,7 +337,8 @@ console.log(`testing ${BASE}`);
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 
 const origin = new URL(BASE).origin;
-for (const rel of ['src/core/gamepad.js', 'src/core/input.js', 'src/ui/pause.js']) {
+const hashes = {};
+for (const rel of ['src/core/gamepad.js', 'src/core/input.js', 'src/ui/pause.js', 'src/main.js']) {
   const disk = sha(readFileSync(new URL(`../${rel}`, import.meta.url)));
   let served = 'unreachable';
   try {
@@ -270,16 +347,40 @@ for (const rel of ['src/core/gamepad.js', 'src/core/input.js', 'src/ui/pause.js'
   } catch (e) {
     served = `error: ${e.message}`;
   }
+  hashes[rel] = disk;
   check(served === disk, `SERVED BYTES MATCH DISK: ${rel}`,
     served === disk ? disk.slice(0, 16) : `disk ${disk.slice(0, 16)} vs served ${String(served).slice(0, 16)}`);
 }
+
+// The poll call itself, asserted by reading the file rather than by inferring it
+// from behaviour. If it is missing, every look check below fails and this line
+// is the one that says why.
+const mainSrc = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+check(/input\.pollPad\s*\(/.test(mainSrc),
+  'main.js calls input.pollPad - the one line this feature needs from the frame loop',
+  (/input\.pollPad\s*\([^)]*\)/.exec(mainSrc) || ['missing'])[0]);
 
 const browser = await chromium.launch({
   executablePath: resolveChrome(),
   args: [...GL_ARGS, '--autoplay-policy=no-user-gesture-required'],
 });
 
-const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
+/**
+ * A SMALL VIEWPORT, AND THAT IS A BUDGET DECISION RATHER THAN A CORNER CUT.
+ *
+ * Every measurement in this file now waits on real GAME frames, and a game frame
+ * at 1280x760 on high fidelity costs 1.29 seconds under swiftshader against 0.16
+ * at 480x360 on low. The same assertions at the large size would take well over
+ * an hour.
+ *
+ * It is safe HERE and would not be safe in test/settings.mjs or test/hud.mjs,
+ * and the difference is the whole justification: this suite makes no claim about
+ * a pixel. It asserts angles, flags and state. Nothing below reads a screenshot,
+ * so render size cannot change an answer - and the delta the loop hands out is
+ * clamped to the same 1/20 at every size, which was measured rather than assumed
+ * (see the table above).
+ */
+const page = await browser.newPage({ viewport: { width: 480, height: 360 } });
 
 const DRIVER_NOISE = /GL Driver Message .*Performance/;
 const logs = [];
@@ -298,8 +399,9 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
  * reader is supposed to call it and nothing else, and a partial replacement
  * would let a real pad on the developer's machine change the result of a suite.
  *
- * The pad is deliberately placed in SLOT 2 with nulls either side. See the note
- * at the top of this file: reading slot 0 is the failure mode.
+ * The pad is deliberately placed in SLOT 2 with nulls either side. Reading slot
+ * 0 is the failure mode this project keeps producing: correct looking code that
+ * reads nothing on the one machine that matters.
  */
 await page.addInitScript(() => {
   const button = () => ({ pressed: false, touched: false, value: 0 });
@@ -387,22 +489,24 @@ await page.evaluate(() => document.getElementById('begin').click());
 await page.waitForTimeout(1400);
 
 /**
- * A CLEAN FIELD, and the first run of this suite is why it is here.
+ * A CLEAN FIELD, and an earlier run of this suite is why it is here.
  *
- * Every assertion below the halfway mark failed, in a way that read as the pad
- * having gone dead: no movement, no trigger, no reload, and a stick that turned
- * the camera for the first thirty frames of a run and then stopped. The cause
- * was not the pad. The suite takes several minutes of simulated time under
- * software rendering and the wave director had sent a wave in the middle of it;
- * the player was standing in the courtyard doing nothing and was killed, which
- * halts the run and SUSPENDS THE INPUT LAYER - so the pad correctly went into
- * menu mode and correctly stopped driving a game that was no longer running.
+ * Every assertion below the halfway mark failed once, in a way that read as the
+ * pad having gone dead: no movement, no trigger, no reload. The cause was not
+ * the pad. This suite spends minutes of simulated time, the wave director sent a
+ * wave in the middle of it, and the player - standing in the courtyard doing
+ * nothing - was killed. That halts the run and SUSPENDS the input layer, so the
+ * pad correctly went to menu mode and correctly stopped driving a game that was
+ * no longer running.
  *
  * Worth writing down because the failure was indistinguishable from the feature
- * being broken, and because the fix is the same one test/settings.mjs already
- * carries for the same reason: make the player invulnerable and hold the next
- * wave off. The wave hold is re-applied between sections rather than once,
+ * being broken. The wave hold is re-applied between sections rather than once,
  * since the director re-arms its own breather.
+ *
+ * Fidelity goes down and the governor is stood down at the same time, for the
+ * budget reason in the viewport note above: the governor would otherwise spend
+ * the first seconds of every section climbing back up a ladder this suite has no
+ * opinion about.
  */
 const stage = () => page.evaluate(() => {
   const g = window.__SANDS__;
@@ -410,49 +514,47 @@ const stage = () => page.evaluate(() => {
   g.director.reset();
   g.director.state.timer = 9999;
   g.player.heal(g.player.state.maxHealth);
+  g.governor.yieldToPlayer();
+  g.setFidelity(false);
   return { live: g.director.live.length, halted: g.death.halted };
 });
 
 await stage();
 
 /**
- * The harness's half of the frame loop.
+ * The harness's half, and it no longer polls anything.
  *
- * `run` is the exact call src/main.js's patch makes, driven from the harness's
- * own animation frame because that file belongs to another lane this week.
- * Everything after it is the real game: the loop drains consumeLook() and hands
- * the counts to rig.look() with no idea a controller exists.
+ * `live` is the shape of every look measurement below: point the camera, let the
+ * REAL loop run n frames with the pad already deflected, and read back both the
+ * angle turned and the simulated time it was turned over. The second number is
+ * what makes a rate assertable without the loop having to export its delta.
  */
 await page.addScriptTag({
   content: `
 window.__G__ = {
-  /** Poll the pad n times at a fixed delta, letting the loop run in between. */
-  async run(n, dt) {
-    const g = window.__SANDS__;
-    for (let i = 0; i < n; i++) {
-      g.input.pollPad(g.rig, dt);
-      await new Promise((r) => requestAnimationFrame(r));
-    }
-    // Three more frames with no poll, so anything still sitting in the
-    // accumulator has been drained by the loop before it is measured.
-    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(r));
-    return g.rig.yaw;
-  },
-
-  /** One poll, no frame. For button edges, where the frame does not matter. */
-  tick(dt) {
-    const g = window.__SANDS__;
-    return g.input.pollPad(g.rig, dt === undefined ? 1 / 60 : dt);
-  },
-
   async frames(n) {
     const g = window.__SANDS__;
     const target = g.frameNo + n;
-    for (let i = 0; i < n * 40 + 400; i++) {
+    // A ceiling on iterations rather than on wall time, so a slow machine is
+    // slow rather than failing.
+    for (let i = 0; i < n * 80 + 800; i++) {
       if (g.frameNo >= target) return g.frameNo;
       await new Promise((r) => requestAnimationFrame(r));
     }
     return g.frameNo;
+  },
+
+  /**
+   * Every number a look assertion needs, read in ONE synchronous turn.
+   *
+   * All four together or none: a frame cannot interleave inside a synchronous
+   * read, so the yaw and the elapsed clock are always describing the same
+   * instant. Reading them in two evaluates would let a frame land between and
+   * would attribute that frame's angle to the wrong window.
+   */
+  snap() {
+    const g = window.__SANDS__;
+    return { frameNo: g.frameNo, elapsed: g.elapsed, yaw: g.rig.yaw, pitch: g.rig.pitch };
   },
 
   aim() {
@@ -462,9 +564,90 @@ window.__G__ = {
     return { yaw: g.rig.yaw, pitch: g.rig.pitch };
   },
 
-  look() {
+  /**
+   * THE SHIPPING PATH. Nothing here calls pollPad; the frame loop does.
+   *
+   * Returns the angle turned and the simulated seconds it was turned over, so
+   * the caller divides one by the other and gets a rate that is independent of
+   * how many frames the machine managed.
+   */
+  async live(n) {
     const g = window.__SANDS__;
-    return { yaw: g.rig.yaw, pitch: g.rig.pitch };
+    window.__G__.aim();
+    const a = window.__G__.snap();
+    await window.__G__.frames(n);
+    const b = window.__G__.snap();
+    return {
+      frames: b.frameNo - a.frameNo,
+      sim: b.elapsed - a.elapsed,
+      yaw: b.yaw - a.yaw,
+      pitch: b.pitch - a.pitch,
+    };
+  },
+
+  /**
+   * Inject mouse counts the way a mousemove does, over n frames, and report the
+   * total pushed. Used for the both-devices-at-once check.
+   */
+  async mouse(n, per) {
+    const g = window.__SANDS__;
+    let counts = 0;
+    for (let i = 0; i < n; i++) {
+      g.input.state.dx += per;
+      counts += per;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    await window.__G__.frames(2);
+    return counts;
+  },
+
+  /**
+   * THE PACING TEST, and the ONE place in this file that calls pollPad.
+   *
+   * It is here because the frame loop's delta is a constant in this harness -
+   * every frame is slower than MAX_DELTA and is clamped to exactly 1/20, at
+   * every render size measured. While dt never varies, multiplying by dt and
+   * adding a constant per frame are the same function, so watching the loop
+   * cannot distinguish the correct implementation from the broken one. The
+   * quantity under test has to be varied, and the only way to vary it is to
+   * pass it.
+   *
+   * This is NOT the harness-only path that made the first version of this file
+   * wrong. It calls the same function main.js calls, with the same reader, the
+   * same accumulator and the same camera; the only substitution is the VALUE of
+   * the argument, which is exactly the variable being tested. And the loop's own
+   * polls are not ignored this time - they are measured, through elapsed, and
+   * added to the total the rate is computed against. That is what the first
+   * version failed to do.
+   */
+  async paced(count, dt) {
+    const g = window.__SANDS__;
+    window.__G__.aim();
+    const a = window.__G__.snap();
+
+    let mine = 0;
+    for (let i = 0; i < count; i++) {
+      g.input.pollPad(g.rig, dt);
+      mine += Math.min(dt, 1 / 20);
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    // Two clean frames so the last injected counts have been drained by the
+    // loop before anything is read. The stick is still deflected, so these
+    // frames contribute to BOTH the angle and the elapsed clock and the
+    // identity holds.
+    await window.__G__.frames(2);
+
+    const b = window.__G__.snap();
+    const loop = b.elapsed - a.elapsed;
+    return {
+      polls: count,
+      dt,
+      mine: +mine.toFixed(9),
+      loop: +loop.toFixed(9),
+      total: +(mine + loop).toFixed(9),
+      yaw: b.yaw - a.yaw,
+      loopFrames: b.frameNo - a.frameNo,
+    };
   },
 };
 `,
@@ -479,10 +662,11 @@ check(before.connected === false, 'with nothing plugged in, no pad is reported',
   `index ${before.index}`);
 
 await page.evaluate(() => window.__PAD__.plug('standard', 2));
-await page.evaluate(() => window.__G__.tick());
+await page.evaluate(() => window.__G__.frames(2));
 const found = await page.evaluate(() => window.__SANDS__.input.pad.info());
 
-check(found.connected === true, 'a plugged pad is found');
+check(found.connected === true,
+  'A PLUGGED PAD IS FOUND BY THE FRAME LOOP ITSELF - nothing in this suite polled it');
 check(found.index === 2,
   'AND IT IS FOUND IN SLOT 2 - every slot is scanned, index 0 is not assumed',
   `index ${found.index}`);
@@ -491,6 +675,14 @@ check(found.mapping === 'standard' && found.profile === 'standard',
   `mapping "${found.mapping}" profile ${found.profile}`);
 check(found.assumed === false, 'and the layout was not guessed');
 check(found.vibration === true, 'the pad reports a vibration actuator');
+
+// --- the loop's delta, stated -----------------------------------------------
+
+const pacing = await page.evaluate(() => window.__G__.live(10));
+check(pacing.frames > 0 && pacing.sim > 0,
+  'the loop is running and its simulated clock is advancing',
+  `${pacing.frames} frames, ${pacing.sim.toFixed(4)}s of simulated time,`
+  + ` mean ${(pacing.sim / pacing.frames * 1000).toFixed(3)}ms per frame`);
 
 // --- POINTER LOCK IS DENIED FROM HERE ON ------------------------------------
 //
@@ -502,8 +694,8 @@ check(found.vibration === true, 'the pad reports a vibration actuator');
 // pointer lock and a check that merely READ `locked` would be asserting nothing
 // about the code path.
 //
-// It also stabilises everything below. Losing the lock is what main.js opens
-// the pause menu on, so this is the last time that can happen.
+// It also stabilises everything below. Losing the lock is what main.js opens the
+// pause menu on, so this is the last time that can happen.
 
 notes.push('\n--- pointer lock ---');
 
@@ -514,11 +706,10 @@ const unlocked = await page.evaluate(async () => {
 
   canvas.requestPointerLock = () => {};
   if (document.pointerLockElement) document.exitPointerLock();
-  await window.__G__.frames(4);
+  await window.__G__.frames(3);
 
-  // The lock loss opens the menu. Close it the way a player would.
   if (g.pause.paused) g.pause.resume();
-  await window.__G__.frames(4);
+  await window.__G__.frames(3);
 
   return {
     had,
@@ -532,125 +723,164 @@ check(unlocked.locked === false && unlocked.paused === false,
   'pointer lock is released and refused for the rest of this suite',
   `was held: ${unlocked.had}, now locked ${unlocked.locked}, paused ${unlocked.paused}`);
 
-// --- look is a rate, measured through the real camera -----------------------
+// ---------------------------------------------------------------------------
+// LOOK, MEASURED OFF THE CAMERA WITH THE LOOP DOING THE POLLING
+// ---------------------------------------------------------------------------
 
 notes.push('\n--- look ---');
 
 /**
- * What the maths says the game should do, computed here rather than read out of
- * the page. A test that asked the implementation what it expected would pass on
- * any implementation.
+ * The rate the maths says the game should turn at, in radians per second of
+ * simulated time, computed HERE rather than read out of the page.
+ *
+ * rig.look() subtracts, so a stick pushed right produces a negative yaw. The
+ * counts conversion in core/input.js divides by the same radians-per-count that
+ * rig.look multiplies by, so the two cancel and what survives is exactly the
+ * radians gamepad.js asked for - which is why this prediction can be made from
+ * the pure function with no knowledge of the mouse sensitivity in force.
  */
-const predict = (x, y, frames, dt, o = {}) => {
-  const d = lookDelta(x, y, dt, o);
-  return { yaw: -d.dxRad * frames, pitch: -d.dyRad * frames };
+const rateFor = (x, y, o = {}) => {
+  const d = lookDelta(x, y, 1, o);
+  return { yaw: -d.dxRad, pitch: -d.dyRad };
 };
 
-await page.evaluate(() => { window.__PAD__.idle(); window.__G__.aim(); });
+await page.evaluate(() => { window.__PAD__.idle(); });
 await page.evaluate(() => window.__PAD__.ax(2, 0.5));       // right stick, half right
-const yawAfter = await page.evaluate(() => window.__G__.run(60, 1 / 60));
-const wantHalf = predict(0.5, 0, 60, 1 / 60);
+const half = await page.evaluate(() => window.__G__.live(20));
+const wantHalf = rateFor(0.5, 0);
+const halfRate = half.yaw / half.sim;
 
-check(near(yawAfter, wantHalf.yaw, 1e-6),
-  'HALF A STICK FOR 60 FRAMES TURNS THE CAMERA BY EXACTLY THE PREDICTED ANGLE',
-  `predicted ${wantHalf.yaw.toFixed(9)} rad, measured ${yawAfter.toFixed(9)} rad`);
-check(yawAfter < 0, 'pushing the stick right turns right', `yaw ${yawAfter.toFixed(6)}`);
+check(near(halfRate, wantHalf.yaw, Math.abs(wantHalf.yaw) * 1e-6),
+  'HALF A STICK TURNS THE CAMERA AT EXACTLY THE PREDICTED RATE, through the real loop',
+  `predicted ${wantHalf.yaw.toFixed(9)} rad/s, measured ${halfRate.toFixed(9)} rad/s`
+  + ` over ${half.frames} frames and ${half.sim.toFixed(3)}s`);
+check(half.yaw < 0, 'pushing the stick right turns right', `yaw ${half.yaw.toFixed(6)}`);
 
-// --- frame rate independence, IN THE GAME -----------------------------------
+// --- the deadzone -----------------------------------------------------------
 
-await page.evaluate(() => { window.__G__.aim(); });
-const oneSecAt16 = await page.evaluate(() => window.__G__.run(62, 0.016));
-await page.evaluate(() => { window.__G__.aim(); });
-const oneSecAt33 = await page.evaluate(() => window.__G__.run(30, 0.033));
-
-// 62 frames of 16ms is 0.992s and 30 of 33ms is 0.990s, so the two are compared
-// as a RATE rather than as a total. The residual is the 2ms of simulated time
-// between them and nothing else.
-const rate16 = oneSecAt16 / (62 * 0.016);
-const rate33 = oneSecAt33 / (30 * 0.033);
-
-check(near(rate16, rate33, 1e-6),
-  'THE SAME STICK TURNS AT THE SAME RATE AT 16MS AND 33MS FRAMES',
-  `${rate16.toFixed(9)} rad/s against ${rate33.toFixed(9)} rad/s,`
-  + ` difference ${(Math.abs(rate16 - rate33) * 180 / Math.PI).toExponential(3)} deg/s`);
-check(near(Math.abs(rate16), 0.186467 * PAD_DEFAULTS.yawRate, 1e-4),
-  'and it is the rate the curve and the turn speed predict for half a stick',
-  `${(Math.abs(rate16) * 180 / Math.PI).toFixed(4)} deg/s`);
-
-// --- the deadzone, in the game ----------------------------------------------
-
-await page.evaluate(() => { window.__PAD__.idle(); window.__G__.aim(); });
+await page.evaluate(() => { window.__PAD__.idle(); });
 await page.evaluate(() => window.__PAD__.ax(2, 0.05));
-const drifted = await page.evaluate(() => window.__G__.run(60, 1 / 60));
-check(drifted === 0,
-  'a stick resting inside the deadzone moves the camera by EXACTLY nothing over 60 frames',
-  `yaw ${drifted}`);
+const drifted = await page.evaluate(() => window.__G__.live(20));
+check(drifted.yaw === 0,
+  'a stick resting inside the deadzone moves the camera by EXACTLY nothing',
+  `yaw ${drifted.yaw} over ${drifted.frames} frames`);
 
-// --- diagonals do not snap, measured on the camera --------------------------
+// --- diagonals do not snap --------------------------------------------------
 
-await page.evaluate(() => { window.__PAD__.idle(); window.__G__.aim(); });
+await page.evaluate(() => { window.__PAD__.idle(); });
 await page.evaluate(() => { window.__PAD__.ax(2, 0.5); window.__PAD__.ax(3, 0.5); });
-await page.evaluate(() => window.__G__.run(60, 1 / 60));
-const diag = await page.evaluate(() => window.__G__.look());
-const wantDiag = predict(0.5, 0.5, 60, 1 / 60);
+const diag = await page.evaluate(() => window.__G__.live(20));
+const wantDiag = rateFor(0.5, 0.5);
+const diagYaw = diag.yaw / diag.sim;
+const diagPitch = diag.pitch / diag.sim;
 
-check(near(diag.yaw, wantDiag.yaw, 1e-6) && near(diag.pitch, wantDiag.pitch, 1e-6),
-  'a diagonal push moves both axes by their predicted amounts',
-  `yaw ${diag.yaw.toFixed(6)}/${wantDiag.yaw.toFixed(6)}`
-  + ` pitch ${diag.pitch.toFixed(6)}/${wantDiag.pitch.toFixed(6)}`);
-check(near(diag.yaw / diag.pitch, PAD_DEFAULTS.yawRate / PAD_DEFAULTS.pitchRate, 1e-6),
+check(near(diagYaw, wantDiag.yaw, Math.abs(wantDiag.yaw) * 1e-6)
+  && near(diagPitch, wantDiag.pitch, Math.abs(wantDiag.pitch) * 1e-6),
+  'a diagonal push moves both axes at their predicted rates',
+  `yaw ${diagYaw.toFixed(6)}/${wantDiag.yaw.toFixed(6)}`
+  + ` pitch ${diagPitch.toFixed(6)}/${wantDiag.pitch.toFixed(6)} rad/s`);
+check(near(diagYaw / diagPitch, PAD_DEFAULTS.yawRate / PAD_DEFAULTS.pitchRate, 1e-6),
   'and the ratio between them is the ratio of the two turn rates, not 1 and not infinity',
-  `${(diag.yaw / diag.pitch).toFixed(6)}`);
+  `${(diagYaw / diagPitch).toFixed(6)}`);
+
+// --- FRAME RATE INDEPENDENCE, ON THE SHIPPING FUNCTION ----------------------
+//
+// See __G__.paced and the note at the top of this section. The loop's delta is
+// pinned at 1/20 here whatever the machine does, so the variation is injected
+// through the argument - and the loop's own share is measured through `elapsed`
+// and added to the divisor rather than pretended away.
+//
+// The two runs are chosen so that a WRONG implementation is caught starkly. Run
+// A makes twice as many polls as run B for roughly the same injected time. An
+// implementation that added a fixed amount per poll rather than a rate times a
+// delta would turn about twice as far in A as in B while the total time differs
+// by much less, and the two rates would separate by tens of per cent.
+
+notes.push('\n--- frame rate independence ---');
+
+await page.evaluate(() => { window.__PAD__.idle(); });
+await page.evaluate(() => window.__PAD__.ax(2, 1));
+
+const pacedA = await page.evaluate(() => window.__G__.paced(40, 0.016));
+const pacedB = await page.evaluate(() => window.__G__.paced(20, 0.033));
+
+const rateA = pacedA.yaw / pacedA.total;
+const rateB = pacedB.yaw / pacedB.total;
+const wantFull = rateFor(1, 0).yaw;
+
+check(near(rateA, rateB, Math.abs(wantFull) * 1e-6),
+  'THE SAME STICK TURNS AT THE SAME RATE AT 16MS AND 33MS INJECTED FRAMES',
+  `${rateA.toFixed(9)} against ${rateB.toFixed(9)} rad/s,`
+  + ` difference ${(Math.abs(rateA - rateB) * 180 / Math.PI).toExponential(3)} deg/s`);
+check(near(rateA, wantFull, Math.abs(wantFull) * 1e-6)
+  && near(rateB, wantFull, Math.abs(wantFull) * 1e-6),
+  'and both are the turn rate a full stick is specified to give',
+  `${(Math.abs(rateA) * 180 / Math.PI).toFixed(4)} and`
+  + ` ${(Math.abs(rateB) * 180 / Math.PI).toFixed(4)} deg/s against a stated`
+  + ` ${(Math.abs(wantFull) * 180 / Math.PI).toFixed(4)}`);
+check(pacedA.polls === pacedB.polls * 2 && Math.abs(pacedA.mine - pacedB.mine) < 0.05,
+  'and run A really did poll twice as often for the same injected time,'
+  + ' which is what makes this discriminating',
+  `A ${pacedA.polls} polls / ${pacedA.mine}s injected + ${pacedA.loop}s from the loop;`
+  + ` B ${pacedB.polls} polls / ${pacedB.mine}s injected + ${pacedB.loop}s from the loop`);
 
 // --- the mouse slider does not move the stick -------------------------------
 
-await page.evaluate(() => { window.__PAD__.idle(); window.__G__.aim(); });
+await page.evaluate(() => { window.__PAD__.idle(); });
 await page.evaluate(() => window.__PAD__.ax(2, 1));
-const padAtSens1 = await page.evaluate(() => window.__G__.run(30, 1 / 60));
+const sens1 = await page.evaluate(() => window.__G__.live(16));
 await page.evaluate(() => window.__SANDS__.rig.setSensitivityScale(3.0));
-await page.evaluate(() => { window.__G__.aim(); });
-const padAtSens3 = await page.evaluate(() => window.__G__.run(30, 1 / 60));
+const sens3 = await page.evaluate(() => window.__G__.live(16));
 await page.evaluate(() => window.__SANDS__.rig.setSensitivityScale(1.0));
 
-check(near(padAtSens1, padAtSens3, 1e-9),
+const r1 = sens1.yaw / sens1.sim;
+const r3 = sens3.yaw / sens3.sim;
+
+check(near(r1, r3, Math.abs(wantFull) * 1e-6),
   'THE MOUSE SENSITIVITY SLIDER DOES NOT CHANGE THE STICK - two sliders on one'
   + ' panel must not multiply each other',
-  `${padAtSens1.toFixed(9)} at 1.00x, ${padAtSens3.toFixed(9)} at 3.00x`);
+  `${r1.toFixed(9)} rad/s at 1.00x, ${r3.toFixed(9)} rad/s at 3.00x`);
 
 // --- both devices at once ---------------------------------------------------
+//
+// Three windows rather than one comparison, because the mouse is a DELTA and the
+// stick is a RATE and the two cannot be added without a common term. The pad's
+// contribution is its measured rate times the simulated time of the window it is
+// being predicted for; the mouse's is whatever the same number of counts moved
+// the camera on its own.
 
-await page.evaluate(() => { window.__PAD__.idle(); window.__G__.aim(); });
+await page.evaluate(() => { window.__PAD__.idle(); });
 await page.evaluate(() => window.__PAD__.ax(2, 1));
-const both = await page.evaluate(async () => {
-  const g = window.__SANDS__;
-  // A mouse delta pushed onto the same accumulator a real mousemove writes to,
-  // in the same frames the stick is being polled.
-  for (let i = 0; i < 30; i++) {
-    g.input.pollPad(g.rig, 1 / 60);
-    g.input.state.dx += 4;
-    await new Promise((r) => requestAnimationFrame(r));
-  }
-  for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(r));
-  return g.rig.yaw;
-});
+const padWindow = await page.evaluate(() => window.__G__.live(16));
+const padRate = padWindow.yaw / padWindow.sim;
 
-const padOnly = predict(1, 0, 30, 1 / 60).yaw;
-const mouseOnly = await page.evaluate(async () => {
-  const g = window.__SANDS__;
-  window.__PAD__.idle();
+await page.evaluate(() => { window.__PAD__.idle(); });
+const mouseWindow = await page.evaluate(async () => {
   window.__G__.aim();
-  for (let i = 0; i < 30; i++) {
-    g.input.state.dx += 4;
-    await new Promise((r) => requestAnimationFrame(r));
-  }
-  for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(r));
-  return g.rig.yaw;
+  const a = window.__G__.snap();
+  const counts = await window.__G__.mouse(16, 4);
+  const b = window.__G__.snap();
+  return { counts, yaw: b.yaw - a.yaw, sim: b.elapsed - a.elapsed };
 });
 
-check(near(both, padOnly + mouseOnly, 1e-6),
+await page.evaluate(() => window.__PAD__.ax(2, 1));
+const bothWindow = await page.evaluate(async () => {
+  window.__G__.aim();
+  const a = window.__G__.snap();
+  const counts = await window.__G__.mouse(16, 4);
+  const b = window.__G__.snap();
+  return { counts, yaw: b.yaw - a.yaw, sim: b.elapsed - a.elapsed };
+});
+
+const expectedBoth = padRate * bothWindow.sim + mouseWindow.yaw;
+
+check(mouseWindow.counts === bothWindow.counts && mouseWindow.yaw < 0,
+  'the mouse moved the camera on its own, with the same counts both times',
+  `${bothWindow.counts} counts, ${mouseWindow.yaw.toFixed(6)} rad`);
+check(near(bothWindow.yaw, expectedBoth, Math.abs(expectedBoth) * 1e-4),
   'A MOUSE AND A STICK MOVING TOGETHER SUM - neither device wins and neither is dropped',
-  `pad ${padOnly.toFixed(6)} + mouse ${mouseOnly.toFixed(6)} = ${(padOnly + mouseOnly).toFixed(6)},`
-  + ` measured ${both.toFixed(6)}`);
+  `pad ${(padRate * bothWindow.sim).toFixed(6)} + mouse ${mouseWindow.yaw.toFixed(6)}`
+  + ` = ${expectedBoth.toFixed(6)}, measured ${bothWindow.yaw.toFixed(6)}`);
 
 // --- and none of that needed pointer lock -----------------------------------
 
@@ -670,176 +900,177 @@ check(lockState.locked === false && lockState.paused === false,
 
 notes.push('\n--- the buttons ---');
 
+await page.evaluate(() => { window.__PAD__.idle(); });
 await stage();
 
-/** Press, poll, release, poll. One clean edge. */
+/**
+ * Press, let the loop see it, release, let the loop see that.
+ *
+ * Two frames each way, which is 0.1 simulated seconds - comfortably inside the
+ * 0.4s menu repeat delay, so a tap is exactly one action and never two.
+ */
 const tapButton = async (i) => {
-  await page.evaluate((n) => { window.__PAD__.btn(n, true); window.__G__.tick(); }, i);
+  await page.evaluate((n) => window.__PAD__.btn(n, true), i);
   await page.evaluate(() => window.__G__.frames(2));
-  await page.evaluate((n) => { window.__PAD__.btn(n, false); window.__G__.tick(); }, i);
+  await page.evaluate((n) => window.__PAD__.btn(n, false), i);
   await page.evaluate(() => window.__G__.frames(2));
 };
 
-await page.evaluate(() => { window.__PAD__.idle(); window.__G__.tick(); });
+/**
+ * A DOUBLE POLL OF A HELD BUTTON IS IDEMPOTENT, and it is checked rather than
+ * assumed - it was the assumption that made the first version of this file
+ * wrong, so the same assumption does not get made twice.
+ *
+ * This is the property that lets anything call pollPad more than once in a frame
+ * without an action firing twice. Edges are computed against the previous poll's
+ * state, so the second poll of an unchanged button reports no edge at all.
+ */
+const idempotent = await page.evaluate(() => {
+  const g = window.__SANDS__;
+  window.__PAD__.btn(0, true);                 // Cross, held
+  const first = g.input.pollPad(g.rig, 1 / 60);
+  const second = g.input.pollPad(g.rig, 1 / 60);
+  const third = g.input.pollPad(g.rig, 1 / 60);
+  window.__PAD__.btn(0, false);
+  g.input.pollPad(g.rig, 1 / 60);
+  return {
+    first: first.pressed.slice(),
+    second: second.pressed.slice(),
+    third: third.pressed.slice(),
+    stillHeld: second.buttons.cross && third.buttons.cross,
+  };
+});
+check(idempotent.first.includes('cross')
+  && idempotent.second.length === 0 && idempotent.third.length === 0,
+  'A SECOND POLL OF A HELD BUTTON REPORTS NO EDGE - polling twice cannot fire twice',
+  `first ${JSON.stringify(idempotent.first)}, second ${JSON.stringify(idempotent.second)}`);
+check(idempotent.stillHeld === true,
+  'while the button is still correctly reported as down');
+
+await page.evaluate(() => window.__G__.frames(2));
 
 // --- the analog trigger -----------------------------------------------------
 
-const trig = await page.evaluate(async () => {
-  const g = window.__SANDS__;
-  const out = {};
-  // Under the arm point. A digital reading of buttons[7].pressed would already
-  // be true here, which is the difference the analog value buys.
-  window.__PAD__.val(7, 0.45);
-  window.__G__.tick();
-  out.at45 = { fire: g.input.state.fire, analog: g.input.pad.snapshot.analog.r2 };
+const trigAt = async (v) => {
+  await page.evaluate((n) => window.__PAD__.val(7, n), v);
+  await page.evaluate(() => window.__G__.frames(2));
+  return page.evaluate(() => ({
+    fire: window.__SANDS__.input.state.fire,
+    analog: window.__SANDS__.input.pad.snapshot.analog.r2,
+  }));
+};
 
-  window.__PAD__.val(7, 0.60);
-  window.__G__.tick();
-  out.at60 = { fire: g.input.state.fire, analog: g.input.pad.snapshot.analog.r2 };
+const at45 = await trigAt(0.45);
+const at60 = await trigAt(0.60);
+const back45 = await trigAt(0.45);
+const back30 = await trigAt(0.30);
+await page.evaluate(() => window.__PAD__.val(7, 0));
+await page.evaluate(() => window.__G__.frames(2));
 
-  // Back off to between the two thresholds. Hysteresis says it stays armed.
-  window.__PAD__.val(7, 0.45);
-  window.__G__.tick();
-  out.back45 = { fire: g.input.state.fire };
-
-  window.__PAD__.val(7, 0.30);
-  window.__G__.tick();
-  out.back30 = { fire: g.input.state.fire };
-
-  window.__PAD__.val(7, 0);
-  window.__G__.tick();
-  return out;
-});
-
-check(trig.at45.fire === false,
+check(at45.fire === false,
   'R2 AT 0.45 IS NOT FIRING - the trigger is read as an analog pull, not a switch',
-  `analog ${trig.at45.analog}, pressed would already be true`);
-check(trig.at60.fire === true, 'R2 past the arm point fires', `analog ${trig.at60.analog}`);
-check(trig.back45.fire === true,
+  `analog ${at45.analog}, and .pressed would already be true here`);
+check(at60.fire === true, 'R2 past the arm point fires', `analog ${at60.analog}`);
+check(back45.fire === true,
   'and it STAYS armed between the two thresholds, so a resting spring cannot chatter');
-check(trig.back30.fire === false, 'below the disarm point it stops');
+check(back30.fire === false, 'below the disarm point it stops');
 
-// The aim trigger arms earlier than the fire trigger, on purpose.
-const adsTrig = await page.evaluate(() => {
-  const g = window.__SANDS__;
-  window.__PAD__.val(6, 0.35);
-  window.__G__.tick();
-  const on = g.input.state.ads;
-  window.__PAD__.val(6, 0);
-  window.__G__.tick();
-  return { on, off: g.input.state.ads };
-});
-check(adsTrig.on === true && adsTrig.off === false,
+await page.evaluate(() => window.__PAD__.val(6, 0.35));
+await page.evaluate(() => window.__G__.frames(2));
+const adsOn = await page.evaluate(() => window.__SANDS__.input.state.ads);
+await page.evaluate(() => window.__PAD__.val(6, 0));
+await page.evaluate(() => window.__G__.frames(2));
+const adsOff = await page.evaluate(() => window.__SANDS__.input.state.ads);
+
+check(adsOn === true && adsOff === false,
   'L2 brings the sight up, and it arms earlier in the pull than the trigger does',
   `arm at ${TRIGGER.adsOn} against ${TRIGGER.fireOn}`);
 
-// --- reload, through the weapon system --------------------------------------
+// --- firing and reloading, through the weapon system ------------------------
+//
+// SPEND A ROUND FIRST, and that half is not scene-setting. An earlier version
+// emptied the magazine by writing `weapons.state.magazine = 1`. That field does
+// not exist - the ammunition lives in a map private to the weapon system - so
+// the magazine stayed full, reload() correctly refused, and the check reported a
+// broken binding when the binding was fine and the TEST was wrong.
 
-/**
- * SPEND A ROUND, THEN RELOAD, and the first half is not scene-setting.
- *
- * The first run of this suite emptied the magazine by writing
- * `weapons.state.magazine = 1`. That field does not exist - the ammunition
- * lives in a map private to the weapon system - so the magazine stayed full,
- * reload() correctly refused, and the check reported a broken binding when the
- * binding was fine and the TEST was wrong. Firing the gun through the pad's own
- * trigger is both the honest way to empty it and a second assertion: the
- * analog trigger is not merely setting a flag, it is putting rounds downrange.
- */
-const reloaded = await page.evaluate(async () => {
-  const g = window.__SANDS__;
-  const raf = () => new Promise((r) => requestAnimationFrame(r));
-  const full = g.weapons.STATS[g.weapons.state.current].magazine;
+const full = await page.evaluate(() =>
+  window.__SANDS__.weapons.STATS[window.__SANDS__.weapons.state.current].magazine);
 
-  window.__PAD__.val(7, 1);                       // R2, fully pulled
-  for (let i = 0; i < 8; i++) { window.__G__.tick(); await raf(); }
-  window.__PAD__.val(7, 0);
-  window.__G__.tick();
-  await raf();
-  const spent = g.weapons.magazine;
+await page.evaluate(() => window.__PAD__.val(7, 1));       // R2, fully pulled
+await page.evaluate(() => window.__G__.frames(4));
+await page.evaluate(() => window.__PAD__.val(7, 0));
+await page.evaluate(() => window.__G__.frames(2));
+const spent = await page.evaluate(() => window.__SANDS__.weapons.magazine);
 
-  window.__PAD__.btn(2, true);                    // Square
-  window.__G__.tick();
-  await raf();
-  const mid = g.weapons.isReloading;
-  window.__PAD__.btn(2, false);
-  window.__G__.tick();
-  return { full, spent, mid };
-});
-check(reloaded.spent < reloaded.full,
-  'R2 PUTS ROUNDS DOWNRANGE - the magazine went down',
-  `${reloaded.full} -> ${reloaded.spent}`);
-check(reloaded.mid === true,
+check(spent < full, 'R2 PUTS ROUNDS DOWNRANGE - the magazine went down',
+  `${full} -> ${spent}`);
+
+await page.evaluate(() => window.__PAD__.btn(2, true));    // Square
+await page.evaluate(() => window.__G__.frames(2));
+const reloading = await page.evaluate(() => window.__SANDS__.weapons.isReloading);
+await page.evaluate(() => window.__PAD__.btn(2, false));
+await page.evaluate(() => window.__G__.frames(2));
+
+check(reloading === true,
   'SQUARE RELOADS - asserted on the weapon system, which core/input.js cannot reach',
-  `isReloading ${reloaded.mid}`);
+  `isReloading ${reloading}`);
 
-await page.evaluate(() => window.__G__.frames(120));
+await page.evaluate(() => window.__G__.frames(40));
 
-// --- melee, through the melee system ----------------------------------------
+// --- melee ------------------------------------------------------------------
 
-const swung = await page.evaluate(async () => {
-  const g = window.__SANDS__;
-  const before = g.viewmodel.state.phase;
-  window.__PAD__.btn(4, true);      // L1
-  window.__G__.tick();
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-  const during = g.viewmodel.state.phase;
-  window.__PAD__.btn(4, false);
-  window.__G__.tick();
-  return { before, during };
-});
-check(swung.during === 'melee' || swung.during !== swung.before,
+await page.evaluate(() => window.__PAD__.btn(4, true));    // L1
+await page.evaluate(() => window.__G__.frames(2));
+const meleePhase = await page.evaluate(() => window.__SANDS__.viewmodel.state.phase);
+await page.evaluate(() => window.__PAD__.btn(4, false));
+await page.evaluate(() => window.__G__.frames(2));
+
+check(meleePhase === 'meleeing',
   'L1 SWINGS THE KHOPESH - asserted on the viewmodel state machine',
-  `${swung.before} -> ${swung.during}`);
+  `viewmodel phase ${meleePhase}`);
 
-await page.evaluate(() => window.__G__.frames(90));
+await page.evaluate(() => window.__G__.frames(30));
 
-// --- weapon swap, through the wheel binding ---------------------------------
+// --- weapon swap ------------------------------------------------------------
 
-const swapped = await page.evaluate(async () => {
+await page.evaluate(() => {
   const g = window.__SANDS__;
-  // A second weapon, or there is nowhere to cycle TO and the check would pass
-  // on a Triangle that did nothing at all.
+  // A second weapon, or there is nowhere to cycle TO and the check would pass on
+  // a Triangle that did nothing at all.
   g.weapons.grant('b3ar');
   g.weapons.equip('mk9');
-  await new Promise((r) => requestAnimationFrame(r));
-  const before = g.weapons.state.current;
-  window.__PAD__.btn(3, true);      // Triangle
-  window.__G__.tick();
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-  const after = g.weapons.state.current;
-  window.__PAD__.btn(3, false);
-  window.__G__.tick();
-  g.weapons.equip('mk9');
-  return { before, after };
 });
-check(swapped.after !== swapped.before,
+await page.evaluate(() => window.__G__.frames(2));
+const swapBefore = await page.evaluate(() => window.__SANDS__.weapons.state.current);
+await tapButton(3);                                        // Triangle
+const swapAfter = await page.evaluate(() => window.__SANDS__.weapons.state.current);
+
+check(swapAfter !== swapBefore,
   'TRIANGLE SWAPS THE WEAPON - through the same wheel binding the mouse uses',
-  `${swapped.before} -> ${swapped.after}`);
+  `${swapBefore} -> ${swapAfter}`);
+
+await page.evaluate(() => window.__SANDS__.weapons.equip('mk9'));
+await page.evaluate(() => window.__G__.frames(20));
 
 // --- the grenade is HELD, not tapped ----------------------------------------
 
-const fuse = await page.evaluate(async () => {
-  const g = window.__SANDS__;
-  window.__PAD__.btn(5, true);      // R1
-  window.__G__.tick();
-  await new Promise((r) => requestAnimationFrame(r));
-  await new Promise((r) => requestAnimationFrame(r));
-  const cooking = g.grenades.state.cooking;
-  const cook = g.grenades.cook;
-  window.__PAD__.btn(5, false);
-  window.__G__.tick();
-  await new Promise((r) => requestAnimationFrame(r));
-  return { cooking, cook, thrownAfter: g.grenades.state.cooking };
-});
-check(fuse.cooking === true && fuse.cook > 0,
-  'R1 HELD COOKS THE GRENADE - the fuse runs while the button is down',
-  `cook ${fuse.cook.toFixed(3)}s`);
-check(fuse.thrownAfter === false, 'and releasing it throws');
+await page.evaluate(() => window.__PAD__.btn(5, true));    // R1
+await page.evaluate(() => window.__G__.frames(3));
+const cooking = await page.evaluate(() => ({
+  cooking: window.__SANDS__.grenades.state.cooking,
+  cook: window.__SANDS__.grenades.cook,
+}));
+await page.evaluate(() => window.__PAD__.btn(5, false));
+await page.evaluate(() => window.__G__.frames(3));
+const thrown = await page.evaluate(() => window.__SANDS__.grenades.state.cooking);
 
-await page.evaluate(() => window.__G__.frames(150));
+check(cooking.cooking === true && cooking.cook > 0,
+  'R1 HELD COOKS THE GRENADE - the fuse runs while the button is down',
+  `cook ${cooking.cook.toFixed(3)}s`);
+check(thrown === false, 'and releasing it throws');
+
+await page.evaluate(() => window.__G__.frames(80));
 await stage();
 
 // --- movement ---------------------------------------------------------------
@@ -848,10 +1079,7 @@ const moved = await page.evaluate(async () => {
   const g = window.__SANDS__;
   const from = { x: g.player.position.x, z: g.player.position.z };
   window.__PAD__.ax(1, -1);                     // left stick forward
-  for (let i = 0; i < 30; i++) {
-    g.input.pollPad(g.rig, 1 / 60);
-    await new Promise((r) => requestAnimationFrame(r));
-  }
+  await window.__G__.frames(12);
   const walked = Math.hypot(g.player.position.x - from.x, g.player.position.z - from.z);
   const fwd = g.input.state.forward;
 
@@ -861,11 +1089,12 @@ const moved = await page.evaluate(async () => {
   g.input.state.forward = 0;
 
   window.__PAD__.ax(1, 0);
-  g.input.pollPad(g.rig, 1 / 60);
+  await window.__G__.frames(2);
   return { walked, fwd, summed, after: g.input.state.forward };
 });
 
-check(moved.walked > 0.5, 'THE LEFT STICK WALKS THE PLAYER', `${moved.walked.toFixed(3)} m in 30 frames`);
+check(moved.walked > 0.5, 'THE LEFT STICK WALKS THE PLAYER',
+  `${moved.walked.toFixed(3)} m`);
 check(moved.fwd > 0.9, 'a full stick forward is full forward', `${moved.fwd.toFixed(4)}`);
 check(near(moved.summed, 0, 1e-9),
   'and a keyboard asking for the opposite CANCELS it rather than one winning',
@@ -879,7 +1108,8 @@ check(moved.after === 0, 'the axis returns to nothing when the stick comes home'
 notes.push('\n--- the menu ---');
 
 await stage();
-await page.evaluate(() => { window.__PAD__.idle(); window.__G__.tick(); });
+await page.evaluate(() => window.__PAD__.idle());
+await page.evaluate(() => window.__G__.frames(2));
 
 await tapButton(9);                                   // Options
 const opened = await page.evaluate(() => ({
@@ -916,54 +1146,59 @@ await tapButton(4);                                   // L1
 const tabBack = await page.evaluate(() => window.__SANDS__.pause.tab);
 check(tabBack === tabBefore, 'and L1 changes it back', `${tabAfter} -> ${tabBack}`);
 
-// --- a slider actually moves -------------------------------------------------
+// --- a slider actually moves, DRIVEN FROM THE PAD ---------------------------
+//
+// The walk to the row goes through pause.padMenu directly, because forty
+// D-pad taps at two game frames each is forty seconds of wall clock for a claim
+// the tap above already made. The ADJUSTMENT itself is driven from the pad
+// hardware, which is the part that has to be proven end to end.
 
-const slid = await page.evaluate(async () => {
+const walked = await page.evaluate(() => {
   const g = window.__SANDS__;
   g.pause.show('game');
-  // Walk down to the stick sensitivity row, which is the fifth control on the
-  // Game tab, by pressing down from Resume until the cursor names it. Bounded,
-  // and the bound is well past the row count so a cursor that stopped moving
-  // fails the check below rather than spinning the page.
   for (let i = 0; i < 20; i++) {
     if (g.pause.padCursor.id === 'padsens') break;
     g.pause.padMenu('down');
   }
-  const landed = g.pause.padCursor.id;
-  const from = g.input.pad.sensitivity;
-  g.pause.padMenu('right');
-  g.pause.padMenu('right');
-  const to = g.input.pad.sensitivity;
-  const shown = document.querySelector('[data-setting="padsens"] .set-value').textContent;
-  g.pause.padMenu('left');
-  g.pause.padMenu('left');
-  return { landed, from, to, shown, back: g.input.pad.sensitivity };
+  return { landed: g.pause.padCursor.id, from: g.input.pad.sensitivity };
 });
+check(walked.landed === 'padsens', 'the cursor reaches the stick sensitivity row',
+  walked.landed);
 
-check(slid.landed === 'padsens', 'the cursor reaches the stick sensitivity row', slid.landed);
-check(slid.to > slid.from,
-  'AND THE PAD MOVES IT - two presses right raise the live setting',
-  `${slid.from.toFixed(2)} -> ${slid.to.toFixed(2)}, panel shows ${slid.shown}`);
-check(near(slid.back, slid.from, 1e-9), 'and left puts it back', `${slid.back.toFixed(2)}`);
+await tapButton(15);                                  // D-pad right
+await tapButton(15);
+const slid = await page.evaluate(() => ({
+  to: window.__SANDS__.input.pad.sensitivity,
+  shown: document.querySelector('[data-setting="padsens"] .set-value').textContent,
+}));
+check(slid.to > walked.from,
+  'AND THE PAD MOVES IT - two presses of D-pad right raise the live setting',
+  `${walked.from.toFixed(2)} -> ${slid.to.toFixed(2)}, panel shows ${slid.shown}`);
+
+await tapButton(14);                                  // D-pad left
+await tapButton(14);
+const slidBack = await page.evaluate(() => window.__SANDS__.input.pad.sensitivity);
+check(near(slidBack, walked.from, 1e-9), 'and left puts it back',
+  `${slidBack.toFixed(2)}`);
 
 // --- a toggle flips ---------------------------------------------------------
 
-const toggled = await page.evaluate(() => {
+const toToggle = await page.evaluate(() => {
   const g = window.__SANDS__;
   for (let i = 0; i < 20; i++) {
     if (g.pause.padCursor.id === 'padinvert') break;
     g.pause.padMenu('down');
   }
-  const landed = g.pause.padCursor.id;
-  const from = g.input.pad.invertY;
-  g.pause.padMenu('accept');
-  const to = g.input.pad.invertY;
-  g.pause.padMenu('accept');
-  return { landed, from, to, back: g.input.pad.invertY };
+  return { landed: g.pause.padCursor.id, from: g.input.pad.invertY };
 });
-check(toggled.landed === 'padinvert' && toggled.from !== toggled.to,
-  'CONFIRM FLIPS A TOGGLE', `${toggled.from} -> ${toggled.to}`);
-check(toggled.back === toggled.from, 'and flips it back');
+await tapButton(0);                                   // Cross
+const flipped = await page.evaluate(() => window.__SANDS__.input.pad.invertY);
+await tapButton(0);
+const flippedBack = await page.evaluate(() => window.__SANDS__.input.pad.invertY);
+
+check(toToggle.landed === 'padinvert' && flipped !== toToggle.from,
+  'CROSS FLIPS A TOGGLE, from the pad', `${toToggle.from} -> ${flipped}`);
+check(flippedBack === toToggle.from, 'and flips it back');
 
 // --- the panel says which pad it found ---------------------------------------
 
@@ -1002,26 +1237,22 @@ for (const [key, word] of [
 
 // --- and CONFIRM ON RESUME GETS THE PLAYER OUT ------------------------------
 
-const escaped = await page.evaluate(async () => {
+await page.evaluate(() => {
   const g = window.__SANDS__;
-  // Walk to Resume the way a player would, then press Cross through the REAL
-  // input layer rather than by calling padMenu.
   // Bounded. padMenu refuses everything when the panel is not up, so an
-  // unbounded walk here would spin the page forever on the one failure mode
-  // this section exists to catch.
+  // unbounded walk would spin the page forever on the one failure mode this
+  // section exists to catch.
   for (let i = 0; i < 16 && g.pause.padCursor.id !== 'resume'; i++) g.pause.padMenu('down');
-  window.__PAD__.btn(0, true);
-  g.input.pollPad(g.rig, 1 / 60);
-  window.__PAD__.btn(0, false);
-  g.input.pollPad(g.rig, 1 / 60);
-  await new Promise((r) => requestAnimationFrame(r));
-  return {
-    paused: g.pause.paused,
-    hidden: document.getElementById('pause').hidden,
-    suspended: g.input.state.suspended,
-    focused: document.activeElement ? document.activeElement.tagName : 'none',
-  };
+  return g.pause.padCursor.id;
 });
+
+await tapButton(0);                                   // Cross, on Resume
+const escaped = await page.evaluate(() => ({
+  paused: window.__SANDS__.pause.paused,
+  hidden: document.getElementById('pause').hidden,
+  suspended: window.__SANDS__.input.state.suspended,
+  focused: document.activeElement ? document.activeElement.tagName : 'none',
+}));
 
 check(escaped.paused === false && escaped.hidden === true,
   'CROSS ON RESUME STARTS THE GAME AGAIN - the pad is not a one-way door into the menu',
@@ -1033,16 +1264,9 @@ check(escaped.focused !== 'INPUT' && escaped.focused !== 'BUTTON',
 
 // --- Circle also resumes, which is the console convention -------------------
 
-await tapButton(9);
-const backOut = await page.evaluate(async () => {
-  const g = window.__SANDS__;
-  window.__PAD__.btn(1, true);
-  g.input.pollPad(g.rig, 1 / 60);
-  window.__PAD__.btn(1, false);
-  g.input.pollPad(g.rig, 1 / 60);
-  await new Promise((r) => requestAnimationFrame(r));
-  return g.pause.paused;
-});
+await tapButton(9);                                   // Options, back in
+await tapButton(1);                                   // Circle
+const backOut = await page.evaluate(() => window.__SANDS__.pause.paused);
 check(backOut === false, 'and Circle backs out of the menu too', `paused ${backOut}`);
 
 // --- the look does not leak out of a pause ----------------------------------
@@ -1053,14 +1277,11 @@ const leaked = await page.evaluate(async () => {
   window.__G__.aim();
   g.pause.open();
   window.__PAD__.ax(2, 1);                    // full stick, while paused
-  for (let i = 0; i < 20; i++) {
-    g.input.pollPad(g.rig, 1 / 60);
-    await new Promise((r) => requestAnimationFrame(r));
-  }
+  await window.__G__.frames(10);
   const during = g.rig.yaw;
   window.__PAD__.ax(2, 0);
   g.pause.resume();
-  for (let i = 0; i < 5; i++) await new Promise((r) => requestAnimationFrame(r));
+  await window.__G__.frames(3);
   return { during, after: g.rig.yaw };
 });
 check(leaked.during === 0 && leaked.after === 0,
@@ -1100,20 +1321,19 @@ check(muted.ok === false && muted.n === 0, 'and the setting genuinely switches i
 // 6. THE PAD THAT CHROME DID NOT MAP
 // ---------------------------------------------------------------------------
 //
-// The standard mapping is what Chrome is documented to give a DualShock 4 and
-// is very probably what it gives. It is not ASSUMED, because Gamepad.mapping
-// exists precisely so that the browser can say it did not manage it - and a raw
-// pad read through standard indices would put reload on the aim trigger, the
-// D-pad nowhere, and the analog triggers flat at zero.
+// The standard mapping is what Chrome is documented to give a DualShock 4 and is
+// very probably what it gives. It is not ASSUMED, because Gamepad.mapping exists
+// precisely so the browser can say it did not manage it - and a raw pad read
+// through standard indices would put reload on the aim trigger, the D-pad
+// nowhere, and the analog triggers flat at zero.
 
 notes.push('\n--- the unmapped pad ---');
 
-await page.evaluate(() => {
-  window.__PAD__.unplug();
-  window.__SANDS__.input.pollPad(window.__SANDS__.rig, 1 / 60);
-  window.__PAD__.plug('raw', 1);
-  window.__SANDS__.input.pollPad(window.__SANDS__.rig, 1 / 60);
-});
+await stage();
+await page.evaluate(() => window.__PAD__.unplug());
+await page.evaluate(() => window.__G__.frames(2));
+await page.evaluate(() => window.__PAD__.plug('raw', 1));
+await page.evaluate(() => window.__G__.frames(2));
 
 const rawInfo = await page.evaluate(() => window.__SANDS__.input.pad.info());
 check(rawInfo.connected && rawInfo.index === 1,
@@ -1122,81 +1342,79 @@ check(rawInfo.profile === 'ds4-raw',
   'AND IT IS READ THROUGH THE RAW LAYOUT rather than through the standard one',
   `mapping "${rawInfo.mapping}" -> ${rawInfo.profileName}`);
 
-const rawRead = await page.evaluate(() => {
-  const g = window.__SANDS__;
-  const out = {};
+// The trigger is an AXIS on this pad, resting at -1. Read as buttons[7].value it
+// would be flat zero and the gun would never fire.
+await page.evaluate(() => window.__PAD__.ax(4, 0.4));      // -> 0.70 once rescaled
+await page.evaluate(() => window.__G__.frames(2));
+const rawTrigger = await page.evaluate(() => ({
+  analog: window.__SANDS__.input.pad.snapshot.analog.r2,
+  fire: window.__SANDS__.input.state.fire,
+}));
+await page.evaluate(() => window.__PAD__.ax(4, -1));
+await page.evaluate(() => window.__G__.frames(2));
 
-  // The trigger is an AXIS on this pad, resting at -1. Read as buttons[7].value
-  // it would be flat zero and the gun would never fire.
-  window.__PAD__.ax(4, 0.4);                 // r2 axis -> 0.70 once rescaled
-  g.input.pollPad(g.rig, 1 / 60);
-  out.trigger = { analog: g.input.pad.snapshot.analog.r2, fire: g.input.state.fire };
-  window.__PAD__.ax(4, -1);
-  g.input.pollPad(g.rig, 1 / 60);
+check(near(rawTrigger.analog, 0.7, 1e-9) && rawTrigger.fire === true,
+  'THE ANALOG TRIGGER IS READ OFF ITS AXIS on an unmapped pad',
+  `axis 0.4 rescaled to ${rawTrigger.analog}`);
 
-  // The face buttons are in physical order here: index 1 is Cross, not Circle.
-  window.__PAD__.btn(1, true);
-  g.input.pollPad(g.rig, 1 / 60);
-  out.jump = g.input.state.jump;
-  window.__PAD__.btn(1, false);
-  g.input.pollPad(g.rig, 1 / 60);
+// The face buttons are in physical order here: index 1 is Cross, not Circle.
+await page.evaluate(() => window.__PAD__.btn(1, true));
+await page.evaluate(() => window.__G__.frames(2));
+const rawJump = await page.evaluate(() => window.__SANDS__.input.state.jump);
+await page.evaluate(() => window.__PAD__.btn(1, false));
+await page.evaluate(() => window.__G__.frames(2));
 
-  // The D-pad is a hat on axis 9. 0.143 is "down".
-  window.__PAD__.ax(9, -1);
-  g.input.pollPad(g.rig, 1 / 60);
-  out.hatUp = g.input.pad.snapshot.buttons.up;
-  window.__PAD__.ax(9, 0.143);
-  g.input.pollPad(g.rig, 1 / 60);
-  out.hatDown = g.input.pad.snapshot.buttons.down;
-  window.__PAD__.ax(9, 1.286);
-  g.input.pollPad(g.rig, 1 / 60);
-  out.hatCentre = g.input.pad.snapshot.buttons.up || g.input.pad.snapshot.buttons.down;
+check(rawJump === true,
+  'and the face buttons are read in their physical order - index 1 is Cross here',
+  `jump ${rawJump}`);
 
-  // And the right stick's vertical is axis 5, not axis 3.
-  window.__G__.aim();
-  window.__PAD__.ax(5, 1);
-  for (let i = 0; i < 10; i++) g.input.pollPad(g.rig, 1 / 60);
-  out.pitchCounts = g.input.state.dy;
-  g.input.consumeLook();
-  window.__PAD__.ax(5, 0);
-  g.input.pollPad(g.rig, 1 / 60);
-  return out;
+// The D-pad is a hat on axis 9.
+await page.evaluate(() => window.__PAD__.ax(9, -1));
+await page.evaluate(() => window.__G__.frames(2));
+const hatUp = await page.evaluate(() => window.__SANDS__.input.pad.snapshot.buttons.up);
+await page.evaluate(() => window.__PAD__.ax(9, 0.143));
+await page.evaluate(() => window.__G__.frames(2));
+const hatDown = await page.evaluate(() => window.__SANDS__.input.pad.snapshot.buttons.down);
+await page.evaluate(() => window.__PAD__.ax(9, 1.286));
+await page.evaluate(() => window.__G__.frames(2));
+const hatCentre = await page.evaluate(() => {
+  const b = window.__SANDS__.input.pad.snapshot.buttons;
+  return b.up || b.down || b.left || b.right;
 });
 
-check(near(rawRead.trigger.analog, 0.7, 1e-9) && rawRead.trigger.fire === true,
-  'THE ANALOG TRIGGER IS READ OFF ITS AXIS on an unmapped pad',
-  `axis 0.4 rescaled to ${rawRead.trigger.analog}`);
-check(rawRead.jump === true,
-  'and the face buttons are read in their physical order - index 1 is Cross here',
-  `jump ${rawRead.jump}`);
-check(rawRead.hatUp === true && rawRead.hatDown === true && rawRead.hatCentre === false,
+check(hatUp === true && hatDown === true && hatCentre === false,
   'and the D-pad is decoded from the hat switch on axis 9',
-  `up ${rawRead.hatUp} down ${rawRead.hatDown} centred-quiet ${!rawRead.hatCentre}`);
-check(rawRead.pitchCounts > 0,
+  `up ${hatUp} down ${hatDown} centred-quiet ${!hatCentre}`);
+
+// And the right stick's vertical is axis 5, not axis 3.
+await page.evaluate(() => { window.__PAD__.idle(); });
+await page.evaluate(() => window.__PAD__.ax(5, 1));
+const rawPitch = await page.evaluate(() => window.__G__.live(12));
+await page.evaluate(() => window.__PAD__.ax(5, 0));
+
+check(rawPitch.pitch < 0 && rawPitch.yaw === 0,
   'and the right stick is found on axis 5 rather than axis 3',
-  `${rawRead.pitchCounts.toFixed(2)} counts of look`);
+  `pitch ${rawPitch.pitch.toFixed(6)} rad, yaw ${rawPitch.yaw}`);
 
 // --- unplugging -------------------------------------------------------------
 
-const gone = await page.evaluate(() => {
-  const g = window.__SANDS__;
-  // The trigger on THIS pad is axis 4, not button 7. Poking button 7 here is
-  // exactly the mistake the raw layout exists to prevent, and doing it in the
-  // test would have set up a hold that was never held.
-  window.__PAD__.ax(4, 1);
-  g.input.pollPad(g.rig, 1 / 60);
-  const firing = g.input.state.fire;
-  window.__PAD__.unplug();
-  g.input.pollPad(g.rig, 1 / 60);
-  return { firing, after: g.input.state.fire, info: g.input.pad.info().connected };
-});
-check(gone.firing === true && gone.after === false && gone.info === false,
+await page.evaluate(() => window.__PAD__.ax(4, 1));        // the raw pad's trigger
+await page.evaluate(() => window.__G__.frames(2));
+const heldBefore = await page.evaluate(() => window.__SANDS__.input.state.fire);
+await page.evaluate(() => window.__PAD__.unplug());
+await page.evaluate(() => window.__G__.frames(2));
+const heldAfter = await page.evaluate(() => ({
+  fire: window.__SANDS__.input.state.fire,
+  connected: window.__SANDS__.input.pad.info().connected,
+}));
+
+check(heldBefore === true && heldAfter.fire === false && heldAfter.connected === false,
   'UNPLUGGING A PAD MID-HOLD DOES NOT LEAVE THE TRIGGER DOWN FOREVER',
-  `firing ${gone.firing} -> ${gone.after}`);
+  `firing ${heldBefore} -> ${heldAfter.fire}`);
 
 // --- and the keyboard still works -------------------------------------------
 
-const keyboardStill = await page.evaluate(async () => {
+const keyboardStill = await page.evaluate(() => {
   const g = window.__SANDS__;
   window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
   const fwd = g.input.state.forward;
@@ -1224,6 +1442,11 @@ console.log(`  pitch      ${PAD_DEFAULTS.pitchRate} rad/s  ${(PAD_DEFAULTS.pitch
 console.log(`  fire       arms ${TRIGGER.fireOn}, disarms ${TRIGGER.fireOff}`);
 console.log(`  aim        arms ${TRIGGER.adsOn}, disarms ${TRIGGER.adsOff}`);
 console.log(`  menu       ${MENU.delay}s to the first repeat, then ${MENU.repeat}s`);
+
+console.log('\nTHE LOOP');
+console.log(`  ${pacing.frames} frames advanced the simulated clock by ${pacing.sim.toFixed(4)}s`);
+console.log(`  mean ${(pacing.sim / pacing.frames * 1000).toFixed(3)}ms per frame, which is the MAX_DELTA clamp`);
+console.log('  the loop\'s delta cannot be varied here, which is why the pacing test injects it');
 
 if (failures.length) {
   console.log(`\n${failures.length} FAILURE(S)`);
