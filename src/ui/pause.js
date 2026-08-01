@@ -142,7 +142,7 @@ export const PAD_BINDINGS = [
     rows: [
       { keys: ['Left stick'], what: 'Move' },
       { keys: ['Right stick'], what: 'Look' },
-      { keys: ['L3'], what: 'Sprint - click once, it holds until you stop' },
+      { keys: ['R3'], what: 'Sprint - click once, it holds until you stop' },
       { keys: ['Cross'], what: 'Jump' },
     ],
   },
@@ -153,7 +153,13 @@ export const PAD_BINDINGS = [
       { keys: ['L2'], what: 'Aim down sight' },
       { keys: ['Square'], what: 'Reload' },
       { keys: ['R1'], what: 'Hold to cook a grenade, release to throw' },
-      { keys: ['L1', 'R3'], what: 'Khopesh, on either, whichever hand is free' },
+      { keys: ['L1'], what: 'Khopesh' },
+      // The four rows above are the DEFAULT. Swap bumpers and triggers on the
+      // Game tab and they exchange in pairs: fire to R1, aim to L1, grenade to
+      // R2, khopesh to L2. Written here rather than redrawing the list, because
+      // a controls page that silently rearranges itself is harder to read
+      // against a pad in your hands than one that states the rule.
+      { keys: ['Swap'], what: 'Bumpers and triggers exchange - see the Game tab' },
     ],
   },
   {
@@ -352,6 +358,23 @@ function buildSpec({ rig, audio, mute, fidelity, pad }) {
           note: () => 'Vertical only, and separate from the mouse setting.'
             + ' Pushing the stick forward looks '
             + (pad.invertY ? 'up' : 'down'),
+        },
+        {
+          id: 'padswap',
+          kind: 'toggle',
+          label: 'Swap bumpers and triggers',
+          read: () => pad.swapBumpers,
+          write: (on) => pad.setSwapBumpers(on),
+          value: () => (pad.swapBumpers ? 'On' : 'Off'),
+          /**
+           * The note prints the resulting layout rather than the word "on",
+           * because the setting's name says which buttons move and not what
+           * they become, and a player reaching for this row is trying to find
+           * out where fire ends up.
+           */
+          note: () => (pad.swapBumpers
+            ? 'Fire R1, aim L1, grenade R2, khopesh L2'
+            : 'Fire R2, aim L2, grenade R1, khopesh L1'),
         },
         {
           id: 'padrumble',

@@ -1226,9 +1226,14 @@ const padRows = await page.evaluate(() => {
     what: r.querySelector('.bind-what').textContent,
   }));
 });
+// R3, not L3. Sprint moved to the right stick at the owner's request, and this
+// assertion caught the controls page still saying L3 - which is exactly what a
+// documentation check is for. A controls panel that disagrees with the bindings
+// is worse than no controls panel, because the player trusts it and then blames
+// their own hands.
 for (const [key, word] of [
   ['R2', 'Fire'], ['L2', 'Aim'], ['Square', 'Reload'], ['R1', 'cook'],
-  ['Options', 'Pause'], ['L3', 'Sprint'], ['Right stick', 'Look'],
+  ['Options', 'Pause'], ['R3', 'Sprint'], ['Right stick', 'Look'],
 ]) {
   const row = padRows.find((b) => b.keys.includes(key));
   check(!!row && row.what.includes(word), `controls: ${key} is documented`,

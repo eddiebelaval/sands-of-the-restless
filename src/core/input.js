@@ -298,6 +298,26 @@ export function createInput(canvas) {
      */
     invertY: PAD_DEFAULTS.invertY,
     rumble: true,
+
+    /**
+     * SWAP THE BUMPERS WITH THE TRIGGERS. Off by default.
+     *
+     * The default puts fire and aim on the triggers, which is what a modern
+     * console shooter does and what most hands expect. It is not what every hand
+     * expects: players who came up on Bumper Jumper, or who find the DualShock's
+     * long trigger throw slow for a weapon that wants a fast trigger, put fire
+     * on R1 and live with grenades on R2.
+     *
+     * IT IS NOT A RELABELLING. The two pairs are different KINDS of input and
+     * swapping them swaps that too. The triggers are analog and run through a
+     * two-threshold hysteresis so a spring resting on one number cannot chatter;
+     * the bumpers are plain digital switches. So a swap has to move the
+     * hysteresis with the action rather than the button - fire on a bumper reads
+     * the switch, and the grenade on a trigger reads the LATCH, not the raw
+     * analog value. Getting that backwards gives you a grenade that starts
+     * cooking from the weight of a resting finger.
+     */
+    swapBumpers: false,
   };
 
   /** The last poll's snapshot, exposed so a harness can see what was read. */
@@ -306,13 +326,33 @@ export function createInput(canvas) {
   /**
    * Sprint, LATCHED, and this is a real design decision rather than a shortcut.
    *
-   * Console sprint is L3, a click of the left stick, and holding a stick down
-   * while also steering it is genuinely unpleasant over a long wave. So the
-   * click latches sprint on and the latch clears when the left stick comes back
-   * to centre, which is what "sprint until you stop" means on a pad and is what
-   * the reference games do. Nothing about the keyboard's Shift changes.
+   * Holding a stick clicked while also steering it is genuinely unpleasant over
+   * a long wave. So the click latches sprint on and the latch clears when the
+   * left stick comes back to centre, which is what "sprint until you stop"
+   * means on a pad. Nothing about the keyboard's Shift changes.
+   *
+   * ON R3, THE RIGHT STICK, at the owner's request. L3 is the more common
+   * console default and it was the first binding here, but it asks the thumb
+   * that is STEERING to also press, and the click nudges the aim every time.
+   * R3 is the aim stick, so the same objection applies in principle - except
+   * that sprinting is something you do while running in a straight line and
+   * aiming is not, so in practice the two rarely collide. It is the owner's
+   * hands that decide this one.
+   *
+   * R3 used to be a second binding for the khopesh. The khopesh keeps L1, which
+   * was always its primary.
    */
   let sprintLatch = false;
+
+  /**
+   * Last frame's khopesh input, for the rising edge.
+   *
+   * Needed only because the swap can put the khopesh on L2, which is analog and
+   * has no entry in snap.pressed. Tracked unconditionally rather than only when
+   * swapped, so that toggling the setting mid-run cannot leave a stale value
+   * that fires one phantom swing.
+   */
+  let meleeWasHeld = false;
 
   /** Menu repeat, one per axis, so up-down and left-right time independently. */
   const repeatV = createRepeater();
@@ -394,6 +434,9 @@ export function createInput(canvas) {
     pad.sprint = pad.jump = pad.fire = pad.ads = false;
     pad.interact = pad.grenade = false;
     sprintLatch = false;
+    // Cleared with the rest, so a pad that goes away mid-swing does not come
+    // back holding an edge and throw one phantom khopesh.
+    meleeWasHeld = false;
   }
 
   /**
@@ -515,27 +558,55 @@ export function createInput(canvas) {
     pad.strafe = move.x;
     pad.forward = -move.y;         // a stick reports negative for up
 
-    // Sprint latches on the click and clears when the stick comes home.
-    if (snap.pressed.includes('l3')) sprintLatch = true;
+    // Sprint latches on the click of R3 and clears when the stick comes home.
+    if (snap.pressed.includes('r3')) sprintLatch = true;
     if (move.mag === 0) sprintLatch = false;
     pad.sprint = sprintLatch;
 
+    /**
+     * RESOLVE THE FOUR SHOULDER INPUTS ONCE, HERE, BEFORE ANYTHING READS THEM.
+     *
+     * The swap moves an ACTION between two different kinds of input, so each
+     * action has to take the reading that suits where it now lives:
+     *
+     *   default   fire and aim on the TRIGGERS, so they take the hysteresis
+     *             latches (snap.fire / snap.ads). Grenade on R1 and khopesh on
+     *             L1 take the plain switches.
+     *
+     *   swapped   fire and aim on the BUMPERS, so they take the switches
+     *             directly - a switch needs no hysteresis, it has one built in.
+     *             Grenade moves to R2 and takes the LATCH rather than the raw
+     *             analog value, because a fuse that starts on the weight of a
+     *             resting finger is a grenade the player did not throw.
+     *
+     * The khopesh is a TAP and so needs an EDGE. On L1 the edge is already in
+     * snap.pressed; on L2 there is no such list, so the latch's own rising edge
+     * is tracked here. That asymmetry is the whole reason this is resolved in
+     * one place instead of being scattered through the switch below.
+     */
+    const swap = padSettings.swapBumpers;
+    const meleeHeld = swap ? snap.ads : snap.buttons.l1;
+    const meleeEdge = meleeHeld && !meleeWasHeld;
+    meleeWasHeld = meleeHeld;
+
     // --- the held actions ---------------------------------------------------
     pad.jump = snap.buttons.cross;
-    pad.fire = snap.fire;
-    pad.ads = snap.ads;
+    pad.fire = swap ? snap.buttons.r1 : snap.fire;
+    pad.ads = swap ? snap.buttons.l1 : snap.ads;
     // HELD, exactly as KeyG is. systems/grenades.js runs the fuse while this is
     // true and throws on the release, so a one-shot binding here would give the
     // player a timer they cannot see and cannot stop.
-    pad.grenade = snap.buttons.r1;
+    pad.grenade = swap ? snap.fire : snap.buttons.r1;
     pad.interact = snap.buttons.circle;
+
+    // The khopesh, wherever it currently lives. See the resolution above.
+    if (meleeEdge) tap('KeyQ');
 
     // --- the tapped actions -------------------------------------------------
     for (const name of snap.pressed) {
       switch (name) {
         case 'square': tap('KeyR'); break;                 // reload
         case 'circle': tap('KeyF'); break;                 // buy, open, use
-        case 'l1': case 'r3': tap('KeyQ'); break;          // the khopesh
         case 'up': tap('KeyV'); break;                     // inspect
         case 'triangle': wheel(100); break;                // swap weapon
         case 'right': wheel(100); break;
@@ -751,6 +822,19 @@ export function createInput(canvas) {
 
       get invertY() { return padSettings.invertY; },
       setInvertY(on) { padSettings.invertY = !!on; return padSettings.invertY; },
+
+      get swapBumpers() { return padSettings.swapBumpers; },
+      setSwapBumpers(on) {
+        padSettings.swapBumpers = !!on;
+        // Drop anything currently held on a shoulder button. Toggling this with
+        // a finger down would otherwise carry that hold across to whatever the
+        // button now means - most visibly as a grenade that starts cooking the
+        // instant the setting changes, from a trigger the player was only
+        // resting on.
+        pad.fire = pad.ads = pad.grenade = false;
+        meleeWasHeld = false;
+        return padSettings.swapBumpers;
+      },
 
       get rumbleEnabled() { return padSettings.rumble; },
       setRumble(on) {

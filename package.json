@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "python3 -m http.server 4177",
-    "test": "node test/shot.mjs && node test/gun.mjs && node test/interior.mjs && node test/economy.mjs && node test/enemies.mjs && node test/mysterybox.mjs && node test/grenades.mjs && node test/powerups.mjs && node test/melee.mjs && node test/hud.mjs && node test/settings.mjs && node test/probe.mjs && node test/act1probe.mjs",
+    "test": "node test/shot.mjs && node test/gun.mjs && node test/interior.mjs && node test/economy.mjs && node test/enemies.mjs && node test/mysterybox.mjs && node test/grenades.mjs && node test/powerups.mjs && node test/melee.mjs && node test/hud.mjs && node test/settings.mjs && node test/probe.mjs && node test/act1probe.mjs && node test/rebind.mjs",
     "test:shot": "node test/shot.mjs",
     "test:gun": "node test/gun.mjs",
     "test:interior": "node test/interior.mjs",
@@ -21,7 +21,8 @@
     "test:settings": "node test/settings.mjs",
     "test:probe": "node test/probe.mjs",
     "test:act1": "node test/act1probe.mjs",
-    "shots:act1": "node test/act1shots.mjs"
+    "shots:act1": "node test/act1shots.mjs",
+    "test:rebind": "node test/rebind.mjs"
   },
   "devDependencies": {
     "playwright": "^1.49.0",
