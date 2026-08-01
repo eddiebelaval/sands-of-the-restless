@@ -63,9 +63,10 @@ const SLAB_SECONDS = 1.6;
  * number chosen for looks - it is the last z at which the sheet is still in
  * front of the camera. Past it the player is inside the pyramid's own solid
  * mass, which has no inside, and the only thing that can be shown there is
- * nothing. Leaving is the same shape mirrored; there is no sheet on that side
- * because the interior's entry wall is already a sealed wall and measures at
- * luminance 0.3 from a stride away.
+ * nothing. Leaving is the same shape mirrored, and it has a sheet of its own:
+ * the interior's entry wall is NOT sealed - an earlier version of this comment
+ * said it was, and it was measuring the wrong wall - so there is a second sheet
+ * hung across the opening from the inside. See DAYLIGHT.
  */
 const ENTER_AT = { z: -31.6, halfWidth: 2.6, fadeFrom: -27.6, blackBy: -30.0 };
 const EXIT_AT = { z: -140.8, halfWidth: 2.2, fadeFrom: -144.6, blackBy: -141.6 };
@@ -118,6 +119,135 @@ const RETURN_TO = { x: 0, z: -27.0, rot: Math.PI };
  * centimetres does not get the band back.
  */
 const VOID = { w: 5.3, h: 8.9, y: 4.4, z: 0.15 };
+
+/**
+ * The daylight behind the door, as geometry. The inverse of VOID above, and it
+ * exists because the sentence in the ENTER_AT block that said it did not need to
+ * was WRONG.
+ *
+ * That sentence claimed the interior's entry wall is "already a sealed wall and
+ * measures at luminance 0.3 from a stride away". It is not sealed. ENTRY is a
+ * portal like any other, it goes into collectPortals with `from: null`, and
+ * buildShell cuts it a 4.5 x 4.2 opening in the Chamber of Ascent's +Z wall with
+ * a lintel over it exactly as it does for every other doorway. What buildBarriers
+ * skips is the BARRIER - correctly, because the granite slab out in the courtyard
+ * is the same door charged once - and skipping the barrier was mistaken for
+ * skipping the hole. Measured on this build, camera at z -147 facing +Z: the
+ * opening reads mean luminance 0.0, min 0, max 0, against the lit wall beside it
+ * at 45.2, and a ray cast straight down the doorway axis returns NO INTERSECTION
+ * AT ALL while the same ray fired the other way hits five surfaces. It is not a
+ * dark wall. It is a rectangular hole onto nothing, and the 0.3 in the old
+ * comment was a measurement of the wrong wall.
+ *
+ * So the mirror argument applies in full. Standing in a torchlit chamber looking
+ * back at a doorway onto desert noon, the eye is adapted to the room and the
+ * opening does not read as a view of the courtyard - it reads as a hole punched
+ * in white. That is what this sheet is, and it is the world-space half of the
+ * same idea the curtain in spaces.js plays across the whole frame on the way out.
+ *
+ * WHERE IT HANGS IS THE SAME ARGUMENT AS VOID'S, WITH THE SIGN FLIPPED. The
+ * sheet must be the NEAREST surface in the opening as seen FROM THE ROOM, which
+ * here means the least-negative-z side is the wrong one. buildShell centres the
+ * wall slab half a thickness inside its line, so the +Z wall of a room whose line
+ * is z -140 occupies -141.0 to -140.0 and presents its -141.0 face to the room.
+ * The sheet sits 6 cm proud of that face, at -141.06. A sheet hung on the FAR
+ * face at -140.0 was the obvious alternative and it is the deep-void mistake
+ * again in a new costume: from an angle the near edge of the opening would clip
+ * it and the player would see a slice of unlit black between the white and the
+ * stone, which is the one thing this is here to remove.
+ *
+ * IT IS MUCH BIGGER THAN THE HOLE, AND THAT IS THE WHOLE OF THE SECOND HALF.
+ *
+ * A sheet cut to 4.5 x 4.2 was built first and photographed, and it is a white
+ * card taped over the doorway - a hard-edged rectangle that shares no light with
+ * the room it is standing in. A blown highlight in an eye or a lens is not a
+ * shape with an edge; it is a core the sensor cannot hold surrounded by a skirt
+ * of scattered light falling off into the frame, and the skirt is the entire
+ * reason the core reads as too bright to look at rather than as white paint.
+ *
+ * The pass that would normally do that is UnrealBloomPass, and it was tried
+ * SECOND and rejected on measurement. Its threshold is 1.60 in linear HDR and it
+ * was tuned for small sources: ejected brass, the muzzle flash, a brazier. Its
+ * radius scales with the source, so a 4.5 by 4.2 metre emitter does not gain a
+ * halo when it crosses the line, it detonates. Measured at z -147, mean luminance
+ * of a wall patch well clear of the opening, sweeping the sheet's radiance in one
+ * page:
+ *
+ *     x1.20   opening 242.3   wall   6.5
+ *     x1.40   opening 243.0   wall   7.2
+ *     x1.55   opening 243.3   wall   6.0     <- this
+ *     x1.75   opening 245.3   wall  98.1
+ *     x2.10   opening 245.4   wall 110.8
+ *     x2.60   opening 245.4   wall 128.2
+ *
+ * There is no middle setting. The opening is already as white as it will ever get
+ * at x1.20 - everything past that buys nothing but acreage - and the wall goes
+ * from unlit stone to half-lit in one step of 0.2. At x1.75 and above the doorway
+ * has stopped being a doorway: the shot is a white oval covering two thirds of the
+ * frame with the braziers ghosting through it. That is precisely the failure the
+ * threshold comment in core/post.js describes and was raised to 1.60 to stop, and
+ * borrowing that budget for a wall-sized emitter would spend it all.
+ *
+ * So the falloff is IN THE SHEET, not in the post chain. The plane is 5.6 x 5.2 -
+ * roughly half a metre proud of the opening on the sides and the top - opaque
+ * across the hole and feathered to nothing over the surrounding stone, by an
+ * alpha ramp built in makeFalloff below. The skirt therefore lands ON the jamb
+ * and the lintel, which is where light spilling out of a doorway actually lands,
+ * and it costs one 64 x 64 texture and no fullscreen work. It also behaves
+ * identically at LOW fidelity, where post.js turns bloom off entirely - a
+ * transition that stops selling itself on the machines least able to afford the
+ * transition is exactly backwards, which is the same argument spaces.js makes
+ * for the curtain being DOM.
+ *
+ * THE OPAQUE CORE IS SMALLER THAN THE HOLE, WHICH LOOKS WRONG WRITTEN DOWN.
+ *
+ * `coreX` 0.66 puts full opacity out to 1.85 of the 2.8 half-width, and the jamb
+ * is at 2.25. The reason is that the eye's edge is not the alpha's edge. Against
+ * unlit stone this sheet still reads as white down to about alpha 0.64, because
+ * 0.64 of 1.55 linear is 1.0, which the tone mapper still puts at 229 - so the
+ * PERCEIVED white runs to 2.23, a couple of centimetres inside the jamb, and the
+ * glow tails off over the next 20. A core drawn out to the real jamb was built
+ * first and photographed: the white swallowed the lintel and the doorway stopped
+ * having proportions. What is on screen is the thing being tuned, not what the
+ * texture says.
+ *
+ * The vertical ramp is ASYMMETRIC and that is a correctness matter rather than a
+ * taste one. There is no feather at the bottom: the sheet runs to -0.50, well
+ * under the room's floor plane, at full opacity all the way. Feathering the
+ * bottom would put alpha under 1 across the lowest part of the OPENING, and what
+ * is behind the opening is the same nothing this file exists to cover, so the
+ * doorway would gain a grey band along its base. Everything the sheet does below
+ * y 0 is hidden by the floor from any standing eye height anyway, which is what
+ * makes the hard bottom edge honest: it is the floor's own silhouette, not the
+ * sheet's.
+ */
+const DAYLIGHT = { w: 5.6, h: 5.2, y: 2.10, z: -141.06, coreX: 0.66, coreTop: 0.837 };
+
+/**
+ * The colour, in LINEAR working space, and it is over 1 on purpose.
+ *
+ * This is the one place the naive version does not work. A MeshBasicMaterial set
+ * to #fffaf0 - the curtain's colour in spaces.js, and the right hue - is a linear
+ * radiance of about (1.00, 0.96, 0.87), and the frame does not end there: the
+ * output pass tone maps ACES filmic at exposure 1.05, a curve built to roll
+ * highlights OFF, and it brings a flat 1.0 back down to about 229 on screen.
+ * That is a light grey rectangle. It reads as a wall painted white, not as an
+ * opening the eye cannot resolve, and it would have been a comment claiming a
+ * blowout over a picture that did not have one.
+ *
+ * A blown highlight is not a bright colour, it is a quantity of light past what
+ * the sensor can hold, so the sheet is authored as one: the same hue at 1.55x,
+ * which the tone mapper clips to 243 of a possible 255 on its own. 1.55 rather
+ * than more because 1.60 is the bloom threshold and the table above is what
+ * happens on the far side of it; rather than less because the margin under the
+ * line is the only thing standing between this doorway and that white oval, and
+ * it should be a real margin rather than a rounding error.
+ *
+ * Set through setRGB in LinearSRGBColorSpace rather than from a hex, because a
+ * hex cannot express a value above 1 and set() would silently clamp the whole
+ * effect back to the grey rectangle described above.
+ */
+const DAYLIGHT_LINEAR = { r: 1.550, g: 1.482, b: 1.350 };
 
 export function createDoors({
   scene, camera, player, economy, audio, spaces, interior,
@@ -295,6 +425,147 @@ export function createDoors({
   // ---------------------------------------------------------------------------
 
   const sealed = makeSealedDoorway();
+
+  /**
+   * The alpha ramp that turns a rectangle into a blowout.
+   *
+   * A DataTexture written by hand rather than a canvas drawn with a gradient,
+   * for two reasons that are both about honesty. A CanvasTexture is uploaded
+   * through the browser's 2D compositor and picks up whatever colour management
+   * that applies; an alpha ramp must be read raw or the curve is not the curve
+   * that was written. And the falloff wanted here is not a stock radial
+   * gradient - it is flat across the opening and only then rolls off - which is
+   * two lines of arithmetic and no lines of gradient-stop guessing.
+   *
+   * Separable and multiplied rather than a radial distance, so the flat core is
+   * a RECTANGLE matching the doorway rather than a circle inscribed in it. The
+   * product also rounds the corners on its own, which is what light does.
+   *
+   * Smoothstep and not a linear ramp: a linear falloff has a visible crease
+   * where it meets the flat core, and the crease is a line, and a line is an
+   * edge, which is the thing being removed.
+   *
+   * The two axes are NOT the same function. Across, the ramp is symmetric about
+   * the centre and both jambs get a skirt. Up, it is measured from the bottom of
+   * the sheet rather than from its centre, so there is no feather at the floor
+   * end at all - see the DAYLIGHT note on why a feathered base would put a grey
+   * band across the bottom of the doorway.
+   *
+   * 64 x 64 because this is a texture with no detail in it. It is stretched
+   * across five metres and sampled bilinearly, so resolution buys nothing and
+   * the upload is 16 KB. Row 0 of the data is v = 0, which PlaneGeometry puts at
+   * the BOTTOM of the plane, and the vertical ramp is written expecting that.
+   */
+  function makeFalloff(coreX, coreTop) {
+    const N = 64;
+    const data = new Uint8Array(N * N * 4);
+
+    /** 1 while d is inside `core`, smoothstepped to 0 by d = 1. */
+    const roll = (d, core) => {
+      if (d <= core) return 1;
+      const k = Math.min(1, (d - core) / (1 - core));
+      return 1 - k * k * (3 - 2 * k);
+    };
+
+    for (let y = 0; y < N; y++) {
+      // v measured from the bottom edge, not from the middle: opaque all the way
+      // down, feathered only over the lintel.
+      const up = roll((y + 0.5) / N, coreTop);
+
+      for (let x = 0; x < N; x++) {
+        const across = roll(Math.abs((x + 0.5) / N - 0.5) * 2, coreX);
+        const a = across * up;
+        const i = (y * N + x) * 4;
+        // All four channels. alphaMap reads green, but a texture whose other
+        // channels disagree with it is a trap for whoever reuses it next.
+        data[i] = data[i + 1] = data[i + 2] = data[i + 3] = Math.round(a * 255);
+      }
+    }
+
+    const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+    // Left at the default NoColorSpace deliberately: this is a mask, not a
+    // colour, and an sRGB decode would bend the ramp that was just written.
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    // Clamped, because a ramp that wraps puts the opaque core back at the far
+    // edge of the skirt.
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  /**
+   * Hang the daylight across the entry opening, from the inside. See DAYLIGHT
+   * above for where and why.
+   *
+   * Added to the interior's own group rather than to the scene, so it is
+   * switched off with the rest of the interior by spaces.js and is never a
+   * white rectangle floating 110 units past the courtyard wall.
+   *
+   * Built here rather than in world/build.js for the same reason its opposite
+   * number is: these two sheets are one idea seen from two sides, and the file
+   * that owns the threshold between them is the file that should own both. The
+   * builder knows how to cut an opening; it has no business knowing what the
+   * light on the far side of it is supposed to feel like.
+   */
+  function buildDaylight() {
+    if (!interior.group) return null;
+
+    const mat = new THREE.MeshBasicMaterial({
+      alphaMap: makeFalloff(DAYLIGHT.coreX, DAYLIGHT.coreTop),
+      transparent: true,
+      // Does not write depth. The sheet is the last thing between the player and
+      // an opening with nothing behind it, so there is nothing for it to occlude
+      // and nothing that needs to sort against it, and a transparent surface that
+      // writes depth is how a skirt with alpha 0.02 starts hiding things.
+      depthWrite: false,
+      // Both faces, and here the far side is genuinely reachable rather than
+      // theoretical. A player who arrives and turns straight round is not armed
+      // for the exit threshold yet - see `armed` below - so the curtain stays
+      // clear and they can walk the doorway right out to the interior's z bound
+      // at -139.5, half a metre PAST this sheet. Single-sided, that walk ends
+      // with them stood in an unlit pocket looking back through a one-way pane
+      // at the room. Double-sided, they are looking at the back of the light,
+      // which is the same answer the courtyard's sheet gives.
+      side: THREE.DoubleSide,
+      fog: false,
+      // Wins the depth test against the wall face it is nearly touching, so the
+      // six centimetres of clearance is a comfort rather than the whole defence.
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -8,
+    });
+    mat.color.setRGB(
+      DAYLIGHT_LINEAR.r, DAYLIGHT_LINEAR.g, DAYLIGHT_LINEAR.b,
+      THREE.LinearSRGBColorSpace,
+    );
+
+    const sheet = new THREE.Mesh(new THREE.PlaneGeometry(DAYLIGHT.w, DAYLIGHT.h), mat);
+
+    // Faces +Z as built, which is straight back at a player standing in the
+    // room, so no rotation. The entry opening is on the room's +Z wall and the
+    // whole interior is laid out down -Z from it.
+    sheet.position.set(ENTRY.at.x, DAYLIGHT.y, DAYLIGHT.z);
+    sheet.name = 'doorway-daylight';
+
+    // Not a surface, exactly as the void is not. It must not stop a bullet,
+    // take an impact decal, or answer the interact ray: all three would be the
+    // game insisting there is something in the doorway to deal with, when the
+    // thing being sold is that there is nothing there but light.
+    sheet.userData.noHit = true;
+    sheet.userData.noPick = true;
+    sheet.castShadow = false;
+    // Nor receive one. It is the brightest thing in the room by construction,
+    // and a torch shadow falling across the sun would be a nonsense.
+    sheet.receiveShadow = false;
+
+    interior.group.add(sheet);
+    return sheet;
+  }
+
+  buildDaylight();
 
   for (const b of interior.barriers) {
     b.type = 'door';
