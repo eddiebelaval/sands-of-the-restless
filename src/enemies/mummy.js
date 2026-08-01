@@ -424,6 +424,27 @@ export function resolveAgainstWorld(pos, radius, feetY, ctx) {
       const base = c.y0 === undefined ? groundAt(ctx, c.x, c.z, feetY) : c.y0;
       if (feetY - base > c.h) continue;
 
+      /**
+       * AND IT MUST STOP BLOCKING ONCE ITS BASE IS OVER THE ACTOR'S HEAD.
+       *
+       * The test above is one-sided: it skips a collider the actor has climbed
+       * ON TOP OF and never one the actor is standing UNDERNEATH. A cylinder
+       * has no floor, and without this line it has no ceiling either, so
+       * anything declaring a raised base blocks the room beneath it all the way
+       * to the ground.
+       *
+       * The Altar of Ptah on the gallery bridge is what exposed it - y0 6,
+       * radius 2.1, blocking a circle of the gallery FLOOR six metres below
+       * itself. Two actors in the navigation sweep died on it, pinned against
+       * an obstacle that is not there.
+       *
+       * This appears at all three collider tests in this file and in
+       * player/controller.js, which carries the fuller note. They have to
+       * agree: a horde that can walk where the player cannot, or the reverse,
+       * is a map with two different shapes depending on who is asking.
+       */
+      if (base - feetY > (ctx.actorHeight || 1.8)) continue;
+
       const dx = pos.x - c.x;
       const dz = pos.z - c.z;
       const distSq = dx * dx + dz * dz;
@@ -482,6 +503,9 @@ function avoid(pos, dirX, dirZ, radius, look, feetY, ctx) {
     const c = list[i];
     const base = c.y0 === undefined ? groundAt(ctx, c.x, c.z, feetY) : c.y0;
     if (feetY - base > c.h) continue;
+    // Over the actor's head, so it is not in the way. See the note on the first
+    // collider test in this file.
+    if (base - feetY > (ctx.actorHeight || 1.8)) continue;
 
     const dx = _probe.x - c.x;
     const dz = _probe.z - c.z;
@@ -556,6 +580,9 @@ function pointClear(x, z, pad, feetY, ctx) {
     const c = list[i];
     const base = c.y0 === undefined ? groundAt(ctx, c.x, c.z, feetY) : c.y0;
     if (feetY - base > c.h) continue;
+    // Over the actor's head, so it does not make this spot unwalkable. See the
+    // note on the first collider test in this file.
+    if (base - feetY > (ctx.actorHeight || 1.8)) continue;
     const dx = x - c.x, dz = z - c.z;
     const want = c.r + pad;
     if (dx * dx + dz * dz < want * want) return false;

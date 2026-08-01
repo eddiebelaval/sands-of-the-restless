@@ -352,6 +352,22 @@ export function createFlowField() {
       const c = list[i];
       const base = c.y0 === undefined ? ctx.heightAt(c.x, c.z, floorY) : c.y0;
       if (floorY - base > c.h) continue;
+
+      /**
+       * And above the body, which this test was missing while the WALL test
+       * eight lines up had it right all along - `head <= w.y0 || floorY >= w.y1`
+       * checks both ends of a box, and the collider loop checked only one end of
+       * a cylinder.
+       *
+       * Without it the field carves a hole under anything with a raised base:
+       * the Altar of Ptah at y0 6 on the gallery bridge made a 2.1-radius circle
+       * of the gallery FLOOR unwalkable, six metres beneath itself. The field
+       * would then route the horde around a patch of empty stone the player can
+       * walk straight through - and the two have to agree, or the map has one
+       * shape for the player and another for the horde.
+       */
+      if (base - floorY > BODY_H) continue;
+
       const dx = x - c.x, dz = z - c.z;
       const want = c.r + PAD;
       if (dx * dx + dz * dz < want * want) return false;

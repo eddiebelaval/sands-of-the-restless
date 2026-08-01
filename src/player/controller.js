@@ -155,7 +155,41 @@ export function createPlayer(world) {
         // is not: a column standing on the ground and carrying a ledge six units
         // up must stop blocking once the player is on top of that ledge.
         const base = c.y0 === undefined ? floorY : c.y0;
-        if (position.y - EYE_HEIGHT - base > c.h) continue;
+        const feetY = position.y - EYE_HEIGHT;
+
+        // Above its top: the ledge case described above.
+        if (feetY - base > c.h) continue;
+
+        /**
+         * AND BELOW ITS BASE, WHICH THIS TEST DID NOT HAVE.
+         *
+         * The rule was one-sided. It skipped a collider the actor had climbed ON
+         * TOP OF and never one the actor was standing UNDERNEATH, so a cylinder
+         * with no floor turned out to have no ceiling either: anything declaring
+         * a raised base blocked the room beneath it all the way to the ground.
+         *
+         * The Altar of Ptah is what exposed it. It moved onto the gallery bridge
+         * at y 6 and kept its 2.1-radius collider with y0 6, so it stood as an
+         * invisible pillar in the middle of the largest room in the map - six
+         * metres below itself, for the player as much as for the horde. Two of
+         * the navigation lane's stuck actors died on it. From the floor it reads
+         * as the game refusing to let you walk through a particular patch of
+         * nothing, which is unattributable and therefore never gets reported.
+         *
+         * build.js already worked around this for elevated PROPS by throwing
+         * their colliders away, with a comment saying it is waiting for exactly
+         * this fix: "until the collider record grows a base height, elevated
+         * props are decoration only". Interacts could not take that workaround,
+         * because an interact is a solid object the player walks up to and buys
+         * from and has to keep its collider. So the test grows its missing half
+         * instead, and that prop workaround can now go whenever someone wants
+         * decoration on an upper level to be solid.
+         *
+         * EYE_HEIGHT rather than a new head constant: the camera sits at the top
+         * of the body in this controller, so a base higher than the eye is above
+         * the whole of the player.
+         */
+        if (base - feetY > EYE_HEIGHT) continue;
 
         const dx = position.x - c.x;
         const dz = position.z - c.z;
