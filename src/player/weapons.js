@@ -585,7 +585,25 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
 
     state.reloading = true;
 
-    const started = viewmodel ? viewmodel.reload() : true;
+    /**
+     * The scale goes to the ANIMATION as well, and this is redundancy on
+     * purpose rather than a second mechanism.
+     *
+     * The Shrine of Ptah halves a reload, and that agreement spans three files:
+     * this one owns the duration, main.js divides the viewmodel's delta, and
+     * viewmodel.js runs the keyframes. Passing the scale here means the hands
+     * know the length of the job from the system that decided it, so either
+     * channel alone keeps them in step and neither can be edited into a desync
+     * without the other noticing.
+     *
+     * It matters because that agreement HAS already broken once: main.js
+     * clamped the delta before doubling it and the viewmodel clamped again, so
+     * the boon was erased on any frame at the clamp. A shotgun finished
+     * reloading at 2.00s - weapons.js's flat fallback, not half of 3.20 - and
+     * went live with the hands three quarters of the way through feeding the
+     * tube. Measured before the fix.
+     */
+    const started = viewmodel ? viewmodel.reload(state.reloadScale) : true;
     if (!started) { state.reloading = false; return false; }
 
     audio?.magOut?.();

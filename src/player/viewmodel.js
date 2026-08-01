@@ -75,6 +75,22 @@ const VM_FAR = 12;
 
 const MAX_DELTA = 1 / 20;
 
+/**
+ * The looser ceiling the KEYFRAME clocks read, four times MAX_DELTA.
+ *
+ * MAX_DELTA exists to stop an integrator taking a stride it cannot recover
+ * from: sway, the recoil spring and the shell arcs all accumulate, and a
+ * half-second frame at true delta throws a casing through the floor. A
+ * keyframe track accumulates nothing. It indexes a curve, and the worst a long
+ * frame can do to it is skip part of the curve - which is what a long frame is
+ * supposed to do.
+ *
+ * Which matters because MAX_DELTA is also the number main.js clamps to BEFORE
+ * it scales the delta for the Shrine of Ptah, so clamping the animation clock
+ * to the same value cancelled the boon. See the note in update().
+ */
+const ANIM_MAX_DELTA = MAX_DELTA * 4;
+
 const RAISE_TIME = 0.34;
 const LOWER_TIME = 0.22;
 const INSPECT_TIME = 2.3;
@@ -4150,48 +4166,220 @@ function buildSunspear(P) {
 // own duration, so an LMG takes three times as long as a pistol on the same
 // shape. p and r are additive offsets on the hip pose; mag is 0 seated / 1
 // removed; bolt is 0 forward / 1 back; glow drives the Sunspear core.
+//
+// ---------------------------------------------------------------------------
+// THE SHARED SKELETON, AND THE BEAT EVERY ONE OF THESE WAS MISSING
+// ---------------------------------------------------------------------------
+//
+// Every reload in this file is three beats: PRESENT the mechanism, WORK it,
+// RETURN. The middle beat is the one the player is actually watching, and the
+// first beat exists only to make the middle one visible.
+//
+// The first pass had no PRESENT beat, and the cost of that was measured rather
+// than argued. Every one of these tracks put the weapon DOWN during the
+// magazine change - the old keys read `p: [0.014, -0.034, 0.022]`, thirty-four
+// millimetres lower and twenty-two nearer the eye - and a viewmodel at 425mm
+// through a 55 degree lens has a frame 438mm tall, so the magazine well is
+// already sitting within a few centimetres of the bottom edge before anything
+// moves. Dropping the weapon and then dropping the magazine another 200mm out
+// of it threw the magazine straight off the bottom of the screen.
+//
+// Measured across all eight weapons at the point in the track where the
+// magazine is fully clear of the well, as the fraction of the magazine's
+// projected bounding box that lands inside the frame:
+//
+//     mk9 0.00   b3ar 0.00   smg 0.00   shotgun 0.00
+//     carbine 0.00   lmg 0.00   bolt 0.00   sunspear 0.00
+//
+// Zero. On all eight. And confirmed against the frame buffer rather than the
+// projection: rendering the magazine and then rendering it again with the
+// magazine switched off changed ZERO PIXELS on every weapon in the armoury.
+// The reload was a gun tilting slightly with nothing coming out of it, which
+// is exactly what "there is no reload animation" looks like from the chair.
+//
+// So the PRESENT beat lifts the weapon roughly 95mm and pushes it roughly
+// 130mm AWAY from the eye. Away rather than nearer, which is the part that is
+// not obvious: the frame grows with distance, so 130mm of push buys 135mm of
+// extra frame height, and it buys it exactly where the magazine is about to
+// travel. The same measurement after the change runs 0.55 to 1.00 in frame.
+//
+// The roll goes up with it, to about 0.55 radians, because a magazine well
+// pointing straight down at the floor is a hole the eye cannot see into. The
+// roll turns the left side of the receiver toward the camera, which is the
+// side the well opens on, and it is what a person actually does with a rifle
+// when they want to see what they are doing.
 // ---------------------------------------------------------------------------
 
-const MAG_RELOAD = [
-  { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
-  // Roll the receiver over so the magazine well faces the support hand.
-  { t: 0.11, p: [0.012, -0.030, 0.020], r: [-0.14, 0.26, 0.34], mag: 0, bolt: 0 },
-  { t: 0.20, p: [0.014, -0.034, 0.022], r: [-0.16, 0.28, 0.36], mag: 1, bolt: 0 },
-  // The empty is gone; the hand is off frame getting the fresh one.
-  { t: 0.44, p: [0.014, -0.052, 0.016], r: [-0.10, 0.26, 0.33], mag: 1, bolt: 0 },
-  { t: 0.58, p: [0.012, -0.038, 0.020], r: [-0.13, 0.26, 0.34], mag: 0, bolt: 0 },
-  // The tug that checks the magazine locked. Small, fast, and the beat that
+/**
+ * A PISTOL DOES NOT RACK, IT UNLOCKS.
+ *
+ * The other tracks pull a charging handle at the end. A self-loading pistol
+ * fired dry has already done that: the slide is locked to the rear and has been
+ * since the last round, which is why the beat at t = 0 has `bolt: 1` rather
+ * than 0. The reload does not put it back there, it RELEASES it, and that is a
+ * different-looking action - the slide is open for four fifths of the animation
+ * and then snaps forward in about a twentieth of it.
+ *
+ * `boltTravel` on the pistol is the slide, 22mm, so this is the real part of
+ * the real model moving, not a proxy.
+ */
+const PISTOL_RELOAD = [
+  { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 1 },
+  // PRESENT: up, away, and rolled so the butt of the grip faces the camera.
+  { t: 0.13, p: [0.016, 0.082, -0.118], r: [-0.20, 0.30, 0.50], mag: 0, bolt: 1 },
+  // Thumb finds the catch. The magazine drops out of the grip, in shot.
+  { t: 0.24, p: [0.019, 0.096, -0.134], r: [-0.22, 0.32, 0.56], mag: 1, bolt: 1 },
+  // The empty is gone and the hand is off frame getting the fresh one. The
+  // weapon sags a little here, which is the only place in the animation where
+  // nothing is happening and the only place it is allowed to.
+  { t: 0.46, p: [0.017, 0.074, -0.126], r: [-0.17, 0.30, 0.52], mag: 1, bolt: 1 },
+  // Fresh magazine up into the well.
+  { t: 0.60, p: [0.018, 0.090, -0.132], r: [-0.21, 0.31, 0.55], mag: 0, bolt: 1 },
+  // The heel-of-the-hand slap that seats it. Small, fast, and the beat that
   // makes the whole animation feel like a person did it.
-  { t: 0.65, p: [0.012, -0.058, 0.030], r: [-0.18, 0.25, 0.33], mag: 0, bolt: 0 },
-  { t: 0.76, p: [0.008, -0.026, 0.014], r: [-0.05, 0.15, 0.18], mag: 0, bolt: 1 },
-  { t: 0.85, p: [0.006, -0.016, 0.006], r: [-0.02, 0.09, 0.10], mag: 0, bolt: 0 },
+  { t: 0.67, p: [0.018, 0.062, -0.120], r: [-0.27, 0.30, 0.54], mag: 0, bolt: 1 },
+  // Slide release. Two keys 0.04 apart, because a slide dropping on a fresh
+  // magazine is the fastest thing on a handgun and interpolating it over a
+  // fifth of the animation would read as a bolt being eased forward by hand.
+  { t: 0.78, p: [0.012, 0.030, -0.062], r: [-0.10, 0.19, 0.26], mag: 0, bolt: 1 },
+  { t: 0.82, p: [0.010, 0.018, -0.044], r: [-0.06, 0.14, 0.18], mag: 0, bolt: 0 },
+  // Back onto the aim line THROUGH the idle pose rather than up to it, so the
+  // weapon arrives instead of stopping.
+  { t: 0.91, p: [0.004, -0.014, -0.008], r: [0.03, 0.05, 0.05], mag: 0, bolt: 0 },
   { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
 ];
 
-// Shell by shell into the loading gate, then one pump to chamber.
+/** The generic box-magazine reload: SMG and carbine. Present, swap, rack. */
+const MAG_RELOAD = [
+  { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
+  { t: 0.12, p: [0.016, 0.084, -0.126], r: [-0.20, 0.29, 0.48], mag: 0, bolt: 0 },
+  { t: 0.22, p: [0.019, 0.098, -0.142], r: [-0.23, 0.31, 0.55], mag: 1, bolt: 0 },
+  { t: 0.44, p: [0.017, 0.076, -0.132], r: [-0.18, 0.29, 0.51], mag: 1, bolt: 0 },
+  { t: 0.58, p: [0.018, 0.092, -0.138], r: [-0.22, 0.30, 0.54], mag: 0, bolt: 0 },
+  // The tug that checks the magazine locked.
+  { t: 0.65, p: [0.018, 0.064, -0.126], r: [-0.28, 0.29, 0.53], mag: 0, bolt: 0 },
+  // Charging handle back and released. Unlike the pistol this weapon was NOT
+  // held open, so the handle travels both ways and both halves are on screen.
+  { t: 0.76, p: [0.012, 0.034, -0.070], r: [-0.11, 0.19, 0.27], mag: 0, bolt: 1 },
+  { t: 0.84, p: [0.009, 0.014, -0.038], r: [-0.05, 0.12, 0.15], mag: 0, bolt: 0 },
+  { t: 0.92, p: [0.003, -0.014, -0.006], r: [0.03, 0.04, 0.04], mag: 0, bolt: 0 },
+  { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
+];
+
+/**
+ * THE LMG, AND IT IS NOT A LONG SMG RELOAD.
+ *
+ * A belt-fed weapon reloads through the TOP: the cover is lifted, the old belt
+ * or box comes off, a new one goes on, the cover is closed and only then is the
+ * bolt worked. Which means the weapon has to come up and roll the OTHER way to
+ * show the top of the receiver rather than the underside, and the heavy beats
+ * take proportionally longer than a magazine change does - 3.9 seconds of them.
+ *
+ * The roll here is deliberately smaller than the magazine tracks (0.34 against
+ * 0.55) and the lift larger. Rolling a box-fed gun onto its side to show a well
+ * it does not have would be the SMG animation played slowly, which is what this
+ * weapon had before.
+ */
+const BOX_RELOAD = [
+  { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
+  // Both hands take the weight. It comes up higher than anything else in the
+  // armoury and it comes up slowly.
+  { t: 0.14, p: [0.010, 0.098, -0.150], r: [-0.30, 0.20, 0.30], mag: 0, bolt: 0 },
+  // Cover up, box off. A long travel because a full box is two kilos.
+  { t: 0.28, p: [0.012, 0.112, -0.164], r: [-0.34, 0.22, 0.34], mag: 1, bolt: 0 },
+  { t: 0.42, p: [0.012, 0.104, -0.160], r: [-0.32, 0.22, 0.33], mag: 1, bolt: 0 },
+  // The dwell, and on this weapon it is HALF THE ANIMATION. Nothing is on
+  // screen but a gun held open, which is the cost the LMG is charging for its
+  // hundred rounds and the reason it is the wrong weapon to be caught with.
+  { t: 0.62, p: [0.010, 0.088, -0.156], r: [-0.28, 0.21, 0.31], mag: 1, bolt: 0 },
+  // New box up and seated, cover down. Two thumps rather than a slide.
+  { t: 0.72, p: [0.012, 0.106, -0.162], r: [-0.33, 0.22, 0.33], mag: 0, bolt: 0 },
+  { t: 0.78, p: [0.012, 0.082, -0.150], r: [-0.38, 0.21, 0.31], mag: 0, bolt: 0 },
+  // Charging handle, and it is a long one on this gun: 60mm of travel.
+  { t: 0.87, p: [0.008, 0.040, -0.082], r: [-0.14, 0.14, 0.18], mag: 0, bolt: 1 },
+  { t: 0.94, p: [0.004, 0.010, -0.026], r: [-0.03, 0.05, 0.06], mag: 0, bolt: 0 },
+  { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
+];
+
+/**
+ * THE TUBE GUN, AND THE THING THAT MAKES IT A TUBE GUN IS THE REPETITION.
+ *
+ * Four shells, one at a time, into a gate underneath - so `mag` inverts its
+ * meaning here and reads as the loose shell in the fingers: 1 is a shell held
+ * clear of the gate, 0 is a shell pushed home. Four cycles of that, then ONE
+ * pump, and the pump is the only beat in the animation that moves the weapon.
+ *
+ * The four cycles are deliberately NOT identical. Each one is a hair shorter
+ * than the last and each sits a hair lower, because a shooter feeding a tube
+ * speeds up as they find the rhythm, and four identical beats read as a loop
+ * rather than as a person. This is 3.2 seconds long and it is the one reload in
+ * the game the player has time to get bored of.
+ */
 const SHELL_RELOAD = [
   { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 1, bolt: 0 },
-  { t: 0.08, p: [0.014, -0.030, 0.020], r: [-0.10, 0.30, 0.42], mag: 1, bolt: 0 },
-  { t: 0.20, p: [0.014, -0.030, 0.020], r: [-0.10, 0.30, 0.42], mag: 0, bolt: 0 },
-  { t: 0.28, p: [0.014, -0.024, 0.016], r: [-0.08, 0.30, 0.42], mag: 1, bolt: 0 },
-  { t: 0.40, p: [0.014, -0.030, 0.020], r: [-0.10, 0.30, 0.42], mag: 0, bolt: 0 },
-  { t: 0.48, p: [0.014, -0.024, 0.016], r: [-0.08, 0.30, 0.42], mag: 1, bolt: 0 },
-  { t: 0.60, p: [0.014, -0.030, 0.020], r: [-0.10, 0.30, 0.42], mag: 0, bolt: 0 },
-  { t: 0.68, p: [0.014, -0.024, 0.016], r: [-0.08, 0.30, 0.42], mag: 1, bolt: 0 },
-  // Level the weapon and work the pump.
-  { t: 0.80, p: [0.006, -0.014, 0.010], r: [-0.03, 0.10, 0.12], mag: 1, bolt: 1 },
-  { t: 0.90, p: [0.004, -0.008, 0.004], r: [-0.01, 0.05, 0.05], mag: 1, bolt: 0 },
+  /*
+   * PRESENT: the receiver comes up and rolls over so the loading gate faces the
+   * eye. A shotgun is the one weapon here where you genuinely cannot see the
+   * work happening without it.
+   *
+   * IT IS ROLLED LESS THAN THE MAGAZINE GUNS AND NOT MORE, WHICH IS BACKWARDS
+   * FROM WHERE THIS STARTED. Authored at 0.66 radians, on the reasoning that a
+   * gate needs more presentation than a well does, the strip came back with a
+   * third of the frame blown to flat white: the Sekhem's receiver is the
+   * largest flat plate in the armoury, and at that roll it squares up to the
+   * sun and hands the bloom pass a mirror. The weapon was legible, the game
+   * behind it was not.
+   *
+   * 0.46 keeps the gate open to the eye - the loose shell measured 1,854 pixels
+   * of frame at the fullest part of its travel, which is a small object seen
+   * clearly rather than a large one seen dimly - and takes the plate off the
+   * sun. The lift does the real work here anyway; the roll only aims it.
+   */
+  { t: 0.09, p: [0.018, 0.056, -0.080], r: [-0.11, 0.26, 0.43], mag: 1, bolt: 0 },
+  // one
+  { t: 0.20, p: [0.019, 0.062, -0.086], r: [-0.12, 0.27, 0.46], mag: 0, bolt: 0 },
+  { t: 0.29, p: [0.018, 0.050, -0.078], r: [-0.09, 0.26, 0.44], mag: 1, bolt: 0 },
+  // two
+  { t: 0.39, p: [0.019, 0.060, -0.084], r: [-0.12, 0.27, 0.46], mag: 0, bolt: 0 },
+  { t: 0.47, p: [0.018, 0.048, -0.076], r: [-0.09, 0.26, 0.44], mag: 1, bolt: 0 },
+  // three
+  { t: 0.56, p: [0.019, 0.058, -0.082], r: [-0.12, 0.27, 0.45], mag: 0, bolt: 0 },
+  { t: 0.63, p: [0.018, 0.046, -0.074], r: [-0.09, 0.26, 0.43], mag: 1, bolt: 0 },
+  // four
+  { t: 0.71, p: [0.019, 0.056, -0.080], r: [-0.12, 0.27, 0.45], mag: 0, bolt: 0 },
+  { t: 0.77, p: [0.018, 0.044, -0.072], r: [-0.09, 0.25, 0.42], mag: 1, bolt: 0 },
+  // Level the weapon and work the pump. Back fast, forward faster: the two
+  // keys either side of 0.90 are what make it a rack rather than a stroke.
+  { t: 0.87, p: [0.009, 0.024, -0.038], r: [-0.04, 0.11, 0.16], mag: 1, bolt: 1 },
+  { t: 0.93, p: [0.005, 0.008, -0.016], r: [-0.01, 0.05, 0.06], mag: 1, bolt: 0 },
   { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 1, bolt: 0 },
 ];
 
-// Bolt up and back, clip pressed in, bolt forward and down.
+/**
+ * THE BOLT GUN. Bolt up, bolt back, clip pressed down into the well, bolt
+ * forward, bolt down. Five separate actions and the model has the parts for all
+ * of them: `boltLift` is 1.15 radians on this weapon and nothing else, and the
+ * update below turns the first 40 per cent of `bolt` into the LIFT and the rest
+ * into the TRAVEL, so those two never happen at the same time.
+ *
+ * The presented pose rolls the other way from the magazine guns - a stripper
+ * clip goes in from ABOVE, so the eye needs the top of the receiver.
+ */
 const CLIP_RELOAD = [
   { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
-  { t: 0.14, p: [0.008, -0.020, 0.014], r: [-0.08, 0.18, 0.24], mag: 0, bolt: 1 },
-  { t: 0.30, p: [0.010, -0.026, 0.018], r: [-0.10, 0.22, 0.28], mag: 1, bolt: 1 },
-  { t: 0.52, p: [0.010, -0.030, 0.016], r: [-0.08, 0.22, 0.28], mag: 1, bolt: 1 },
-  { t: 0.66, p: [0.010, -0.024, 0.016], r: [-0.09, 0.20, 0.26], mag: 0, bolt: 1 },
-  { t: 0.78, p: [0.006, -0.016, 0.010], r: [-0.04, 0.12, 0.14], mag: 0, bolt: 0 },
+  { t: 0.10, p: [0.010, 0.078, -0.112], r: [-0.24, 0.20, 0.26], mag: 0, bolt: 0 },
+  // Handle up and back, in one stroke, hard.
+  { t: 0.22, p: [0.012, 0.090, -0.124], r: [-0.28, 0.22, 0.30], mag: 0, bolt: 1 },
+  // Clip in, thumb down the stack.
+  { t: 0.34, p: [0.013, 0.096, -0.128], r: [-0.30, 0.23, 0.32], mag: 1, bolt: 1 },
+  { t: 0.56, p: [0.012, 0.084, -0.122], r: [-0.26, 0.22, 0.30], mag: 1, bolt: 1 },
+  // Empty clip flicked clear.
+  { t: 0.66, p: [0.012, 0.090, -0.124], r: [-0.28, 0.22, 0.31], mag: 0, bolt: 1 },
+  // Bolt forward and turned down. The last key of the bolt travel and the
+  // first of the return are the same moment on purpose: a turnbolt locks with
+  // a wrist snap and the weapon settles onto the aim line off the back of it.
+  { t: 0.80, p: [0.008, 0.042, -0.070], r: [-0.12, 0.14, 0.18], mag: 0, bolt: 0 },
+  { t: 0.90, p: [0.003, 0.008, -0.018], r: [0.02, 0.04, 0.05], mag: 0, bolt: 0 },
   { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
 ];
 
@@ -4200,14 +4388,39 @@ const CLIP_RELOAD = [
 // reload at all.
 const CELL_RELOAD = [
   { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0, glow: 1 },
-  { t: 0.14, p: [0.012, -0.026, 0.018], r: [-0.12, 0.24, 0.30], mag: 0, bolt: 0, glow: 0.9 },
-  { t: 0.24, p: [0.012, -0.030, 0.020], r: [-0.14, 0.26, 0.32], mag: 1, bolt: 0, glow: 0.12 },
-  { t: 0.50, p: [0.012, -0.046, 0.016], r: [-0.10, 0.24, 0.30], mag: 1, bolt: 0, glow: 0.12 },
-  { t: 0.64, p: [0.012, -0.032, 0.020], r: [-0.13, 0.24, 0.30], mag: 0, bolt: 0, glow: 0.4 },
-  { t: 0.76, p: [0.008, -0.022, 0.012], r: [-0.06, 0.14, 0.16], mag: 0, bolt: 1, glow: 0.6 },
-  { t: 0.84, p: [0.006, -0.014, 0.006], r: [-0.03, 0.08, 0.08], mag: 0, bolt: 0, glow: 2.1 },
+  { t: 0.13, p: [0.014, 0.084, -0.120], r: [-0.19, 0.28, 0.48], mag: 0, bolt: 0, glow: 0.9 },
+  { t: 0.24, p: [0.016, 0.098, -0.136], r: [-0.22, 0.30, 0.54], mag: 1, bolt: 0, glow: 0.12 },
+  { t: 0.50, p: [0.015, 0.080, -0.128], r: [-0.18, 0.29, 0.51], mag: 1, bolt: 0, glow: 0.12 },
+  { t: 0.64, p: [0.016, 0.094, -0.134], r: [-0.21, 0.30, 0.53], mag: 0, bolt: 0, glow: 0.4 },
+  { t: 0.76, p: [0.011, 0.044, -0.076], r: [-0.10, 0.17, 0.24], mag: 0, bolt: 1, glow: 0.6 },
+  { t: 0.84, p: [0.008, 0.018, -0.036], r: [-0.04, 0.10, 0.12], mag: 0, bolt: 0, glow: 2.1 },
+  { t: 0.92, p: [0.003, -0.012, -0.006], r: [0.03, 0.04, 0.04], mag: 0, bolt: 0, glow: 1.3 },
   { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0, glow: 1 },
 ];
+
+/**
+ * HOW FAR THE MAGAZINE TRAVELS, AND WHY IT IS TWO NUMBERS RATHER THAN ONE.
+ *
+ * `mag` runs 0 seated to 1 removed, and the old code turned that straight into
+ * 200mm of drop. One linear number cannot do this job, because the travel has
+ * two completely different purposes along its length:
+ *
+ *   0 .. MAG_SEEN     the part the PLAYER WATCHES. The magazine has to come
+ *                     clear of the well and stay in shot while it does, so this
+ *                     stretch is sized from the magazine's OWN height - one
+ *                     length and a bit, which is exactly "it is out" and not a
+ *                     millimetre more.
+ *   MAG_SEEN .. 1     the part where it LEAVES. Now it can go as far as it
+ *                     likes, and it should, because the empty falling away is
+ *                     what makes room for the fresh one coming up.
+ *
+ * Measured off the magazine's own bounding box rather than typed in per weapon
+ * for the usual reason: eight numbers is eight things to forget when a model
+ * changes, and the model already knows how tall its magazine is.
+ */
+const MAG_SEEN = 0.55;
+const MAG_CLEAR = 1.15;          // multiples of the magazine's own height
+const MAG_FALL = 1.70;
 
 // ---------------------------------------------------------------------------
 // THE KHOPESH
@@ -4267,22 +4480,70 @@ const MELEE_BLADE = [
   { t: 0.00, p: [-0.52, -0.30, 0.13], r: [0.20, -1.10, 1.70], mag: 0, bolt: 0 },
   // Wind: back and up a touch. Short, because a long telegraph on a panic
   // button is a panic button you cannot use in a panic.
-  { t: 0.16, p: [-0.50, -0.20, 0.11], r: [0.14, -1.30, 1.35], mag: 0, bolt: 0 },
-  // Entering frame from the left, accelerating, flat coming round to the eye.
-  { t: 0.34, p: [-0.32, -0.02, 0.04], r: [0.02, -1.50, 0.60], mag: 0, bolt: 0 },
-  // CONTACT, at 0.49 of the track. MELEE.contact / MELEE.swing = 0.22/0.45 =
-  // 0.489, and the two are meant to agree: the number that decides when damage
-  // lands and the key at the top of the arc are the same moment, or the blade
-  // hits before it arrives. Broadside, on the crosshair, and NEARER the eye
-  // than the keys either side of it - the arc punches in on the strike.
-  { t: 0.49, p: [-0.14, 0.02, 0.06], r: [-0.06, -1.58, 0.05], mag: 0, bolt: 0 },
-  // Follow through, across and down.
-  { t: 0.62, p: [0.08, -0.02, 0.04], r: [-0.05, -1.60, -0.45], mag: 0, bolt: 0 },
-  { t: 0.74, p: [0.26, -0.12, 0.02], r: [-0.02, -1.62, -0.90], mag: 0, bolt: 0 },
-  // Withdrawing, already most of the way out of frame - which is where the
-  // unwind happens, so the fast counter-rotation back to rest is not something
-  // the eye has to watch.
-  { t: 0.88, p: [-0.26, -0.30, 0.09], r: [0.10, -1.40, 0.60], mag: 0, bolt: 0 },
+  { t: 0.10, p: [-0.55, -0.24, 0.12], r: [0.17, -1.24, 1.48], mag: 0, bolt: 0 },
+  /*
+   * THE ENTRY WAS A POP, AND THIS KEY IS THE WHOLE FIX.
+   *
+   * The first pass ran from fully outside the frustum at 0.16 straight to
+   * fully inside it at 0.34. That is 0.08 seconds of a 0.45 second swing, and
+   * the strip showed exactly what it sounds like: one frame with no blade in
+   * it, the next frame with a sword filling the upper left. It did not enter,
+   * it appeared - and a thing that appears reads as a decal being switched on,
+   * which is precisely the note the swing came back with.
+   *
+   * So the crossing of the left edge gets a key of its own, and the blade now
+   * spends 0.24 to 0.49 travelling INTO shot rather than being placed there.
+   * Same total swing length, same contact frame: the time comes out of the
+   * wind-up, which nobody was watching, and goes into the entry, which
+   * everybody is.
+   *
+   * The blade's drawn area across the swing, measured by rendering each beat
+   * twice and counting the pixels that change, is what says whether that
+   * worked. It is not the tip's position: the hook is the widest part of a
+   * khopesh and it crosses the frame edge well before the point does.
+   */
+  { t: 0.20, p: [-0.40, -0.12, 0.08], r: [0.09, -1.40, 1.05], mag: 0, bolt: 0 },
+  // In frame and accelerating, flat coming round to the eye.
+  { t: 0.30, p: [-0.31, -0.07, 0.06], r: [0.03, -1.49, 0.62], mag: 0, bolt: 0 },
+  { t: 0.40, p: [-0.21, -0.04, 0.06], r: [-0.02, -1.54, 0.32], mag: 0, bolt: 0 },
+  /*
+   * CONTACT, at 0.49 of the track. MELEE.contact / MELEE.swing in
+   * systems/melee.js is 0.22/0.45 = 0.489, and the two are meant to agree: the
+   * number that decides when damage lands and the key at the top of the arc are
+   * the same moment, or the blade hits before it arrives.
+   *
+   * THE HEIGHT IS 50mm LOWER THAN IT LOOKED LIKE IT SHOULD BE, and the reason
+   * is that the khopesh's origin is its GRIP and the blade runs 223mm up from
+   * there at this scale. Authored with the grip on the crosshair, the strike
+   * frame put the hook through the top edge of the screen - measured, the
+   * blade's drawn area at contact came back SMALLER than the beat either side
+   * of it, which is a strange thing for a strike to be. Dropping the grip to
+   * 0.58 of a half-frame below centre puts the MIDDLE of the blade on the aim
+   * point, which is where the enemy the damage is about to be applied to is
+   * standing.
+   *
+   * Nearer the eye than the keys either side of it: the arc punches in on the
+   * strike.
+   */
+  { t: 0.49, p: [-0.11, -0.03, 0.065], r: [-0.06, -1.58, 0.04], mag: 0, bolt: 0 },
+  // Follow through, across and down, STILL GOING THE WAY IT WAS GOING.
+  { t: 0.61, p: [0.11, -0.07, 0.05], r: [-0.05, -1.60, -0.48], mag: 0, bolt: 0 },
+  { t: 0.73, p: [0.34, -0.17, 0.03], r: [-0.02, -1.62, -1.00], mag: 0, bolt: 0 },
+  /*
+   * OUT THROUGH THE BOTTOM RIGHT, AND THE OLD TRACK CAME BACK THE WRONG WAY.
+   *
+   * The previous exit key sat at x = -0.26: from +0.26 the blade REVERSED and
+   * swept back left across the middle of the frame to reach its park. Measured
+   * on the strip, the tip went from 1.02 in normalised device coordinates to
+   * -1.91 in one beat, which is a straight line through everything the player
+   * is looking at. A follow-through that comes back is not a follow-through.
+   *
+   * It now continues out to the right and drops well below the frame, and the
+   * counter-rotation back to the parked pose happens at y = -0.66, which is
+   * three frame-heights under the bottom edge and cannot be seen at all.
+   */
+  { t: 0.85, p: [0.58, -0.35, 0.02], r: [0.02, -1.60, -1.46], mag: 0, bolt: 0 },
+  { t: 0.94, p: [0.24, -0.66, 0.10], r: [0.15, -1.32, 0.34], mag: 0, bolt: 0 },
   { t: 1.00, p: [-0.52, -0.30, 0.13], r: [0.20, -1.10, 1.70], mag: 0, bolt: 0 },
 ];
 
@@ -4307,20 +4568,112 @@ const MELEE_BLADE = [
  */
 const KHOPESH_SCALE = 0.62;
 
-// What the gun does while the other hand is busy. Dropped, canted right, and
-// pushed a little out of the way - the same language as the sprint pose, at
-// about a third of the amplitude, so it reads as the weapon yielding the frame
-// rather than as a second animation competing for it.
+/*
+ * WHAT THE GUN DOES WHILE THE OTHER HAND IS BUSY, AND IT HAS TO BE A LOT.
+ *
+ * The first pass ran this at about a third of the sprint pose's amplitude - a
+ * 42mm drop and a 0.34 radian cant - on the reasoning that the weapon should
+ * yield the frame rather than compete for it. The strip says that reasoning was
+ * wrong by a factor of three: put frames 000 and 049 side by side and the gun
+ * is in the same place, at the same size, in the same pose, while a sword
+ * crosses in front of it. Which is the exact failure the file's own note
+ * warned about - a sword floating past a photograph of a gun - arrived at by
+ * being too polite rather than by forgetting.
+ *
+ * The amplitude is a measurement, and it was measured twice because the first
+ * answer was wrong in the other direction. Rendering the weapon at the contact
+ * frame and again with the weapon switched off, and counting the pixels that
+ * changed:
+ *
+ *     no yield at all      99,929 px      8.1 per cent of the frame
+ *     the old track       114,557 px      9.2 per cent  <- LARGER
+ *     this track           27,033 px      2.2 per cent
+ *     150mm of drop             0 px      the gun is gone
+ *
+ * Two things fall out of that table. The old yield did not merely fail to move
+ * the weapon out of the way, it moved the weapon TOWARD THE EYE - the key read
+ * `z: +0.034`, which is 34mm nearer the camera - and so the gun covered MORE of
+ * the frame during a swing than it did at rest. It was not a small yield. It
+ * was a negative one.
+ *
+ * And the first attempt at fixing it, at 150mm of drop, took the weapon off the
+ * bottom of the screen entirely, which fails the note just as squarely in the
+ * other direction: the gun does not disappear, it gets out of the way. 113mm
+ * leaves roughly a quarter of the weapon's normal footprint in the bottom right
+ * corner - unmistakably still in your hands, unmistakably not in the way.
+ *
+ * The negative roll cants the muzzle DOWN AND RIGHT; the sprint pose's +0.70 is
+ * the same motion mirrored, down and left.
+ *
+ * -------------------------------------------------------------------------
+ * THE ENVELOPES OVERLAP, AND THAT IS THE ENTIRE DIFFERENCE BETWEEN ONE MOTION
+ * AND THREE STATES.
+ * -------------------------------------------------------------------------
+ *
+ *   gun   |======= down =======|== hold ==|===== back up =====|
+ *   blade         |== entering ==|CONTACT|===== follow through =====|
+ *   t     0     0.18   0.32    0.49    0.61    0.80          1.00
+ *
+ * The gun is STILL FALLING when the blade crosses the frame edge at 0.24, and
+ * the blade is STILL FOLLOWING THROUGH when the gun starts back up at 0.60.
+ * Nothing waits for anything. Author them end to end instead and you get three
+ * things happening in sequence, which is what the note meant by "it needs to
+ * transition more naturally".
+ *
+ * -------------------------------------------------------------------------
+ * IT RETURNS AT 0.80 AND NOT AT 1.00, WHICH IS ALSO WHERE THE HANDS COME BACK.
+ * -------------------------------------------------------------------------
+ *
+ * The last fifth of this track is flat zeroes. That is not padding - it is the
+ * contract that lets MELEE_RELEASE exist. The player gets the trigger back at
+ * 0.80 of the swing, and the gun is EXACTLY at its idle pose at 0.80, so the
+ * muzzle flash and the ejected brass - which are parented to the hand frame and
+ * not to the weapon, see attach() - are in the right place on the first round
+ * fired out of a swing. Releasing the trigger while the gun was still moving
+ * would put the flash somewhere the barrel is not.
+ */
 const MELEE_GUN = [
   { t: 0.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
-  { t: 0.22, p: [0.016, -0.030, 0.026], r: [-0.10, 0.16, -0.26], mag: 0, bolt: 0 },
-  { t: 0.49, p: [0.024, -0.042, 0.034], r: [-0.14, 0.22, -0.34], mag: 0, bolt: 0 },
-  { t: 0.72, p: [0.014, -0.026, 0.020], r: [-0.08, 0.13, -0.20], mag: 0, bolt: 0 },
+  // Off the aim line before the blade is anywhere near the frame edge.
+  { t: 0.18, p: [0.039, -0.078, 0.044], r: [-0.26, 0.30, -0.35], mag: 0, bolt: 0 },
+  // Bottom of the yield, and it is BEFORE contact rather than on it: the gun
+  // is already out of the way by the time the edge lands, so the contact frame
+  // belongs to the blade alone.
+  { t: 0.32, p: [0.057, -0.113, 0.062], r: [-0.35, 0.40, -0.50], mag: 0, bolt: 0 },
+  { t: 0.49, p: [0.056, -0.110, 0.060], r: [-0.34, 0.40, -0.48], mag: 0, bolt: 0 },
+  // Coming back up while the blade is still on its way out. THE OVERLAP.
+  { t: 0.60, p: [0.044, -0.086, 0.047], r: [-0.27, 0.32, -0.38], mag: 0, bolt: 0 },
+  { t: 0.71, p: [0.021, -0.042, 0.023], r: [-0.14, 0.16, -0.18], mag: 0, bolt: 0 },
+  // Through the idle and back, so the weapon arrives rather than stops.
+  { t: 0.76, p: [-0.005, 0.009, -0.005], r: [0.03, -0.04, 0.05], mag: 0, bolt: 0 },
+  { t: 0.80, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
   { t: 1.00, p: [0, 0, 0], r: [0, 0, 0], mag: 0, bolt: 0 },
 ];
 
 /** Seconds. Must match MELEE.swing in systems/melee.js; see the note there. */
 const MELEE_TIME = 0.45;
+
+/**
+ * WHERE THE PLAYER GETS THEIR HANDS BACK, as a fraction of the swing.
+ *
+ * The swing COMMITS - there is no cancelling it once the button is down, which
+ * is what keeps the blade a decision rather than a free action - but committing
+ * to a swing is not the same as being locked out until the last frame of it has
+ * drained. Past this point the edge has already landed (contact is at 0.489),
+ * the blade is out of the middle of the frame and the gun is back on the aim
+ * line, so there is nothing left to protect. The remaining fifth is the blade
+ * clearing the bottom right corner, and the player can be shooting through it.
+ *
+ * 0.80 of 0.45 seconds is 0.36 seconds of commitment, and it is deliberately
+ * the same instant MELEE_GUN reaches zero: see the note there.
+ *
+ * This releases the PHASE, not just busy(), and it has to. weapons.js holds a
+ * second gate of its own - canFire() refuses outright while the phase reads
+ * 'meleeing' - so a viewmodel that quietly stopped calling itself busy while
+ * still reporting the phase would have handed the player a trigger that draws
+ * a muzzle flash and fires nothing. One authority, one flag, released once.
+ */
+const MELEE_RELEASE = 0.80;
 
 // Turn the weapon over, look at the receiver, drop it back. Pure flourish.
 const INSPECT = [
@@ -4534,7 +4887,7 @@ const WEAPONS = {
     // touching the bottom edge, which is where a hand holding something belongs.
     hipPose: { pos: [0.094, -0.090, -0.425], rot: [-0.010, 0.100, 0.030] },
     relief: 0.40,          // both arms out; the slide has to be far from the eye
-    track: MAG_RELOAD, reloadTime: 1.85,
+    track: PISTOL_RELOAD, reloadTime: 1.85,
     kick: { back: 1.05, rise: 0.55, pitch: 0.34, yaw: 0.10, roll: 0.9 },
     camKick: 2.6, flash: 0.9, shell: 0.85, sway: 1.0,
     // Short, tight, five even petals. A pistol crown is unremarkable and the
@@ -4557,7 +4910,7 @@ const WEAPONS = {
     // revisited only one of them would be revisited with it.
     hipPose: { pos: [0.094, -0.090, -0.425], rot: [-0.010, 0.100, 0.030] },
     relief: 0.40,          // both arms out, and the sight is the pistol's own
-    track: MAG_RELOAD, reloadTime: 1.95,
+    track: PISTOL_RELOAD, reloadTime: 1.95,
     // Roughly three fifths of the MK9's impulse per round, and that is what
     // makes the burst read. These are velocities into a spring - see fire() -
     // so three of them landing 40 to 50ms apart stack faster than the spring
@@ -4620,7 +4973,7 @@ const WEAPONS = {
     build: buildLmg,
     hipPose: { pos: [0.120, -0.140, -0.360], rot: [-0.012, 0.070, 0.028] },
     relief: 0.290,
-    track: MAG_RELOAD, reloadTime: 3.90,
+    track: BOX_RELOAD, reloadTime: 3.90,
     kick: { back: 1.35, rise: 0.72, pitch: 0.36, yaw: 0.16, roll: 1.0 },
     camKick: 3.0, flash: 1.25, shell: 1.1, sway: 1.35,
     // Big open port, long petals, and enough smoke that sustained fire leaves a
@@ -4673,6 +5026,44 @@ const smooth = (t) => t * t * (3 - 2 * t);
 
 /** Frame-rate independent easing toward a target. */
 const approach = (cur, target, rate, dt) => cur + (target - cur) * Math.min(1, dt * rate);
+
+/**
+ * How tall a magazine is, in the space it moves in. Measured once and cached on
+ * the object, because a magazine's height does not change and because this
+ * walks geometry and allocates - neither of which belongs on a frame path.
+ *
+ * The measurement is taken in the magazine's OWN parent space rather than in
+ * world space, which is the difference between a number that means something
+ * and a number that changes with the sway. Box3.setFromObject only ever answers
+ * in world coordinates, so the world matrices are composed back out again by
+ * hand here; four lines, and it makes the result independent of where the
+ * weapon happens to be pointing on the frame it was first reloaded.
+ */
+const magBox = new THREE.Box3();
+const magPart = new THREE.Box3();
+const magMat = new THREE.Matrix4();
+const magInv = new THREE.Matrix4();
+
+function magSpan(g) {
+  if (g.userData.magSpan !== undefined) return g.userData.magSpan;
+
+  g.updateWorldMatrix(true, true);
+  magInv.copy(g.matrixWorld).invert();
+  magBox.makeEmpty();
+
+  g.traverse((o) => {
+    if (!o.geometry) return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    magPart.copy(o.geometry.boundingBox);
+    magPart.applyMatrix4(magMat.multiplyMatrices(magInv, o.matrixWorld));
+    magBox.union(magPart);
+  });
+
+  // The floor is not defensive padding: a Sunspear cell is a 70mm puck, and a
+  // travel of one puck-height would be a magazine change you could miss.
+  g.userData.magSpan = Math.max(0.075, magBox.max.y - magBox.min.y);
+  return g.userData.magSpan;
+}
 
 /** Sample a keyframe track. Smoothstepped between keys, so no visible corners. */
 function sampleTrack(keys, t, out) {
@@ -4988,6 +5379,13 @@ export function createViewmodel(host, materials) {
 
   let switchT = 1;                  // 0 = fully lowered, 1 = fully up
   let reloadT = 0;                  // seconds into the reload
+  /**
+   * Multiplier on how fast the reload clock advances. 1 unless a caller passed
+   * a duration scale to reload(); the Shrine of Ptah's 0.5 arrives here as 2.
+   * Reset on every reload() rather than cleared at the end, so a boon expiring
+   * mid-animation cannot leave the next reload running at the old rate.
+   */
+  let reloadRate = 1;
   let inspectT = 0;
   /**
    * Seconds into the swing, or -1 for no swing.
@@ -5367,6 +5765,25 @@ export function createViewmodel(host, materials) {
     meleeT = 0;
     inspectT = 0;
     reloadT = 0;
+
+    /*
+     * PARK THE BLADE BEFORE SHOWING IT, and the two lines are in this order for
+     * a reason. The khopesh is built at the group origin and left there, so
+     * between construction and the first update() that samples the track its
+     * transform is identity - which is not "off frame to the left", it is dead
+     * centre of the screen at arm's length. Making it visible and trusting the
+     * caller to run update() before the next render is a bet on call order, and
+     * the one frame it loses is a sword standing in the middle of the view.
+     *
+     * Caught by the frame strip rather than reasoned about: the capture at
+     * progress zero, which renders before it cranks, showed exactly that.
+     * main.js happens to update the viewmodel after the melee system on the
+     * same frame, so the game never displayed it - but a bug that is prevented
+     * by the order of two calls in another file is not prevented.
+     */
+    const s0 = sampleTrack(MELEE_BLADE, 0, trackOut);
+    khopesh.position.set(s0.px, s0.py, s0.pz);
+    khopesh.rotation.set(s0.rx, s0.ry, s0.rz);
     khopesh.visible = true;
     // Only claim the phase when there is something to give it back to. With
     // empty hands the phase is 'empty' and must stay that way, or the frame the
@@ -5617,11 +6034,37 @@ export function createViewmodel(host, materials) {
     return true;
   }
 
-  function reload() {
+  /**
+   * START A RELOAD.
+   *
+   * @param {number} [scale=1]  the caller's DURATION multiplier, not a rate.
+   *   The Shrine of Ptah halves a reload, so it passes 0.5 and the animation
+   *   runs at twice the rate over half the authored length.
+   *
+   * WHY THIS ARGUMENT EXISTS. There are two ways to make an authored animation
+   * finish in half the time: hand it a doubled delta every frame, or tell it
+   * once what rate to run at. main.js does the first, and it is correct in
+   * principle - the loop that owns the clock is the right place to bend it -
+   * but it puts the intent in a number that is indistinguishable from a slow
+   * frame by the time it arrives here, and the clamp at the top of update()
+   * therefore ate it whole. See the note there.
+   *
+   * This is the other channel, and it survives any clamp because it never
+   * pretends to be time. Passing it is the durable fix; weapons.js is the
+   * caller and calls this with no argument today, in which case the rate stays
+   * 1 and main.js's scaled delta is what does the work. Both work now, they
+   * agree, and neither is required - which is the point, because the boon
+   * should not stop working because one of two files was edited.
+   */
+  function reload(scale = 1) {
     if (!model || busy()) return false;
     state.phase = 'reloading';
     reloadT = 0;
     inspectT = 0;
+    // Guarded rather than trusted: a zero or a negative here would stall the
+    // reload forever or run it backwards, and this value arrives from whatever
+    // the boon table happens to say.
+    reloadRate = scale > 0.01 ? 1 / scale : 1;
     return true;
   }
 
@@ -5712,6 +6155,49 @@ export function createViewmodel(host, materials) {
    * @param {object} ctx { speed, sprinting, ads, grounded, lookDx, lookDy }
    */
   function update(dt, ctx = {}) {
+    /*
+     * THE CLAMP WAS SILENTLY CANCELLING THE SHRINE OF PTAH.
+     *
+     * This module does not own a reload duration that anything else can scale,
+     * on purpose: weapons.js watches the animation phase and finishes the
+     * logical reload when the hands come back, so there is one authored length
+     * per weapon and one place it lives. Ptah halves a reload, and the only
+     * honest way to halve an animation whose length is authored here is to run
+     * it at twice the rate - so main.js divides the delta it hands this module
+     * by the scale, for the duration of the reloading phase, and nothing else.
+     *
+     * And then this line threw it away. main.js has ALREADY clamped its delta
+     * to MAX_DELTA before doubling it, so the doubled value is 2 * MAX_DELTA on
+     * any frame at or past the clamp, and clamping again here put it straight
+     * back to MAX_DELTA. The boon worked in inverse proportion to how much the
+     * machine was struggling, and stopped working entirely at 20fps.
+     *
+     * Measured through the real loop under the software renderer, where every
+     * frame is at the clamp:
+     *
+     *   Sekhem 12, authored 3.20s     no boon   3.30s, animation reached 1.00
+     *   Sekhem 12, Ptah (halved)      2.00s, animation reached 0.61
+     *
+     * Two seconds is not half of 3.2. Two seconds is weapons.js's flat 4.0
+     * second FALLBACK timer, scaled by the boon and firing first - so the
+     * magazine was seated, the weapon was live and the player could fire while
+     * the hands on screen were still three quarters of the way through feeding
+     * the tube. Which is the exact failure the arrangement exists to prevent.
+     *
+     * The animation clock now reads a delta clamped four times looser than the
+     * physics does. `dt` below is unchanged and still clamps at MAX_DELTA -
+     * sway, the recoil spring and the shell arcs all integrate and all need the
+     * tight bound. The reload clock does not integrate anything: it indexes a
+     * keyframe track, where a long frame can only ever mean the animation is
+     * further along than it was. There is still a ceiling, because a two second
+     * stall should not teleport a reload to the end, but it is 200ms and not
+     * 50, which leaves headroom for a doubled rate at frame times up to 100ms.
+     *
+     * The explicit channel is reload(rate) - see the note there. This clamp is
+     * what makes the CURRENT arrangement, which main.js already ships, actually
+     * do what its comment says it does.
+     */
+    const animDt = Math.min(dt, ANIM_MAX_DELTA);
     dt = Math.min(dt, MAX_DELTA);
 
     // The flash owns its own clocks now: a duration in seconds eased against
@@ -5741,6 +6227,16 @@ export function createViewmodel(host, materials) {
         const s = sampleTrack(MELEE_BLADE, state.meleeProgress, trackOut);
         khopesh.position.set(s.px, s.py, s.pz);
         khopesh.rotation.set(s.rx, s.ry, s.rz);
+
+        // THE HANDS COME BACK BEFORE THE ANIMATION DOES. See MELEE_RELEASE.
+        // The blade keeps running to the end of its track off `meleeT`, which
+        // lives outside the phase machine precisely so that it can - the same
+        // property that lets the khopesh swing with empty hands is what lets
+        // the last fifth of the swing be decoration.
+        if (model && state.phase === 'meleeing'
+            && state.meleeProgress >= MELEE_RELEASE) {
+          state.phase = 'ready';
+        }
       }
     }
 
@@ -5802,7 +6298,7 @@ export function createViewmodel(host, materials) {
         break;
 
       case 'reloading':
-        reloadT += dt;
+        reloadT += animDt * reloadRate;
         if (reloadT >= current.reloadTime) { reloadT = 0; state.phase = 'ready'; }
         break;
 
@@ -5934,13 +6430,6 @@ export function createViewmodel(host, materials) {
       pos.x += s.px; pos.y += s.py; pos.z += s.pz;
       rot.x += s.rx; rot.y += s.ry; rot.z += s.rz;
       state.reloadProgress = 0;
-    } else if (meleeT >= 0) {
-      // The weapon yields the frame while the other hand works. Same language
-      // as the sprint pose at about a third of the amplitude - see MELEE_GUN.
-      const s = sampleTrack(MELEE_GUN, meleeT / MELEE_TIME, trackOut);
-      pos.x += s.px; pos.y += s.py; pos.z += s.pz;
-      rot.x += s.rx; rot.y += s.ry; rot.z += s.rz;
-      state.reloadProgress = 0;
     } else {
       state.reloadProgress = 0;
     }
@@ -5975,15 +6464,77 @@ export function createViewmodel(host, materials) {
     group.position.copy(pos);
     group.rotation.set(rot.x, rot.y, rot.z);
 
+    /*
+     * --- the gun yielding to the blade ---------------------------------------
+     *
+     * THIS IS WRITTEN ONTO THE WEAPON, NOT ONTO THE HAND FRAME, AND THAT IS THE
+     * WHOLE OF WHAT "OVERLAY" MEANS HERE.
+     *
+     * `group` is the pair of hands: sway, bob, look-lag, recoil and the ADS
+     * blend all compose into it, and BOTH the weapon and the khopesh hang off
+     * it. The first pass added the melee yield into `group`, which meant the
+     * blade inherited every millimetre of it - drop the gun 150mm to clear the
+     * frame and the sword goes down 150mm with it, and the swing the track
+     * describes is not the swing that renders. It worked only because the yield
+     * was small enough not to matter, which is another way of saying it worked
+     * only because it was not doing its job.
+     *
+     * On `model.root` the two are independent: the weapon gets out of the way,
+     * the blade crosses the frame in front of it, and both keep breathing with
+     * the same hands. Which is the composite the note asked for - the blade ON
+     * TOP OF the gun, both on screen at once, rather than one replacing the
+     * other. Verified as a pixel count at the contact frame rather than as a
+     * claim: switching each object off in turn at 0.49 of the swing changes the
+     * frame by a measurable and non-zero amount for BOTH of them.
+     *
+     * Written every frame rather than only during a swing, because `model.root`
+     * is cached in `built` and survives a stow, an equip and a fidelity change.
+     * A one-shot reset on the last frame of the swing would be one missed edge
+     * away from a weapon permanently parked in the corner of the screen.
+     */
+    if (meleeT >= 0) {
+      const s = sampleTrack(MELEE_GUN, meleeT / MELEE_TIME, trackOut);
+      model.root.position.set(s.px, s.py, s.pz);
+      model.root.rotation.set(s.rx, s.ry, s.rz);
+    } else {
+      model.root.position.set(0, 0, 0);
+      model.root.rotation.set(0, 0, 0);
+    }
+
     // --- moving parts -------------------------------------------------------
     if (model.mag) {
-      // Straight down and slightly forward, tipping as it falls clear.
-      model.mag.position.y = model.mag.userData.baseY ??= model.mag.position.y;
-      model.mag.position.y -= magOut * 0.20;
+      /*
+       * THE MAGAZINE HAS TO BE ON SCREEN WHILE IT LEAVES.
+       *
+       * What this replaced was one line - `position.y -= magOut * 0.20` - and
+       * it was the eleventh confirmed instance of this project's defining bug:
+       * code that runs, moves the right object by the right amount, and draws
+       * nothing. Two hundred millimetres is nearly half the height of the frame
+       * at the hip pose, so the magazine cleared the well and cleared the
+       * bottom edge of the screen in the same motion. Rendered with the
+       * magazine on, then again with it switched off, at the point in the track
+       * where it is fully extracted: the difference was ZERO PIXELS, on all
+       * eight weapons in the armoury.
+       *
+       * The travel is now split at MAG_SEEN and sized off the magazine's own
+       * height, so the first and visible part is exactly "it is out of the gun"
+       * and the rest is it falling away. The extraction is smoothstepped and
+       * the fall is linear: a magazine coming out of a well is decelerating
+       * against the shooter's hand, and a magazine that has been let go is not.
+       */
+      const md = magSpan(model.mag);
+      const seen = smooth(clamp01(magOut / MAG_SEEN));
+      const gone = clamp01((magOut - MAG_SEEN) / (1 - MAG_SEEN));
+
+      model.mag.position.y = (model.mag.userData.baseY ??= model.mag.position.y)
+        - seen * md * MAG_CLEAR - gone * md * MAG_FALL;
+      // Forward with it, so it separates from the weapon rather than sliding
+      // down the outside of it, and tipping about its top edge - which is where
+      // a magazine pivots when the catch lets go of one corner first.
       model.mag.position.z = (model.mag.userData.baseZ ??= model.mag.position.z)
-        - magOut * 0.02;
+        - seen * md * 0.22;
       model.mag.rotation.x = (model.mag.userData.baseRx ??= model.mag.rotation.x)
-        - magOut * 0.25;
+        - seen * 0.30 - gone * 0.55;
     }
 
     if (model.bolt) {
