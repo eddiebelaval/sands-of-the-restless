@@ -2,8 +2,27 @@
 
 Ratified with the owner 2026-07-30. Everything before this was a map thrown
 together to have somewhere to stand during a phase of work; this is the map
-designed on purpose. Nothing here is built yet. `rooms.js` and `courtyard.js`
-still describe the old layout.
+designed on purpose.
+
+> **BUILD STATUS, 2026-07-31.** This document was written as a plan and said
+> "nothing here is built yet" for a day. Most of it is now built, and a plan
+> that still describes itself as unbuilt is worse than no status at all - it
+> tells the next reader to go and build what already exists. Each section below
+> now says where it stands. The rule going forward: **whoever lands a section
+> amends its status in the same change.**
+>
+> | | |
+> |---|---|
+> | Act 1 circuit, Quarry and Canal | BUILT `be1d276`, purchase wiring pending |
+> | Act 2 gallery bridge | BUILT |
+> | Act 3 embalming portal | BUILT |
+> | Act 3 star-shaft portal | BUILT, and NOT in the original plan - see below |
+> | Difficulty as topology (`onHard`) | BUILT |
+> | Pack-a-Punch to the gallery bridge | BUILT |
+> | The four-jar chain starting outside | Jar 1 placed; the chain itself unbuilt |
+> | B3AR | in progress |
+> | THE IBIS | NOT BUILT |
+> | SMG moving out to Act 1 | NOT BUILT - needs the same exterior wall-buy |
 
 Read this before touching `src/world/rooms.js`, `src/world/courtyard.js`, or
 `src/world/build.js`.
@@ -125,14 +144,17 @@ findings, in descending order of how badly they hurt:
 The act breaks already existed in the economy; they were never named. The sealed
 doorway is the Act 1 to 2 break. The gallery's three gates are the 2 to 3 break.
 
-| Act | Rooms | Loop |
-|---|---|---|
-| 1 | courtyard | **none today** - needs the new circuit |
-| 2 | ascent, hall, granary, gallery | the one loop that exists |
-| 3 | embalming, crypt, star-shaft, kings, serdab | **none today** - needs one portal |
+| Act | Rooms | Loop when this was written | Loop today |
+|---|---|---|---|
+| 1 | courtyard | **none** - needs the new circuit | avenue - quarry - avenue - canal - avenue |
+| 2 | ascent, hall, granary, gallery | the one loop that exists | that, plus the bridge ring above it |
+| 3 | embalming, crypt, star-shaft, kings, serdab | **none** - needs one portal | three loops |
 
 Each act must be survivable on its own terms, so each act gets its own train.
-Two of the three do not have one.
+When this was written, two of the three did not have one. All three do now, and
+`tools/trainability.mjs` asserts it rather than reporting it: every room with
+spawn points is on a cycle, and the tool exits non-zero if that stops being
+true.
 
 ### Act 1 - the courtyard opens up
 
