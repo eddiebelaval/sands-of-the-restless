@@ -5,6 +5,57 @@ not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
 
+## RIGHT NOW, 2026-08-01 16:57
+
+Everything below this section is history. This is where the work actually is.
+
+### Live and verified at c5c2771
+
+Per-machine frame governor, respawn at the start, the white blow-out doorway,
+the Quarry and the Canal (buyable), the B3AR and the first exterior wall-buy,
+the rebuilt weapon audio, horde flow-field navigation, PS4 controller with
+rumble, the altar collider fix, crouch and slide, the contextual Square, reload
+animations that draw, the melee handover, and headshots lethal through wave 6.
+
+npm test is 23 suites, up from 15. The ~200 orphaned assertions are gated.
+
+### The one lane in flight
+
+A story agent is rewriting the design docs from the SECOND story meeting, and
+its primary deliverable changed mid-flight: docs/NARRATIVE.md, the whole story
+A to Z as continuous prose, sectioned by world. WORLDS.md and WORLD-1.md become
+downstream of it. Nothing of its work is committed.
+
+### The order the owner has asked for, and it is not the order we were working in
+
+  1. NARRATIVE.md, the full story A to Z          <- in flight
+  2. sectioned by world, breaks marked
+  3. THEN a map lane, scoped from World 1's section
+
+The map lane is deliberately NOT started. The owner wants more space and the
+descent to shape the map, and building geography before the narrative says what
+it is for is how a map ends up with nine rooms and no reason.
+
+### Two decisions waiting on the owner
+
+- WHAT HAPPENS TO MERESANKH. Meeting 2 says "not rescue the girl, we find the
+  girl", so the rescue premise WORLD-1.md was built on is gone, and the
+  archaeologist IS the evil god. Meresankh was chosen because her tomb's
+  defining feature is a serdab and rooms.js has an unused Serdab. She becomes
+  the antagonist, stays a third party, or the name moves.
+- WHETHER THE KINDLING IS REWRITTEN. Speaker 2 wants the four jars to power the
+  machine instead, to get away from the Call of Duty comparison. It is already
+  coded. And it has a second cost nobody named in the room: the Kindling notice
+  is what overwrites the archaeologist mid-sentence when she is taken, which is
+  the best beat in World 1. Change the Kindling and that beat changes.
+
+### The open question the map lane will inherit
+
+Whether the current nine interior rooms can hold the story at all. They were
+built before any of it existed and the trainability law binds them. That is a
+finding worth having before somebody builds against it, and the story lane has
+been asked for it.
+
 ## Run it
 
 ```bash
