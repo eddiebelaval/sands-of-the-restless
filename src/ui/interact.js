@@ -33,31 +33,68 @@ import * as THREE from 'three';
  */
 const REACH = 5.5;
 
-export function createInteracts({ camera, interior, spaces, prompt, handlers = {} }) {
+/**
+ * BOTH SPACES CAN SELL YOU SOMETHING.
+ *
+ * This layer took `interior` and nothing else, and the pick() below refused to
+ * raycast at all unless the player was inside, so a fixture in the courtyard
+ * was not merely unbuilt - it was unbuyable by construction. MAP.md puts the
+ * B3AR wall in Act 1, outside, which made that the actual work rather than a
+ * row in a stats table.
+ *
+ * The shape is systems/doors.js's, taken deliberately: that file has been
+ * handed `interior` AND `courtyard` since the sealed doorway was built, and a
+ * player who has learned to buy a door out of one of them should not have to
+ * learn a second interface to buy a gun out of the other. One handler table,
+ * one prompt, one F key, two sources of fixtures.
+ *
+ * Targets are kept PER SPACE rather than in one list, and that is not an
+ * optimisation. three.js does not skip invisible objects when raycasting, so a
+ * single pooled list would let the player stand in the pyramid and buy a
+ * weapon off a plaque hanging in a courtyard that is not being drawn.
+ */
+export function createInteracts({ camera, interior, courtyard = null, spaces, prompt, handlers = {} }) {
   /**
-   * Meshes a look-at ray may hit. An explicit list, because handing a raycaster
-   * the interior group would test several hundred wall and prop meshes every
-   * frame to answer a question about eleven fixtures.
+   * Meshes a look-at ray may hit, keyed by the space they stand in. An explicit
+   * list, because handing a raycaster the interior group would test several
+   * hundred wall and prop meshes every frame to answer a question about eleven
+   * fixtures.
+   *
+   * The keys are `spaces.active`'s own vocabulary, so pick() is a lookup rather
+   * than a branch that has to be extended for the next space.
    */
-  const targets = [];
+  const targets = { interior: [], exterior: [] };
 
-  /** Every fixture with a handler, in build order. */
+  /** Every fixture with a handler, in build order, inside then out. */
   const records = [];
 
-  for (const slot of interior.interacts) {
-    if (!handlers[slot.type]) continue;
-    records.push(slot);
+  /**
+   * Take one source's fixtures. A source is anything publishing an `interacts`
+   * array of slot records - build.js's interior does, and the courtyard does
+   * for the one fixture standing on the avenue wall.
+   *
+   * Tolerant of a missing source on purpose: the exterior did not have fixtures
+   * until tonight, and the harness builds an interior with no courtyard at all.
+   */
+  const collect = (source, space) => {
+    for (const slot of (source && source.interacts) || []) {
+      if (!handlers[slot.type]) continue;
+      records.push(slot);
 
-    // `noPick` is how a fixture keeps its own effects out of its own hitbox.
-    // The mystery box's beam is a five-metre cone of additive light standing on
-    // top of a one-metre chest, and without this the prompt for the chest
-    // appears when the player is looking at the ceiling three metres above it.
-    // Note that three.js does NOT skip invisible objects when raycasting, so
-    // "it is hidden most of the time" is not a defence.
-    slot.group.traverse((o) => {
-      if (o.isMesh && !o.userData.noPick) targets.push(o);
-    });
-  }
+      // `noPick` is how a fixture keeps its own effects out of its own hitbox.
+      // The mystery box's beam is a five-metre cone of additive light standing
+      // on top of a one-metre chest, and without this the prompt for the chest
+      // appears when the player is looking at the ceiling three metres above it.
+      // Note that three.js does NOT skip invisible objects when raycasting, so
+      // "it is hidden most of the time" is not a defence.
+      slot.group.traverse((o) => {
+        if (o.isMesh && !o.userData.noPick) targets[space].push(o);
+      });
+    }
+  };
+
+  collect(interior, 'interior');
+  collect(courtyard, 'exterior');
 
   const ray = new THREE.Raycaster();
   const centre = new THREE.Vector2(0, 0);
@@ -129,15 +166,16 @@ export function createInteracts({ camera, interior, spaces, prompt, handlers = {
   // ---------------------------------------------------------------------------
 
   function pick() {
-    // The interior is the only space with fixtures in it. Outside, this whole
-    // system is a no-op and must not be paying for a raycast against a hidden
-    // group to find that out.
-    if (spaces.active !== 'interior' || !targets.length) return null;
+    // Only the space the player is standing in, and only if it has anything to
+    // offer. A space with no fixtures must not pay for a raycast to find that
+    // out, which is what this used to say about the whole outdoors.
+    const list = targets[spaces.active];
+    if (!list || !list.length) return null;
 
     ray.setFromCamera(centre, camera);
     ray.far = REACH;
 
-    const hits = ray.intersectObjects(targets, false);
+    const hits = ray.intersectObjects(list, false);
     for (const h of hits) {
       const rec = h.object.userData.interact;
       if (rec && handlers[rec.type]) return rec;

@@ -550,7 +550,27 @@ export function createMinimap({
     ctx.stroke();
   }
 
-  function drawFixtures() {
+  /**
+   * Draw the fixtures belonging to ONE space.
+   *
+   * `where` is 'interior' for everything inside the pyramid and 'courtyard' for
+   * the avenue. It exists because `fixtures()` is a single flat registry of
+   * every fixture in the game - which is the right shape, and is what lets one
+   * prompt and one F key serve both sides of the door - but a MAP is always a
+   * map of one place. Before the B3AR there was only ever one place with
+   * fixtures in it, so the question never came up.
+   *
+   * Filtering on `rec.room` rather than on coordinates is deliberate: the two
+   * spaces overlap in world x and z (the courtyard runs to z +30 and the pyramid
+   * from z -140, but nothing guarantees that forever), and a bounds test would
+   * be a second, weaker copy of a fact the record already states. build.js
+   * stamps `room` on every fixture it makes, and the courtyard's own wall comes
+   * out of the same builder carrying 'courtyard'.
+   */
+  function drawFixtures(where = 'interior') {
+    const mine = (rec) =>
+      where === 'courtyard' ? rec.room === 'courtyard' : rec.room !== 'courtyard';
+
     // --- wall buys ----------------------------------------------------------
     //
     // A narrow upright plaque, which is what one is. No price: the wall buys are
@@ -558,7 +578,7 @@ export function createMinimap({
     // anything, so quoting four of them permanently would spend four labels to
     // say what the objective tracker says once, about the one that matters.
     for (const rec of fixtures()) {
-      if (rec.type !== 'wallbuy') continue;
+      if (rec.type !== 'wallbuy' || !mine(rec)) continue;
       const id = rec.config && rec.config.weapon;
       const owned = !!id && weaponsOwn(id);
 
@@ -577,7 +597,7 @@ export function createMinimap({
     // reason: a HUD in a different blue from the fire it stands for breaks the
     // one association the map taught.
     for (const rec of fixtures()) {
-      if (rec.type !== 'shrine') continue;
+      if (rec.type !== 'shrine' || !mine(rec)) continue;
       const id = rec.config && rec.config.boon;
       const look = BOON_LOOK[id];
       const emissive = look ? look.emissive : 0xd9b26a;
@@ -634,7 +654,7 @@ export function createMinimap({
 
     // --- the Altar ----------------------------------------------------------
     for (const rec of fixtures()) {
-      if (rec.type !== 'altar') continue;
+      if (rec.type !== 'altar' || !mine(rec)) continue;
       altarMark(rec.x, rec.z, 4, !!power.powered);
     }
 
@@ -646,7 +666,7 @@ export function createMinimap({
     // player who thinks the map is broken. Hollow and dashed reads as a site;
     // filled reads as the box.
     for (const rec of fixtures()) {
-      if (rec.type !== 'box') continue;
+      if (rec.type !== 'box' || !mine(rec)) continue;
       chest(rec.x, rec.z, 4.4, mysterybox.isActive(rec));
     }
   }
@@ -809,6 +829,14 @@ export function createMinimap({
           economy.canAfford(entry.cost) ? GOLD : BLOOD, 9);
       }
     }
+
+    // The fixtures that stand OUT HERE, drawn before the contacts so that a
+    // mummy is never hidden behind a plaque. Exactly one today: the B3AR wall,
+    // the only gun buyable outside and the first fixture in the game that was
+    // ever not in a room. Until this call it was invisible on the map you are
+    // holding while standing next to it, because drawFixtures ran only in the
+    // interior branch - the map had no reason to expect a fixture out here.
+    drawFixtures('courtyard');
 
     let n = 0;
     if (director && director.live) {

@@ -36,6 +36,66 @@ export const BASE_STATS = {
     audio: 'pistol',
   },
 
+  /**
+   * THE B3AR: three cracks and a pause, on an Act 1 courtyard wall for 400.
+   *
+   * The first weapon in this table with a `burst`, which means it is also the
+   * first caller of the two-rate path in interval() and of the third branch in
+   * update(). Everything below is authored against the MK9, because the MK9 is
+   * what the player is holding when they walk up to the wall and the only
+   * question the price has to answer is "instead of what".
+   *
+   * THE TWO RATES ARE THE WEAPON, so they are derived rather than picked.
+   *
+   *   `burstRpm` 1500 is the 40 milliseconds MAP.md asks for between the three
+   *   cracks - 60/1500 = 0.040 - and 40ms is the interval at which three
+   *   reports are still three reports. Under about 25ms they fuse into one
+   *   ragged noise and the weapon becomes the small shotgun the whole design
+   *   note refuses to build. Measured on this machine at 60Hz the frame timer
+   *   can only deliver multiples of 16.7ms, so the rounds actually land about
+   *   50ms apart; the number stays 1500 because it is the intent, and a
+   *   higher-refresh display gets closer to it rather than further away. It is
+   *   NOT tuned to the frame rate for the same reason nothing else here is.
+   *
+   *   `rpm` 300 is the pause, and it is exactly a fifth of the burst rate. The
+   *   between-bursts gate measures from the LAST round of the burst - see
+   *   canFire, which reads lastShot - so 60/300 = 200ms of silence follows
+   *   three rounds spread over 80. Five to one is far past the ratio at which
+   *   an ear stops hearing a rhythm as even, which is the entire read the
+   *   weapon is being bought for. It also fixes the output: one trigger pull
+   *   is 78 damage every 280ms, near enough 280 a second, against a MK9 that
+   *   reaches 287 only if the player can click 6.8 times a second and about
+   *   210 if they cannot.
+   *
+   * WHAT IT COSTS, because more damage a second for 400 gold is otherwise the
+   * only correct purchase in Act 1. Range 55 against the MK9's 90: past 55
+   * metres this weapon does not reach the target at all, and the courtyard is
+   * 87 metres end to end. Headshot 2.2 against 2.6, which is deliberate and is
+   * the one number that must not be raised - Thoth doubles gold on headshots,
+   * so the MK9 stays the gun that pays for itself and this one stays the gun
+   * that clears the room in front of you. And 18 rounds is six bursts, about a
+   * second and three quarters of fire, which is what "burns ammo, pushes the
+   * player toward the wall sooner" means in the only units that matter.
+   *
+   * `auto` IS NOT READ FOR THIS WEAPON and is true rather than false to say so
+   * honestly. The burst branch in update() returns before the auto/semi test
+   * ever runs, and what it implements is a held trigger repeating bursts at
+   * `rpm`. Writing false here would describe behaviour no code performs.
+   *
+   * The audio profile is the MK9's 'pistol'. It is the same calibre out of a
+   * slightly longer barrel and it does not need a synth of its own to be read
+   * as a pistol; what distinguishes it in the ear is the rhythm, which is free.
+   */
+  b3ar: {
+    damage: 26, headshot: 2.2,
+    rpm: 300, auto: true,
+    burst: 3, burstRpm: 1500,
+    magazine: 18, reserve: 126,
+    spreadHip: 0.030, spreadAds: 0.0075,
+    pellets: 1, range: 55,
+    audio: 'pistol',
+  },
+
   smg: {
     damage: 28, headshot: 2.5,
     rpm: 900, auto: true,
@@ -131,8 +191,19 @@ export const BASE_STATS = {
   },
 };
 
-/** Load order for the number keys and the scroll wheel. */
-export const SLOTS = ['mk9', 'smg', 'shotgun', 'carbine', 'lmg', 'bolt', 'sunspear'];
+/**
+ * Load order for the number keys and the scroll wheel.
+ *
+ * THE B3AR IS APPENDED RATHER THAN FILED NEXT TO THE MK9 IT SHARES A TIER WITH,
+ * and that is a deliberate refusal to be tidy. This array is not a taxonomy, it
+ * is a keyboard: index 0 is Digit1 and index 6 is Digit7, and the HUD prints
+ * the digit off this same array so the two cannot drift. Inserting the new
+ * pistol at index 1 would have moved five weapons one key to the right - the
+ * shotgun off 3, the Apis off 5, the Sunspear off 7 - for every player and
+ * every test that has ever learned them. A gun the wall sells second is worth
+ * less than muscle memory the map has been teaching since the first room.
+ */
+export const SLOTS = ['mk9', 'smg', 'shotgun', 'carbine', 'lmg', 'bolt', 'sunspear', 'b3ar'];
 
 Object.freeze(BASE_STATS);
 for (const id of SLOTS) Object.freeze(BASE_STATS[id]);
@@ -148,6 +219,11 @@ for (const id of SLOTS) Object.freeze(BASE_STATS[id]);
  */
 export const NAMES = {
   mk9:      { base: 'MK9',          upgraded: "Nekhbet's Talon" },
+  // The one name in this table that is not Egyptian, and it stays that way.
+  // B3AR is the owner's, the 3 in it is the burst count, and an upgraded one
+  // is the same joke told louder rather than a different weapon with a god's
+  // name bolted on.
+  b3ar:     { base: 'B3AR',         upgraded: 'B3AR TRIPLE CROWN' },
   smg:      { base: 'Wadjet SMG',   upgraded: 'Wadjet Ascendant' },
   shotgun:  { base: 'Sekhem 12',    upgraded: 'Sekhem Devourer' },
   carbine:  { base: 'M4 Ankh',      upgraded: 'Ankh Eternal' },
@@ -714,9 +790,35 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     if (s.burst) {
       // Start one. Held triggers repeat, gated by the rate limiter in canFire,
       // which is reading the BETWEEN-bursts interval while burstLeft is zero.
-      if (input.fire && state.burstLeft === 0 && canFire()) {
-        state.burstLeft = s.burst;
-        state.burstNext = clock;
+      if (input.fire && state.burstLeft === 0) {
+        if (canFire()) {
+          state.burstLeft = s.burst;
+          state.burstNext = clock;
+        } else if (!state.firing) {
+          /**
+           * A BURST WEAPON ON AN EMPTY MAGAZINE HAS TO CLICK.
+           *
+           * Found by being this branch's first caller, and it is the branch
+           * above having one condition too many. `canFire()` gates the START of
+           * a burst, which is right, but every other weapon in the game reaches
+           * fire() on a trigger pull whether it can shoot or not, and fire() is
+           * where the dry-fire snap lives and where an empty magazine with a
+           * reserve behind it starts a reload. Guarding the whole pull on
+           * canFire skipped both: pull the trigger on an empty B3AR and
+           * absolutely nothing happened - no click, no reload, no reason on
+           * screen - which is the exact silent-broken-gun failure the note on
+           * canFire's melee check is about.
+           *
+           * Reachable in play whenever a reload is abandoned mid-stroke, which
+           * the khopesh does on every swing: see cancelReload. It leaves the
+           * weapon empty, not reloading, and with a full reserve.
+           *
+           * On a fresh press only. fire() refuses and returns null either way,
+           * so `hits` is untouched; what the latch prevents is a held trigger
+           * snapping the dry-fire sample once a frame.
+           */
+          fire(ads);
+        }
       }
 
       if (state.burstLeft > 0 && clock >= state.burstNext) {

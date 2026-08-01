@@ -1024,8 +1024,17 @@ const checks = {
   // count is 4 + 6 + 1 + 3. It is asserted as a literal rather than derived from
   // rooms.js because the whole value of the check is that it fails when a
   // fixture is authored and never wired.
-  'fourteen fixtures are wired':      opening.fixtures === 14,
-  'four wall buys, priced':           opening.wallbuys.join() === 'smg:1000,shotgun:1200,carbine:1500,lmg:1600',
+  // Fifteen, not fourteen, and the fifteenth is OUTSIDE. Four plus six plus one
+  // plus three inside, and one on the avenue wall - the B3AR, the only wall gun
+  // in the courtyard and the only fixture in the game that is not in a room. It
+  // appears in this list because it is in `interacts.records`, which IS the
+  // point: one fixture registry, one prompt, one F key, both sides of the door.
+  //
+  // Both of these literals failed when the B3AR landed, which is the assertion
+  // doing its job rather than breaking. An exact count is the only thing that
+  // catches a fixture that was authored and never wired.
+  'fifteen fixtures are wired':       opening.fixtures === 15,
+  'five wall buys, priced':           opening.wallbuys.join() === 'smg:1000,shotgun:1200,carbine:1500,lmg:1600,b3ar:400',
   'six shrines exist':                opening.shrines.length === 6,
   'one altar exists':                 opening.altars === 1,
   'the cap starts at four':           opening.capacity === 4,

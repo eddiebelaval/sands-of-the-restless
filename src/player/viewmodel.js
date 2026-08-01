@@ -2977,6 +2977,169 @@ function buildPistol(P) {
   };
 }
 
+/**
+ * THE B3AR: the MK9 grown into a machine pistol, and the same object underneath.
+ *
+ * MAP.md asks for `buildPistol` shared "with machine-pistol proportions: longer
+ * receiver, extended magazine, a compensator", and the load-bearing word is
+ * SHARED. This calls the pistol builder and adds four assemblies to what comes
+ * back. It does not copy 250 lines of it and edit the numbers, which is the
+ * obvious alternative and is how the two guns would drift: every millimetre of
+ * the MK9's sight picture is solved arithmetic - the tritium dots are offset
+ * 3.7mm and 5.2mm so that from an eye at 394 and 552mm they come out LEVEL -
+ * and a fork of that block is a fork of that solve, silently, the first time
+ * either is touched.
+ *
+ * NOTHING HERE CROSSES THE SIGHT LINE, which is the one rule the shared model
+ * imposes. `sight` comes back from buildPistol untouched, solveAdsPose() reads
+ * it, and every part below either sits forward of the front blade at z = -0.164
+ * or below the frame. The two weapons therefore aim identically, which is also
+ * correct as design: this is the same pistol with a longer barrel on it.
+ *
+ * WHAT DOES MOVE IS THE MUZZLE POINT. The compensator puts 100mm of steel where
+ * the MK9's flash was spawning, so the flash and the smoke would have been
+ * armed INSIDE the new part and the weapon would have fired out of its own
+ * middle with the front third of it unlit. The muzzle record is re-based past
+ * the comp's crown. It is the one line in this function that would have shipped
+ * a defect if the shared builder had been left to speak for it.
+ *
+ * The new parts hang off the SLIDE group rather than the frame, so the reload
+ * racks them the way it racks everything else bolted to a slide. On a
+ * locked-breech pistol the barrel and whatever is threaded to it travel with
+ * the slide, so this is also just what the object does.
+ */
+function buildB3ar(P) {
+  const m = buildPistol(P);
+  const slide = m.bolt;
+  const detail = m.detail;
+  const S = (x) => { slide.add(x); detail.push(x); return x; };
+
+  // --- 1. the longer receiver ----------------------------------------------
+  //
+  // The MK9's slide ends at z = -0.181 and its bore rod runs to -0.197. This
+  // carries the same section on for another 56mm, at the same width and 2mm
+  // shallower, so the join reads as a stepped extension rather than as the
+  // slide having been stretched: a machine pistol's extended top end is a
+  // separate part, and a visible step is what says so.
+  slide.add(box(P.metal, 0.026, 0.028, 0.056, 0, 0.014, -0.209));
+  S(box(P.edge, 0.0272, 0.0022, 0.056, 0, 0.0278, -0.209));         // top flat, carried on
+  S(box(P.seam, 0.0282, 0.0022, 0.004, 0, 0.0180, -0.1815));        // the joint itself
+
+  // Chamfers down both top corners of the extension, matching the pair the
+  // slide already carries. Without them the new section reads as a square bar
+  // welded to a chamfered one, which is exactly what it would be.
+  for (const side of [-1, 1]) {
+    const ch = box(P.edge, 0.008, 0.0028, 0.056, side * 0.0118, 0.0258, -0.209);
+    ch.rotation.z = side * 0.62;
+    slide.add(ch); detail.push(ch);
+  }
+
+  // Lightening cuts down each flank. The one detail that separates a long slide
+  // from a longer slab: nine millimetres of dark recess with a lit lip over it,
+  // three to a side, which is the alternation the cocking serrations are built
+  // on and it is here for the same reason - at this range a single value across
+  // a 56mm face is a bar of soap.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const zz = -0.190 - i * 0.016;
+      S(box(P.seam, 0.0026, 0.0130, 0.0090, side * 0.0134, 0.0140, zz));
+      S(box(P.edge, 0.0020, 0.0016, 0.0090, side * 0.0142, 0.0212, zz));
+    }
+  }
+
+  // The bore, carried forward through the extension. A barrel that stops behind
+  // a compensator leaves the comp looking into solid metal from the front.
+  slide.add(rod(P.dark, 0.0082, 0.0082, 0.058, 0, 0.008, -0.210, 'z', 14));
+
+  // --- 2. the compensator ---------------------------------------------------
+  //
+  // A ported block, and the ports are the entire justification for the part: a
+  // comp with no visible ports is a muzzle weight, and a muzzle weight is a
+  // longer barrel with extra steps. They are what tell the eye why three rounds
+  // in a tenth of a second climb less than three MK9 shots would.
+  //
+  // IT IS BUILT AS FOUR STRAPS WITH THREE GAPS, NOT AS A BAR WITH THREE SLOTS
+  // CUT IN IT, and the difference is a defect this shipped with for one pass.
+  // The first draft laid a continuous polished strap down the top and then put
+  // the port recesses at the same height underneath it: the strap spanned
+  // y 0.0236 to 0.0260 and the ports 0.0202 to 0.0262, so two tenths of a
+  // millimetre of each port stood clear of the thing covering it. Rendered and
+  // zoomed six times, the top of this weapon was one unbroken grey flat from
+  // breech to muzzle - a comp described in a comment and not present in a
+  // single pixel, which is the exact failure mode this file has a history of.
+  //
+  // Inverted, it cannot happen: the strap segments are the raised parts and the
+  // gaps between them ARE the ports, floored in the flat unlit black so a slot
+  // reads as a hole rather than as a shadow. Nothing is drawn behind anything.
+  //
+  // The block is 36mm across against the slide's 28 and hangs 4mm lower, so it
+  // stands proud in silhouette from above, from the side and from underneath.
+  // At 300mm forward of the eye a device that is only a millimetre wider than
+  // the barrel it is threaded to is a millimetre of nothing.
+  slide.add(box(P.dark, 0.036, 0.032, 0.062, 0, 0.013, -0.268));
+  const PORTS = [-0.2480, -0.2670, -0.2860];
+  const STRAPS = [
+    [-0.2408, 0.0060], [-0.2575, 0.0105], [-0.2765, 0.0105], [-0.2950, 0.0095],
+  ];
+  for (const [zz, len] of STRAPS) {
+    S(box(P.metal, 0.0366, 0.0026, len, 0, 0.0303, zz));            // raised strap
+  }
+  // The port floor sits ON the block's top face and half a millimetre proud of
+  // it, not sunk into it. A box pushed down INSIDE a solid is inside a solid:
+  // the body's own top face is an unbroken plane at 0.029 and would draw over
+  // it, which is the same mistake in the other direction. Two and a half
+  // millimetres of strap stand either side of it, and that step is the port.
+  for (const zz of PORTS) {
+    S(box(P.etch, 0.0330, 0.0006, 0.0092, 0, 0.0293, zz));
+  }
+  // A flat down each flank, so the block reads as machined from the side too.
+  for (const side of [-1, 1]) {
+    S(box(P.seam, 0.0028, 0.0140, 0.0480, side * 0.0170, 0.0140, -0.268));
+    S(box(P.edge, 0.0022, 0.0018, 0.0480, side * 0.0178, 0.0222, -0.268));
+  }
+  // Front face, bore and crown: the same three parts the MK9 muzzle is made of,
+  // moved 100mm down the weapon.
+  slide.add(box(P.dark, 0.035, 0.031, 0.006, 0, 0.013, -0.297));
+  S(ring(P.edge, 0.0092, 0.0020, 0, 0.008, -0.300, 16));
+  slide.add(rod(P.metal, 0.0050, 0.0050, 0.012, 0, -0.004, -0.296, 'z', 10));
+
+  // --- 3. the extended magazine --------------------------------------------
+  //
+  // Built as a floorplate extension standing under the magazine that is already
+  // there, and not as a replacement for it. That is what the object is in life -
+  // an aftermarket base that takes a stick from twelve rounds to eighteen - and
+  // it is also what keeps this function additive: the base pistol's magazine
+  // body, baseplate and pinky rest are anonymous children of `m.mag`, and
+  // reaching in to delete them by index is a line that breaks the day somebody
+  // adds a part to the pistol.
+  //
+  // It rides `m.mag`, so the reload carries it out of the well and back in with
+  // the rest of the magazine rather than leaving a floating base in the frame.
+  m.mag.add(box(P.dark, 0.0234, 0.046, 0.0404, 0, -0.145, 0.0004));
+  m.mag.add(box(P.metal, 0.0344, 0.0090, 0.0504, 0, -0.1725, 0.0012));
+  m.mag.add(box(P.poly, 0.0360, 0.0064, 0.0524, 0, -0.1800, 0.0022));
+  const witness = box(P.etch, 0.0060, 0.0300, 0.0060, 0.0122, -0.148, 0);
+  m.mag.add(witness); detail.push(witness);
+
+  // --- 4. the selector, and the joke ---------------------------------------
+  //
+  // Three detent marks on the fire-control lever. It is the correct control for
+  // a weapon with a three-round burst, and the 3 in B3AR is stamped on the side
+  // of the gun for anybody who looks. Left flank, above the trigger, on the run
+  // of frame between the takedown lever and the slide stop.
+  m.root.add(selector(P, detail, -0.0162, -0.019, -0.046, -0.55, -1, 3));
+
+  // A proof stamp on the extension, left flank, where nothing competes.
+  slide.add(stamp(P, detail, 0.030, 0.011, -0.0134, 0.0140, -0.216, '-x', 7.0));
+
+  // THE MUZZLE, RE-BASED. See the note at the top of this function: this is the
+  // line that keeps the flash and the smoke outside the weapon. Four
+  // millimetres past the crown, on the bore line the pistol already uses.
+  m.muzzle = new THREE.Vector3(0, 0.008, -0.304);
+
+  return m;
+}
+
 function buildSmg(P) {
   const g = new THREE.Group();
   const detail = [];
@@ -4377,6 +4540,40 @@ const WEAPONS = {
     // Short, tight, five even petals. A pistol crown is unremarkable and the
     // flash should not be the loudest thing about the weapon.
     burn: { petals: 0.82, spread: 0.82, life: 0.050, smoke: 0.55, core: 0.80 },
+  },
+
+  b3ar: {
+    name: 'B3AR',
+    build: buildB3ar,
+    // THE MK9's HIP POSE, COPIED RATHER THAN RE-TUNED, and the identical
+    // numbers are the point. That pose is the answer to a measured framing
+    // problem - the hands were being cropped at the bottom edge, and 26mm of
+    // lift with 32mm of depth is what put the knuckle line and both thumbs in
+    // shot without dragging two forearms up with them. This weapon holds the
+    // SAME two hands in the SAME grip; only the far end of it is longer, and
+    // the far end is 300mm from the eye where the frame is twice as tall and
+    // has the room for free. A second set of hand-tuned numbers here would be
+    // two answers to one question, and the day the pistol's framing is
+    // revisited only one of them would be revisited with it.
+    hipPose: { pos: [0.094, -0.090, -0.425], rot: [-0.010, 0.100, 0.030] },
+    relief: 0.40,          // both arms out, and the sight is the pistol's own
+    track: MAG_RELOAD, reloadTime: 1.95,
+    // Roughly three fifths of the MK9's impulse per round, and that is what
+    // makes the burst read. These are velocities into a spring - see fire() -
+    // so three of them landing 40 to 50ms apart stack faster than the spring
+    // recovers, and the third crack sits visibly higher than the first. Pay the
+    // MK9's full 0.34 pitch three times in a tenth of a second and the sight
+    // picture leaves the top of the screen; charge 0.20 and one trigger pull
+    // peaks a little above one MK9 shot, which is the climb MAP.md is asking
+    // for rather than a wrist injury.
+    kick: { back: 0.62, rise: 0.33, pitch: 0.20, yaw: 0.07, roll: 0.55 },
+    camKick: 1.5, flash: 0.85, shell: 0.85, sway: 1.0,
+    // A compensator is a device for throwing gas sideways, so the star is wide
+    // and short rather than long: more spread than the MK9's 0.82, less life,
+    // because at 1500rpm inside the burst the previous flash has to be gone
+    // before the next one is armed or three cracks read as one lamp. Same
+    // trap the SMG's 0.038 life exists for.
+    burn: { petals: 0.86, spread: 1.08, life: 0.040, smoke: 0.45, core: 0.85 },
   },
 
   smg: {

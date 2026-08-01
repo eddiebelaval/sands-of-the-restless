@@ -18,6 +18,7 @@ import { buildTemple } from './temple.js';
 import { buildScatter } from './scatter.js';
 import { dressAvenue } from './dressing.js';
 import { batchStatics } from './batch.js';
+import { buildWallBuyFixture } from './build.js';
 import { buildQuarry, QUARRY } from './quarry.js';
 import { buildCanal, canalDepthAt, cutCanalIntoGround, CANAL } from './canal.js';
 
@@ -2611,6 +2612,59 @@ export function buildCourtyard(scene) {
   // an animated material.
   const batched = batchStatics(group);
 
+  // -------------------------------------------------------------------------
+  // the B3AR wall
+  // -------------------------------------------------------------------------
+  //
+  // THE FIRST FIXTURE THAT WAS EVER OUTSIDE. Every wall buy in the game was an
+  // interactSlots entry in rooms.js, which is the inside of the pyramid; MAP.md
+  // puts the Act 1 triple-shot pistol on a courtyard wall for 400, and the
+  // interaction layer had no exterior source of any kind. That missing
+  // mechanism is why the B3AR was never built, and why the SMG never moved out
+  // either - a plan can specify a placement all it likes, but nothing could
+  // carry it. The layer takes `courtyard` now, the way systems/doors.js already
+  // did, and this is what it reads.
+  //
+  // The plaque itself is built by world/build.js and not here, deliberately. It
+  // is the same builder the four interior walls come out of - same panel, same
+  // recessed ground, same CHALK silhouette table, same raking lamp that took two
+  // goes to place - so the wall that sells the B3AR and the wall that sells the
+  // SMG cannot drift apart.
+  //
+  // WHERE, AND WHY THIS BAY. West wall, bay 3, which spans z = 0 to 9: the
+  // midpoint of the avenue, on the walk from the spawn at (0, 30) to the sealed
+  // doorway at z = -30, and the player passes within five metres of it without
+  // being routed. It is the only kind of bay that can carry a plaque - not a
+  // chapel recess (west 1, 4 and 6), not the canal's bought gate (west 5) or its
+  // breach (west 2), and not one of the two bays that lay projecting string
+  // courses, which stand 0.16 proud at the height the panel wants.
+  //
+  // z = 5.6 INSIDE that bay is not the bay centre, and the reason is a
+  // photograph: at the centre, 4.5, the avenue brazier at (-11.2, 3) stands two
+  // metres off the wall directly in front of the panel and its bowl covers the
+  // bottom right of the mark. 5.6 puts 2.6 metres of clear air between them and
+  // still leaves a metre to the buttress pylon at z = 8.05, which frames the
+  // plaque from the north instead of crowding it.
+  //
+  // x = -13.48 is arithmetic, not taste. The bay wall is 2.6 thick centred on
+  // x = -15, so its avenue face is at -13.7; the plaque body is 0.22 deep and
+  // hangs BACK from the fixture origin, so an origin at -13.7 + 0.22 puts the
+  // panel flush against the stone with the chalk standing proud of it. The
+  // fixture faces east, which is local -z rotated to world +x: rot = -PI/2.
+  //
+  // It sits on `groundY` rather than on zero because out here the floor is a
+  // dune field. The interior's fixtures stand on a flat slab and can assume it;
+  // nothing outside can.
+  const interacts = [];
+  {
+    const rec = buildWallBuyFixture({
+      type: 'wallbuy',
+      x: -13.48, y: groundY(-13.48, 5.6), z: 5.6, rot: -Math.PI / 2,
+      config: { weapon: 'b3ar', cost: 400 },
+    });
+    if (rec) { group.add(rec.group); interacts.push(rec); }
+  }
+
   return {
     group,
     colliders,
@@ -2627,6 +2681,19 @@ export function buildCourtyard(scene) {
      * the chain cannot enumerate is a jar the player can never hand in.
      */
     jars: [JAR],
+
+    /**
+     * Fixtures the crosshair can buy from, in the shape ui/interact.js reads
+     * off `interior`. One entry today, the B3AR wall, and the owner has ratified
+     * that it stays one: the B3AR is the ONLY gun buyable outside, and the SMG
+     * that MAP.md wanted moved out here stays inside at 1000. See the struck
+     * row in MAP.md's weapons table for why.
+     *
+     * It is a published ARRAY rather than a single record anyway, because the
+     * constraint is on what gets placed and not on what the mechanism can do -
+     * THE IBIS will need this and so would any later move.
+     */
+    interacts,
 
     /** The two Act 1 spaces, for the harness and for anything that wants to
      *  ask where they are without importing their modules. */

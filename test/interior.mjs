@@ -161,6 +161,22 @@ const opening = await page.evaluate(() => ({
   barriers: window.__SANDS__.interior.barriers.map((b) => `${b.id}:${b.kind}:${b.cost}`),
   interiorHidden: window.__SANDS__.interior.group.visible === false,
   space: window.__SANDS__.spaces.active,
+  /**
+   * The two Act 3 loop doorways carry `onHard` in rooms.js: they are a
+   * 1250-gold debris wall on Hard and nothing at all on the tier this suite
+   * runs, which is Normal. The interior is built before the tier is known, so
+   * both are BUILT as their Hard form and dissolved by start() - which is why
+   * the door count below is ten rather than the eight the map used to have.
+   *
+   * Counting them is not enough on its own. A build that forgot to dissolve
+   * them would have exactly the same ten records and two invisible walls
+   * across the ring, so the state is asserted as well as the count.
+   */
+  hardOnly: window.__SANDS__.interior.barriers
+    .filter((b) => b.hardOnly)
+    .map((b) => `${b.id}:${b.opened ? 'cleared' : 'SHUT'}`),
+  hardOnlyColliders: window.__SANDS__.interior.colliders
+    .filter((c) => Math.abs(c.z + 232) < 1.2 && Math.abs(Math.abs(c.x) - 17) < 2.6).length,
 }));
 
 // ---------------------------------------------------------------------------
@@ -687,7 +703,10 @@ const DARK = shots.filter((s) => s.meanLuma < 6 || s.percentLit < 25);
 const checks = {
   'starts on 500 gold':              opening.gold === 500 && opening.hudGold === '500',
   'interior built and hidden':       opening.interiorHidden === true,
-  'eight doors exist':               opening.doors === 8,
+  'ten doors exist':                 opening.doors === 10,
+  'the two hard-only walls cleared': opening.hardOnly.length === 2
+                                       && opening.hardOnly.every((s) => s.endsWith(':cleared')),
+  'and took their colliders':        opening.hardOnlyColliders === 0,
   'walked to the sealed doorway':    atDoor.pos.z < -26 && atDoor.pos.z > -28,
   'doorway is the look target':      atDoor.candidate === 'courtyard/entry',
   'prompt shows the price':          /1000 GOLD/.test(atDoor.hud.prompt),

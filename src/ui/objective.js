@@ -371,8 +371,13 @@ export function createObjectives({
     // courtyard that could have told them.
     {
       id: 'arm',
+      // The B3AR is on this list because it is now the CHEAPEST answer to it and
+      // the first one the player can reach: 400 gold on the avenue wall, on the
+      // way to a sealed doorway that costs a thousand. A panel still reading
+      // FIND A WALL GUN at somebody holding one bought off a wall is the panel
+      // calling them a liar.
       done: () => weapons.owns
-        && ['smg', 'shotgun', 'carbine', 'lmg', 'bolt', 'sunspear'].some((w) => weapons.owns(w)),
+        && ['b3ar', 'smg', 'shotgun', 'carbine', 'lmg', 'bolt', 'sunspear'].some((w) => weapons.owns(w)),
       next() {
         const from = here();
         const options = openWallBuys(from);

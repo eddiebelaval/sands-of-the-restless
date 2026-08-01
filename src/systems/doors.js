@@ -259,6 +259,30 @@ export function createDoors({
   const courtyardTargets = [];
   const interiorTargets = [];
 
+  /**
+   * THE ACT 1 CLAIMS: the Quarry and the Canal, adopted rather than built.
+   *
+   * world/courtyard.js builds both mouths and hands them over as records that
+   * are already exactly the shape this file drives - open(), advance(dt), the
+   * meshes with userData.door already stamped, and advance already called every
+   * frame from courtyard.update. What they were missing is the half that is not
+   * that file's to write, and it is the same split the sealed doorway follows:
+   * courtyard.js owns what a barrier IS, this file owns what it COSTS and
+   * whether it may be bought.
+   *
+   * Two lines, and without them both spaces are finished, sealed and
+   * unreachable - which is what they were. Nothing raycast the meshes, so no
+   * prompt ever appeared, so no gold was ever taken. Adding them to
+   * `courtyardTargets` is what makes a look-at ray find them, and adding them to
+   * `all` is what makes the objective ladder, the HUD and the harness able to
+   * see a door that exists.
+   *
+   * Guarded rather than assumed: a courtyard built before this existed, or a
+   * harness that stubs it, returns no claims and this does nothing.
+   */
+  const claims = (courtyard && courtyard.claims) || [];
+  for (const c of claims) courtyardTargets.push(...c.parts);
+
   const state = {
     /** How many canopic jars are back in their niches. The puzzle gate reads
      * this; the jar system that will write it lands with M5. */
@@ -863,8 +887,22 @@ export function createDoors({
     get candidate() { return candidate; },
     get prompt() { return promptText; },
 
-    /** Every door in the game, courtyard slab first. */
-    get all() { return sealed ? [sealed, ...interior.barriers] : interior.barriers.slice(); },
+    /**
+     * Every door in the game, courtyard slab first, then the two Act 1 claims,
+     * then the pyramid's own barriers.
+     *
+     * The order is the order the player meets them and it is load-bearing: the
+     * objective ladder names the next CLOSED barrier by walking this list, so a
+     * list that put the interior first would send a player who has not yet
+     * bought their way inside to a door they cannot reach.
+     */
+    get all() {
+      return [
+        ...(sealed ? [sealed] : []),
+        ...claims,
+        ...interior.barriers,
+      ];
+    },
 
     byId(id) { return this.all.find((d) => d.id === id) || null; },
   };

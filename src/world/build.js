@@ -105,6 +105,41 @@ const LIGHTING = {
  * printed sixty times a second.
  */
 const CHALK = {
+  /**
+   * B3AR: a pistol silhouette that has to lose to the SMG two rows down.
+   *
+   * THE FIRST DRAFT OF THIS PHOTOGRAPHED AS A CAPITAL 7, which is the exact
+   * failure the note above this table warns about and it was arrived at the
+   * same way: three bars laid end to end at one height with no gap between them
+   * fuse into ONE bar, and a grip stacked directly on a magazine at the same
+   * width fuses into one stroke. Two strokes at right angles is a numeral. The
+   * parts have to be separated by GAPS and by STEPS in thickness, because the
+   * mark is emissive gold on dark granite at four metres and every internal
+   * edge that is not a change of silhouette is invisible.
+   *
+   * So: the top line is three pieces with two real gaps in it and it steps DOWN
+   * to the barrel and back UP to the muzzle device, which is what a compensator
+   * looks like from the side and what nothing else in this table has. The
+   * vertical is three pieces that step in and back out. Nothing runs at a
+   * constant width for longer than a quarter of the panel.
+   *
+   * The tells against the SMG, which the player meets in the same act: no stock
+   * bar behind the grip, which every other mark here has; the magazine at the
+   * REAR under the receiver rather than well forward, which is the SMG's whole
+   * identity reversed; and the stick running BELOW the grip line, because the
+   * extended magazine is the machine-pistol read.
+   */
+  b3ar: [
+    [0.70, 0.15, 0.14, 0.20],    // slide, thick, and it stops half way
+    [0.24, 0.08, 0.66, 0.20],    // barrel, STEPPED DOWN, with a gap behind it
+    [0.17, 0.19, 0.96, 0.20],    // COMPENSATOR: taller than the slide, detached
+    [0.09, 0.07, -0.10, 0.33],   // rear sight, breaking the top line at the back
+    [0.20, 0.05, 0.16, 0.02],    // trigger guard, under the gap in the receiver
+    [0.17, 0.24, -0.15, 0.00],   // grip, at the rear extreme: no stock behind it
+    [0.11, 0.30, -0.15, -0.32],  // extended magazine, stepped IN and hanging low
+    [0.21, 0.06, -0.15, -0.52],  // floorplate, stepped back out to close it off
+  ],
+
   smg: [
     [1.05, 0.13, 0.10, 0.16],    // receiver
     [0.45, 0.07, 0.82, 0.16],    // barrel, thinner than the receiver
@@ -288,17 +323,10 @@ export function buildInterior(scene, rooms = ROOMS) {
   /** Things that want to know the moment the Kindling is thrown. */
   const poweredListeners = new Set();
 
-  /**
-   * Chalk: the gold a wall buy's silhouette is drawn in.
-   *
-   * Its own instance rather than M.gold, and lightly emissive, because a wall
-   * buy has to be findable from across an unlit room. The registry's gold is on
-   * half the props in the map and lifting its emissive here would set fire to
-   * every sarcophagus mask in the pyramid.
-   */
-  const chalk = M.gold.clone();
-  chalk.emissive.setHex(0x7a5314);
-  chalk.emissiveIntensity = 0.8;
+  // Chalk: the gold a wall buy's silhouette is drawn in. Hoisted to module
+  // scope so the courtyard's fixture is drawn in the same material rather than
+  // in a second one that agrees with it today. See wallChalk().
+  const chalk = wallChalk(M);
 
   /**
    * Fill.
@@ -2089,6 +2117,79 @@ const INTERACTS = {
     return g;
   },
 };
+
+/**
+ * The chalk material, made once and handed to every fixture that draws a mark.
+ *
+ * Its own instance rather than M.gold, and lightly emissive, because a wall buy
+ * has to be findable from across an unlit room. The registry's gold is on half
+ * the props in the map and lifting its emissive here would set fire to every
+ * sarcophagus mask in the pyramid.
+ *
+ * Memoised at module scope rather than built inside buildInterior, which is
+ * where it used to live. There are two placers now - the interior's room loop
+ * and the courtyard - and two clones of one material configured in two files is
+ * exactly the drift this codebase keeps its authored tables single for.
+ */
+let sharedChalk = null;
+
+function wallChalk(M) {
+  if (sharedChalk) return sharedChalk;
+  sharedChalk = M.gold.clone();
+  sharedChalk.emissive.setHex(0x7a5314);
+  sharedChalk.emissiveIntensity = 0.8;
+  return sharedChalk;
+}
+
+/**
+ * ONE WALL BUY, BUILT OUTSIDE THE INTERIOR'S ROOM LOOP.
+ *
+ * THE PROBLEM THIS SOLVES. Every wall buy in the game was an `interactSlots`
+ * entry in rooms.js, built by buildInteracts() above, and rooms.js is the
+ * inside of the pyramid. MAP.md puts the B3AR in the courtyard, in Act 1, and
+ * there was no mechanism of any kind for a fixture out there: the courtyard is
+ * built by world/courtyard.js, which has no room records, no interactSlots and
+ * no way to reach the plaque that is authored here.
+ *
+ * WHY THIS AND NOT A SECOND PLAQUE IN COURTYARD.JS. Because the second one
+ * would be a second plaque. The fixture is not just geometry - it is the
+ * proportions of the panel, the recessed dark ground that makes gold read as
+ * gold, the CHALK silhouette table, and the raking self-lit lamp that took two
+ * goes to place and is documented above at length. A copy of it in the exterior
+ * module would agree with this one on the day it was written and never again.
+ *
+ * The record it returns is the same shape buildInteracts() pushes, because the
+ * consumers are the same code: ui/interact.js raycasts `group`, reads
+ * `userData.interact` off whatever mesh it hits, and hands the record to
+ * systems/wallbuy.js, which reads `config.weapon` and `config.cost`. Buying
+ * outside and buying inside are therefore one code path and one prompt, which
+ * is the requirement.
+ *
+ * `noBatch` because the courtyard merges its static geometry after everything
+ * is built, and a batcher that swallows these meshes takes `userData.interact`
+ * with them - the fixture would render perfectly and be unbuyable, which is the
+ * failure this project has a name for.
+ *
+ * Wall buys only, and deliberately narrow. The shrines and the Chest of the
+ * Nameless want a collider array, the animation list and the power ramp out of
+ * the interior's build context; handing them an empty one to be general would
+ * be a function that silently builds a shrine nothing can light.
+ */
+export function buildWallBuyFixture(slot) {
+  if (slot.type !== 'wallbuy') return null;
+
+  const M = buildMaterials();
+  const g = INTERACTS.wallbuy({ M, chalk: wallChalk(M) }, slot);
+
+  g.position.set(slot.x, slot.y || 0, slot.z);
+  g.rotation.y = slot.rot || 0;
+  g.userData.noBatch = true;
+
+  const record = { ...slot, room: slot.room || 'courtyard', group: g, visuals: null };
+  g.traverse((o) => { if (o.isMesh) o.userData.interact = record; });
+
+  return record;
+}
 
 // ---------------------------------------------------------------------------
 // barriers: the buy-doors themselves

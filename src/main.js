@@ -206,6 +206,10 @@ function boot() {
   const interacts = createInteracts({
     camera,
     interior: spaces.interior,
+    // The exterior sells one thing: the B3AR, on the avenue wall. Passed the
+    // same way doors.js has always been passed both spaces, so one prompt and
+    // one F key serve inside and out. See ui/interact.js.
+    courtyard,
     spaces,
     prompt: promptBus.channel('fixtures', 2),
     handlers: { wallbuy: wallbuys, shrine: shrines, altar, box: mysterybox },
@@ -792,8 +796,13 @@ function boot() {
       return;
     }
 
-    // Digit1..Digit7 select a weapon directly.
-    const n = /^Digit([1-7])$/.exec(e.code);
+    // Digit1..Digit8 select a weapon directly. Eight because the B3AR is the
+    // eighth entry in SLOTS - APPENDED rather than filed next to the MK9, so
+    // that the seven weapons the map has been teaching since the first room
+    // keep the keys they were learned on. The HUD prints the digit off that
+    // same array and test/hud.mjs asserts five of them by number, so inserting
+    // would have silently moved four guns under the player's fingers.
+    const n = /^Digit([1-8])$/.exec(e.code);
     if (n) weapons.equip(SLOTS[Number(n[1]) - 1]);
   });
 
