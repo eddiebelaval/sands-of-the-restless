@@ -943,6 +943,12 @@ function boot() {
       const headshotKill = h.killed && h.region === 'head';
       economy.award(h.killed ? (headshotKill ? 'headshot' : 'kill') : 'hit');
 
+      // A short knock on a kill. Deliberately NOT on every hit: a shambler that
+      // takes six rounds would turn the pad into a buzzer, and the thing worth
+      // feeling is the body going down rather than the bullet landing. Silent
+      // no-op with no pad, no actuator, or rumble switched off.
+      if (h.killed) input.pad.rumble(0.55, 0.25, 90);
+
       // The Shrine of Thoth. Paid as a SECOND award rather than by scaling the
       // frozen bounty table, for two reasons: BOUNTY is the tuned Treyarch
       // spread and nothing should be reaching in to multiply it, and paying it
@@ -969,6 +975,27 @@ function boot() {
     const now = performance.now();
     const raw = (now - last) / 1000;
     last = now;
+
+    /**
+     * THE PAD, ONCE A FRAME, AND ABOVE THE PAUSE GUARD ON PURPOSE.
+     *
+     * A stick reports a POSITION and what it drives is an angular VELOCITY, so
+     * it needs a delta - and it gets THIS loop's raw one rather than a clock of
+     * its own, so there is one clock in the game. core/gamepad.js clamps it to
+     * the same 1/20 MAX_DELTA uses, for the same reason.
+     *
+     * ABOVE the pause, because the pause menu has to be navigable on the pad.
+     * A controller that can open the settings panel and cannot then move the
+     * selection or resume has trapped the player at the first press of Options,
+     * which is worse than not having supported the pad at all. The input layer
+     * knows it is suspended and routes the same poll to menu navigation
+     * instead - see pollPad() in core/input.js.
+     *
+     * `rig` is READ, never written: two numbers, the camera's radians-per-count
+     * and its invert flag, so the stick can speak the mouse's units and be
+     * drained by the same consumeLook() below.
+     */
+    input.pollPad(rig, raw);
 
     // -----------------------------------------------------------------------
     // THE PAUSE, AND IT IS HERE BECAUSE THIS IS THE ONLY PLACE IT CAN BE

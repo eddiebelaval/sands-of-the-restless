@@ -1,0 +1,37 @@
+[AFTER4] interior barriers forced open: 7
+[AFTER4] player home (great-gallery): (-24, -193)
+
+=== INTERIOR  shambler -> player in great-gallery, 45 simulated seconds ===
+trials 31   ARRIVED(<3m) 24   NEVER ARRIVED 7
+  STUCK chamber-of-ascent    from [-9,-155]        start  40.85 -> end  28.61  closest 28.54  frozen 6%  final [-23.7,-164.4]
+  STUCK chamber-of-ascent    from [0,-156]         start   44.1 -> end  28.64  closest 28.6  frozen 11%  final [-22.6,-164.4]
+  STUCK hall-of-offerings    from [-46,-144]       start  53.71 -> end  28.68  closest 28.55  frozen 9%  final [-23.3,-164.3]
+  STUCK hall-of-offerings    from [-46,-154]       start  44.78 -> end  42.98  closest 42.06  frozen 41%  final [-46.9,-156.6]
+  STUCK hall-of-offerings    from [-34,-155]       start  39.29 -> end  28.69  closest 28.53  frozen 5%  final [-23.7,-164.3]
+  STUCK hall-of-offerings    from [-22,-144]       start  49.04 -> end  28.64  closest 28.54  frozen 1%  final [-24.5,-164.4]
+  STUCK great-gallery        from [-24,-162]       start     31 -> end  28.68  closest 28.49  frozen 5%  final [-23.7,-164.3]
+  arrival time  min 0s  median 32.9s  max 43.3s
+
+=== EXTERIOR  shambler -> player at (0, 30), 45 simulated seconds ===
+trials 27   ARRIVED(<3m) 27   NEVER ARRIVED 0
+  arrival time  min 0s  median 10.3s  max 22.7s
+
+=== FLOW FIELD COST (accumulated over the whole sweep) ===
+{
+  "valid": true,
+  "builds": 4350,
+  "cells": 12875,
+  "visited": 2252,
+  "tested": 0,
+  "layered": 0,
+  "layersFull": 0,
+  "geometryBuilds": 2,
+  "lastMs": 1.6,
+  "meanMs": 1.544,
+  "peakMs": 15.4,
+  "reads": 0,
+  "misses": 0,
+  "step": 0.7
+}
+
+page errors: 0

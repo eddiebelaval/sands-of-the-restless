@@ -1,0 +1,48 @@
+[after-corner] interior barriers forced open: 7
+[after-corner] player home (great-gallery): (-24, -193)
+
+=== INTERIOR  shambler -> player in great-gallery, 45 simulated seconds ===
+trials 31   ARRIVED(<3m) 10   NEVER ARRIVED 21
+  STUCK chamber-of-ascent    from [-9,-155]        start  40.85 -> end  38.78  closest 38.78  frozen 24%  final [-10.6,-156.6]
+  STUCK chamber-of-ascent    from [9,-155]         start  50.33 -> end  48.73  closest 47.8  frozen 44%  final [8.4,-156.6]
+  STUCK chamber-of-ascent    from [0,-156]         start   44.1 -> end   39.4  closest 38.78  frozen 21%  final [-8.9,-156.6]
+  STUCK hall-of-offerings    from [-46,-154]       start  44.78 -> end  42.98  closest 42.06  frozen 41%  final [-46.9,-156.6]
+  STUCK great-gallery        from [24,-193]        start     48 -> end  25.95  closest 25.95  frozen 42%  final [1.9,-194.6]
+  STUCK embalming-chamber    from [-41,-200]       start  18.38 -> end   4.44  closest 4.39  frozen 3%  final [-24.6,-197.4]
+  STUCK embalming-chamber    from [-41,-228]       start  38.91 -> end   4.67  closest 4.39  frozen 13%  final [-25.6,-197.4]
+  STUCK embalming-chamber    from [-17,-228]       start  35.69 -> end   4.84  closest 4.39  frozen 2%  final [-23.3,-197.8]
+  STUCK canopic-crypt        from [-11,-200]       start  14.76 -> end  12.21  closest 12.21  frozen 32%  final [-12.6,-197.4]
+  STUCK canopic-crypt        from [11,-200]        start  35.69 -> end  12.21  closest 12.21  frozen 23%  final [-12.6,-197.4]
+  STUCK canopic-crypt        from [-11,-229]       start  38.28 -> end  34.22  closest 34.21  frozen 59%  final [-12.6,-225.3]
+  STUCK canopic-crypt        from [11,-229]        start  50.21 -> end  13.22  closest 12.21  frozen 16%  final [-12.6,-199.7]
+  STUCK star-shaft           from [17,-200]        start  41.59 -> end  40.11  closest 39.64  frozen 17%  final [15.4,-200.5]
+  STUCK star-shaft           from [37,-200]        start   61.4 -> end  39.78  closest 39.64  frozen 16%  final [15.4,-198.6]
+  STUCK star-shaft           from [17,-228]        start  53.91 -> end  40.13  closest 39.64  frozen 2%  final [15.4,-200.7]
+  STUCK star-shaft           from [37,-228]        start  70.33 -> end  39.64  closest 39.64  frozen 9%  final [15.4,-197.4]
+  STUCK kings-chamber        from [-17,-236]       start  43.57 -> end   4.75  closest 4.39  frozen 1%  final [-23.9,-197.7]
+  STUCK kings-chamber        from [17,-236]        start  59.41 -> end   5.11  closest 4.4  frozen 1%  final [-20.7,-196.9]
+  STUCK kings-chamber        from [-17,-268]       start  75.33 -> end   4.68  closest 4.62  frozen 15%  final [-21.5,-197]
+  STUCK kings-chamber        from [17,-268]        start  85.48 -> end   4.41  closest 4.39  frozen 1%  final [-24.4,-197.4]
+  STUCK kings-chamber        from [0,-269]         start   79.7 -> end    4.4  closest 4.39  frozen 1%  final [-24.2,-197.4]
+  arrival time  min 0s  median 25.4s  max 33.6s
+
+=== EXTERIOR  shambler -> player at (0, 30), 45 simulated seconds ===
+trials 27   ARRIVED(<3m) 27   NEVER ARRIVED 0
+  arrival time  min 0s  median 10.3s  max 22.7s
+
+=== FLOW FIELD COST (accumulated over the whole sweep) ===
+{
+  "valid": true,
+  "builds": 4350,
+  "cells": 12875,
+  "visited": 2252,
+  "tested": 2692,
+  "lastMs": 1.1,
+  "meanMs": 1.126,
+  "peakMs": 4.6,
+  "reads": 9,
+  "misses": 0,
+  "step": 0.7
+}
+
+page errors: 0
