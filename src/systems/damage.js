@@ -143,6 +143,55 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
   }
 
   /**
+   * THE OPENING WAVES: A HEADSHOT IS A KILL, WITH ANY WEAPON.
+   *
+   * The owner, playing: "headshots don't seem strong enough." He was right, and
+   * the arithmetic is worse than it feels. A shambler has 85 health and
+   * hpScale is 1 + (wave - 1) x 0.15 on Normal, against an MK9 headshot of
+   * 42 x 2.6 = 109.2:
+   *
+   *     wave 1    85.0    kills
+   *     wave 2    97.8    kills
+   *     wave 3   110.5    FAILS
+   *     wave 6   148.8    fails by 40
+   *
+   * So precision stopped paying at wave THREE with the starting pistol, and the
+   * B3AR at 26 x 2.2 = 57.2 never one-shot anything at all, not even on wave
+   * one. The multiplier is a number on a table that the health curve outruns
+   * almost immediately, which is exactly what "not strong enough" feels like
+   * from behind the crosshair.
+   *
+   * A FLAT LETHAL WINDOW RATHER THAN BIGGER MULTIPLIERS. Raising `headshot` per
+   * weapon would have to be done seven times, would be outrun again two waves
+   * later, and would break the one number MAP.md says must not move - the MK9's
+   * 2.6 against the B3AR's 2.2 is the whole argument for keeping the pistol, and
+   * Thoth's double-gold-on-headshots is priced against it. A window changes when
+   * precision is lethal without touching what precision is worth.
+   *
+   * THROUGH WAVE 6, which is the owner's "at least 5-6" read as its upper end.
+   * It also lands on a real seam: the husk unlocks at 6 and the Bound at 10, so
+   * the window closes as the roster stops being shamblers and scarabs. After it,
+   * headshots go back to the multiplier and the player has had six waves to
+   * learn where the head is - which is the actual point, because the habit is
+   * what carries into the waves where it only wounds.
+   *
+   * BOSSES ARE EXEMPT, and that exemption is why this is a function rather than
+   * a comparison inlined above. Anubis has 5200 health and arrives on wave 5,
+   * INSIDE the window; a boss that dies to one pistol round to the face is not a
+   * boss. The Insta-Kill power-up deliberately does drop them, because that is a
+   * rare thing the player earns and spends, and it is on its own timer.
+   */
+  const HEADSHOT_LETHAL_THROUGH = 6;
+
+  function headLethal(enemy) {
+    if (!director) return false;
+    if (director.wave > HEADSHOT_LETHAL_THROUGH) return false;
+    // Identity, not health: a boss is a boss on the wave it arrives, whatever
+    // the tier has done to its health bar.
+    return enemy !== director.boss;
+  }
+
+  /**
    * Resolve a burst of hits from one trigger pull.
    *
    * Mutates each record in place with `killed`, and returns the number that
@@ -163,7 +212,7 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       if (!s) continue;
 
       const head = h.region === 'head';
-      const damage = state.instaKill
+      const damage = (state.instaKill || (head && headLethal(h.enemy)))
         ? Math.max(1, h.enemy.health)
         : s.damage * (head ? s.headshot : 1);
 
