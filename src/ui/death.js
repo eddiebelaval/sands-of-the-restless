@@ -76,14 +76,14 @@
  *
  * CARRIES OVER: what the player earned with their hands.
  *   gold; the weapons in the rack and any Altar upgrades on them; magazines and
- *   reserve as they stood; grenades; doors already bought open; the power state
- *   of the necropolis; and where the body is standing.
+ *   reserve as they stood; grenades; doors already bought open; and the power
+ *   state of the necropolis.
  *
  * DOES NOT CARRY OVER: everything the world was doing to them.
  *   the wave (back to one, via director.reset, which also retires every live
  *   actor); every timed power-up effect AND every power-up still lying on the
  *   ground; every shrine boon; an Altar ritual caught in flight; the red damage
- *   wash; and the camera's death pose.
+ *   wash; the camera's death pose; and WHERE THE BODY FELL.
  *
  * The ground drops are the one line that changed from the shipped behaviour.
  * main.js used to keep them on the argument that the player had earned them -
@@ -99,6 +99,54 @@
  * whether the gold or the weapon comes back and the file that owns that rule is
  * altar.js, which states it: "either both or neither". Finishing gives both and
  * requires this file to know none of it.
+ *
+ * ---------------------------------------------------------------------------
+ * THE RETURN - "when I die I need to spawn back at the beginning"
+ * ---------------------------------------------------------------------------
+ *
+ * The body used to stay exactly where it fell. Everything else about the run
+ * went back to the start and the player did not, so a death in the far corner
+ * of the yard restarted wave one around the corpse's own footprint, and a death
+ * in the burial chamber restarted it inside a sealed pyramid. That is a reset
+ * of the world with the one thing the player can see left out of it.
+ *
+ * So the restart now puts them back at the courtyard spawn, and there are two
+ * cases which are NOT the same operation:
+ *
+ *   OUTSIDE. A teleport, plus the facing. The controller owns the eye height,
+ *   so this passes a floor of y: 0 the way every other caller does.
+ *
+ *   INSIDE. Not a teleport at all - the interior is a different WORLD, 110
+ *   units past the courtyard wall, with its own colliders, its own floor
+ *   sampler and its own bounds. Writing the courtyard's coordinates into a
+ *   player standing in the interior would leave the interior live and drop the
+ *   body outside its rectangle, where the bounds clamp would push it back into
+ *   a wall. The only correct way out is systems/spaces.js `enter('exterior')`,
+ *   which is also the only thing that swaps the collider set, restores the sky
+ *   lights it is holding down, retargets the audio and raises the curtain over
+ *   the swap. So the return goes THROUGH the router rather than around it, and
+ *   the router does the teleport and the facing itself as part of the move.
+ *
+ * WHERE THE BEGINNING IS is not this file's fact and is not copied here. It is
+ * `courtyard.spawn`, declared once in world/courtyard.js and handed out by the
+ * router; a `(0, 30)` written down here would be a second copy of a number
+ * another lane owns and is free to move.
+ *
+ * THE FACING is yaw 0 - forward is (-sin yaw, 0, -cos yaw), so yaw 0 looks down
+ * -Z at the pyramid, which is what main.js aims the camera at on boot. The
+ * pitch is the router's arrival pitch and not main.js's boot pitch, because one
+ * of the two paths goes through the router and cannot be told otherwise, and
+ * two respawns that differ by a hundredth of a radian depending on which world
+ * you died in is a difference with no reason behind it.
+ *
+ * THE DOORWAY STAYS BOUGHT. A restarted run does not re-buy the entry: doors
+ * already opened are listed under CARRIES OVER above, alongside the gold that
+ * paid for them, and re-sealing without refunding would confiscate a purchase
+ * while a refund would hand back gold for a door the player already walked
+ * through. Whether a fresh run should re-seal the necropolis is a design call
+ * about how a run is scoped, and it belongs to the economy and door lanes
+ * rather than to the file that happens to notice the player died. Changing
+ * nothing is the conservative option and it is what this does.
  *
  * ---------------------------------------------------------------------------
  * THE DOOR LANE, AND WHAT THIS FILE ASSUMES
@@ -180,6 +228,19 @@ const CONFIRM_CODE = 'Enter';
 
 /** DOM id, so the harness can drive the gate the way it drives `#begin`. */
 const CONFIRM_ID = 'death-confirm';
+
+/**
+ * The pose the run starts in again. See THE RETURN at the top of the file.
+ *
+ * Yaw 0 is down -Z, at the pyramid. The pitch is systems/spaces.js's arrival
+ * pitch rather than main.js's boot pitch of -0.03: the inside case is handed to
+ * `enter()`, which resets the rig itself and does not take a pitch, so matching
+ * it here is the only way both respawns land on the same horizon. The one
+ * hundredth of a radian between the two numbers is about half a degree, which
+ * is invisible on its own and only worth anything as a thing that AGREES.
+ */
+const SPAWN_YAW = 0;
+const SPAWN_PITCH = -0.02;
 
 const ROOT_ID = 'death';
 
@@ -422,10 +483,16 @@ function css() {
  * @param {object} parts.input      core/input.js - frozen while the run is held
  * @param {object} [parts.audio]
  * @param {function} [parts.suspended]  true while the pause menu is up
+ * @param {object} [parts.spaces]   systems/spaces.js - the active-space router.
+ *   OPTIONAL, and the optionality is real rather than defensive: this file was
+ *   built and shipped without it, the harnesses construct the game the same way
+ *   main.js does, and a run with no router is a run with exactly one world. See
+ *   `toTheBeginning()` for what a missing router costs and why the answer is to
+ *   leave the body where it fell rather than to guess at a coordinate.
  */
 export function createDeath({
   doc, rig, player, viewmodel, combat, director, powerups, altar, economy,
-  input, audio, suspended,
+  input, audio, suspended, spaces,
 }) {
   const el = build(doc);
 
@@ -443,6 +510,13 @@ export function createDeath({
     /** How the run ended, frozen at the moment of death. */
     wave: 0,
     gold: 0,
+    /**
+     * Which route the last return to the beginning took. Reported rather than
+     * inferred, because 'the player is in the courtyard' is true both of a
+     * player who was walked home and of one who never left, and a suite that
+     * cannot tell those apart cannot tell a working return from a no-op.
+     */
+    returned: 'none',
   };
 
   /**
@@ -580,6 +654,75 @@ export function createDeath({
   }
 
   /**
+   * Put the body back at the beginning. See THE RETURN at the top of the file.
+   *
+   * Called from restart() and from nowhere else, which is what keeps it inside
+   * the frame loop: `spaces.enter()` hides and shows whole subtrees, rewrites
+   * the collider array the player controller is holding a reference to, and
+   * moves the sky's lights. None of that may happen from inside an iteration
+   * over anything, and the only reason it is safe here is the same reason
+   * director.reset() is safe here - see the re-entrancy note at the top.
+   *
+   * Ordering, and it is deliberate on both sides:
+   *
+   *   AFTER the Altar. `altar.buy(null)` collects a finished ritual and puts
+   *   the weapon back in the player's hands, and the Altar of Ptah stands in
+   *   the interior. Resolving it while the player is still standing in the
+   *   room it is in costs nothing and asks no questions about whether collect
+   *   cares where they are; resolving it after a swap would.
+   *
+   *   BEFORE rig.endDeath(). endDeath() clears the death POSE - the fov, the
+   *   roll, the drop - and does not touch yaw or pitch, so the facing set here
+   *   survives it. The reverse order would work too; this one keeps "where the
+   *   player is" next to "which world they are in" instead of splitting the
+   *   move across the stand-up.
+   *
+   * The swap itself is covered. `enter()` brings the curtain to full black on
+   * the way in and holds it for two DRAWN frames, and this runs from
+   * death.update() - which main.js calls before doors.update() and long before
+   * the composer - so the black is up on the same frame the world changes.
+   * doors.update() keeps its delta while the run is held and is what ticks the
+   * curtain back down, which is the exemption already documented above.
+   *
+   * WITHOUT THE ROUTER, nothing moves, and that is the honest degrade rather
+   * than a hedge. A file with no router knows neither where the beginning is
+   * nor which of the two worlds the body is lying in, and a hardcoded courtyard
+   * coordinate applied to a player who might be inside the pyramid is worse
+   * than not moving them: it puts them outside the live world's bounds, and the
+   * controller's clamp pushes them back in through whatever wall is nearest.
+   * A run assembled without the router has one world and the pre-existing
+   * behaviour is unchanged for it.
+   *
+   * @returns {'exterior'|'entered'|'no-router'|'no-spawn'} which route ran.
+   */
+  function toTheBeginning() {
+    if (!spaces) return 'no-router';
+
+    // The router's own courtyard handle first, because that is the object that
+    // declares the spawn; `world.spawn` is the same Vector3 seen through the
+    // one live world object, and is read as a fallback rather than as a second
+    // source of truth. Neither is ever rewritten by a transition.
+    const home =
+      (spaces.courtyard && spaces.courtyard.spawn) ||
+      (spaces.world && spaces.world.spawn);
+    if (!home) return 'no-spawn';
+
+    // Inside: hand the whole move to the router, including the arrival. It
+    // teleports and re-aims as part of the swap, so doing either here would be
+    // doing it twice - once into the world being left.
+    if (spaces.active !== 'exterior') {
+      spaces.enter('exterior', { x: home.x, z: home.z, rot: SPAWN_YAW });
+      return 'entered';
+    }
+
+    // Outside: already in the right world, and `enter()` would decline the call
+    // anyway - it returns false when the name matches the active space.
+    player.teleport({ x: home.x, y: 0, z: home.z });
+    rig?.reset?.(SPAWN_YAW, SPAWN_PITCH);
+    return 'exterior';
+  }
+
+  /**
    * The run restarts. The rule this implements is stated at the top of the file.
    *
    * Only ever reached from update(), which is only ever reached from the frame
@@ -604,6 +747,9 @@ export function createDeath({
       }
       if (altar.state.phase === 'ready') altar.buy(null);
     }
+
+    // Then the place. The run does not restart around the corpse.
+    state.returned = toTheBeginning();
 
     // Then the body.
     player.heal(player.state.maxHealth);
@@ -759,6 +905,7 @@ export function createDeath({
         resets: state.resets,
         wave: state.wave,
         gold: state.gold,
+        returned: state.returned,
         shown: el.root.classList.contains('on'),
         // Measured, not assumed. The bug class in this project is UI that was
         // written, believed and never rendered, so the harness is handed the

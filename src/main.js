@@ -664,7 +664,7 @@ function boot() {
   const death = createDeath({
     doc: document,
     rig, player, viewmodel, combat, director, powerups, altar, economy,
-    input, audio,
+    input, audio, spaces,
     suspended: () => pause.paused,
   });
   combat.attach({ death });
