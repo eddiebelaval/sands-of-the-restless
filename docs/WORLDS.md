@@ -67,8 +67,8 @@ written; everything below it is new material with no prior version.
    spits poisonous vomit that slows, countered by a dash that teleports through
    enemies. World 3 is the Raygun.
 
-9. **The Raygun is ancient, not alien.** Made by the old people, in the same
-   hieroglyphs as the pyramid, and the gatekeeper is one of the old people. It is
+9. **The Raygun is ancient, not alien.** Made by the Ancients, in the same
+   hieroglyphs as the pyramid, and the gatekeeper is one of the Ancients. It is
    not a weapon. It is the key that locks the gate.
 
 10. **The ending is replaced.** The gatekeeper is freed from Area 51, gives the
@@ -245,7 +245,7 @@ gods down here as carvings older than the gods. No shrine will forgive a death.
 World 2's iconography is World 1's, wrong.** The same forms, cut by someone who
 had never seen the animals, in a place older than the people who named them. The
 Egyptians did not invent the pantheon. They found it down here and copied it.
-Never stated. Meeting 2 makes this literally true by making the old people real
+Never stated. Meeting 2 makes this literally true by making the Ancients real
 and prior, and by making the good gatekeeper one of them.
 
 **The recognition beat, staged as one object.** He finds a niche exactly like the
@@ -337,7 +337,7 @@ Full staging in `NARRATIVE.md`. Two structural notes belong here.
 
 **The betrayal is not out of character, and World 1 rehearses it five times.**
 
-> **PROPOSAL, mine.** If the old people are what got remembered as the Egyptian
+> **PROPOSAL, mine.** If the Ancients are what got remembered as the Egyptian
 > gods, then the five bosses of World 1 are the gatekeeper's colleagues, still at
 > their posts. They come for the player because he came up out of the sand with
 > everything else and their job is that such things are removed. Anubis weighs.
@@ -614,12 +614,12 @@ is a claim about a thing that never happened.
 
 ---
 
-# WHAT MERESANKH BECOMES
+# WHAT HETEPHERES BECOMES
 
 The full argument is in `NARRATIVE.md` under "The two decisions waiting on the
 owner". The short version, because this is the file people will check:
 
-**Recommendation: she stays as a NAME and stops being a character.** Meresankh is
+**Recommendation: she stays as a NAME and stops being a character.** Hetepheres is
 the dead queen whose tomb this is. Restoring her effaced cartouche is what an
 archaeologist would actually be doing down here and it is what the player thinks
 he is doing while he charges a machine with four of his colleagues. Nobody
@@ -739,7 +739,7 @@ its own pass. The only time the player sees himself is the box art at the end.
 
 Each is a question with a recommendation, not a menu.
 
-1. **Is Meresankh a name on a wall, or the antagonist?** **Recommendation: a name
+1. **Is Hetepheres a name on a wall, or the antagonist?** **Recommendation: a name
    on a wall, and the antagonist stays nameless until World 2.** This is one of
    the two decisions genuinely waiting on the owner.
 

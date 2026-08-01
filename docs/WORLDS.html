@@ -1,0 +1,1282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>WORLDS - the three-world structure</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  color-scheme: dark light;
+
+  --measure: 37rem;
+  --pad: 1.5rem;
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* dark is the considered one: lamp black, warm sand, old stone */
+  --bg: #100d0a;
+  --bg-sunk: #0a0806;
+  --bg-raise: #191510;
+  --text: #e6dcca;
+  --text-dim: #ab9f8b;
+  --text-faint: #7d7364;
+  --rule: #2b241b;
+  --rule-soft: #201a14;
+
+  --stone: #9b9078;
+  --sand: #c9a86a;
+  --ember: #e08b3c;
+  --ember-deep: #7a4416;
+  --verdigris: #78a292;
+
+  --shadow: 0 1px 0 rgba(255,255,255,.03);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4ecdd;
+    --bg-sunk: #eae0cd;
+    --bg-raise: #fbf6ec;
+    --text: #241d15;
+    --text-dim: #574b3b;
+    --text-faint: #7d7060;
+    --rule: #ded2bb;
+    --rule-soft: #e7ddc9;
+
+    --stone: #6f6552;
+    --sand: #8a6524;
+    --ember: #a9531a;
+    --ember-deep: #f0d9bf;
+    --verdigris: #3c6a59;
+
+    --shadow: 0 1px 0 rgba(0,0,0,.03);
+  }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--serif);
+  font-size: 1.1875rem;
+  line-height: 1.65;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+}
+
+/* ---------- reading progress ---------- */
+
+.progress {
+  position: fixed;
+  top: 0; left: 0;
+  height: 2px;
+  width: 0;
+  background: linear-gradient(90deg, var(--ember-deep), var(--sand));
+  z-index: 60;
+  transition: width .08s linear;
+  pointer-events: none;
+}
+
+/* ---------- document grid ---------- */
+
+.doc {
+  display: grid;
+  grid-template-columns:
+    1fr
+    min(var(--measure), 100% - (var(--pad) * 2))
+    1fr;
+  padding: 3.5rem 0 8rem;
+}
+.doc > * { grid-column: 2; }
+.doc > .boundary,
+.doc > .tablewide { grid-column: 1 / -1; }
+
+/* ---------- prose ---------- */
+
+p { margin: 0 0 1.35em; hanging-punctuation: first last; }
+
+h1, h2, h3 {
+  font-family: var(--sans);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  position: relative;
+}
+
+h1 {
+  font-size: 1.5rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin: 4rem 0 1.75rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--rule);
+  color: var(--text);
+}
+.doc > h1:first-of-type { margin-top: 0; }
+
+h2 {
+  font-size: 1.0625rem;
+  letter-spacing: .02em;
+  margin: 2.75rem 0 1rem;
+  color: var(--sand);
+}
+
+h3 { font-size: .9375rem; margin: 2rem 0 .75rem; color: var(--text-dim); }
+
+.anchor {
+  position: absolute;
+  margin-left: .4em;
+  color: var(--text-faint);
+  text-decoration: none;
+  opacity: 0;
+  font-weight: 400;
+  transition: opacity .15s;
+}
+h1:hover .anchor, h2:hover .anchor, h3:hover .anchor { opacity: .5; }
+
+a { color: var(--sand); text-underline-offset: 2px; }
+
+strong { font-weight: 600; color: var(--text); }
+em { font-style: italic; }
+
+code {
+  font-family: var(--mono);
+  font-size: .82em;
+  background: var(--bg-sunk);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: .08em .32em;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+pre {
+  margin: 0;
+  padding: 1rem 1.15rem;
+  font-family: var(--mono);
+  font-size: .82rem;
+  line-height: 1.55;
+  letter-spacing: .06em;
+  color: var(--sand);
+  background: var(--bg-sunk);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  text-align: center;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; color: inherit; }
+
+hr {
+  border: 0;
+  height: 1px;
+  background: var(--rule);
+  margin: 3rem 0;
+}
+
+ul, ol { margin: 0 0 1.35em; padding-left: 1.4em; }
+li { margin-bottom: .5em; }
+li::marker { color: var(--text-faint); }
+
+.scrollbox { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; margin: 0 0 1.5em; }
+.tablewide { padding: 0 var(--pad); margin: 2rem 0 2.5rem; }
+
+table { border-collapse: collapse; font-family: var(--sans); font-size: .875rem; line-height: 1.5; }
+.tablewide table { margin: 0 auto; max-width: 60rem; }
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: .6rem .85rem;
+  border-bottom: 1px solid var(--rule);
+}
+th { color: var(--sand); font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; }
+td { color: var(--text-dim); }
+td strong { color: var(--text); }
+.tbl-plain td:first-child { color: var(--text); white-space: nowrap; }
+
+/* ---------- banner ---------- */
+
+.banner {
+  margin: 0 0 3rem;
+  padding: 1.15rem 1.25rem;
+  background: var(--bg-raise);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--sand);
+  border-radius: 2px;
+  font-family: var(--sans);
+  font-size: .9375rem;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.banner p { margin: 0; }
+/* The second line of the banner is a footnote to the first, not a peer of it:
+   the names are the news, the transcript caveat is the provenance. Separated by
+   a rule rather than by a blank line so it cannot be mistaken for more news. */
+.banner-note {
+  margin-top: .8rem !important;
+  padding-top: .7rem;
+  border-top: 1px solid var(--rule);
+  font-size: .875rem;
+  opacity: .8;
+}
+.banner-tag {
+  display: block;
+  font-size: .6875rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--sand);
+  margin-bottom: .5rem;
+  font-weight: 600;
+}
+.banner strong { color: var(--text); letter-spacing: .03em; }
+
+/* ---------- decisions panel ---------- */
+
+.decisions {
+  margin: 0 0 3.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--bg-sunk);
+  font-family: var(--sans);
+}
+.decisions > summary {
+  cursor: pointer;
+  padding: .85rem 1.1rem;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem .75rem;
+  align-items: baseline;
+  font-size: .8125rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.decisions > summary::-webkit-details-marker { display: none; }
+.decisions > summary::before {
+  content: "+";
+  font-family: var(--mono);
+  color: var(--ember);
+  margin-right: .1rem;
+}
+.decisions[open] > summary::before { content: "\2212"; }
+.d-title { font-weight: 600; color: var(--text); }
+.d-counts { color: var(--ember); }
+.d-body { padding: 0 1.1rem 1.1rem; }
+.d-note { font-size: .8125rem; line-height: 1.5; color: var(--text-faint); margin: 0 0 1.25rem; }
+.d-group + .d-group { margin-top: 1.5rem; }
+.d-h {
+  font-size: .6875rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0 0 .6rem;
+  padding-bottom: .4rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.d-row {
+  display: flex;
+  gap: .7rem;
+  align-items: flex-start;
+  padding: .55rem .5rem .55rem .25rem;
+  margin: 0 -.25rem;
+  border-radius: 2px;
+  text-decoration: none;
+  color: var(--text-dim);
+  font-size: .8125rem;
+  line-height: 1.5;
+}
+.d-row:hover { background: var(--bg-raise); color: var(--text); }
+.d-row .chip { flex: 0 0 auto; margin: .1rem 0 0; }
+.d-text { min-width: 0; }
+.d-section {
+  display: block;
+  font-size: .6875rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: .15rem;
+}
+
+/* ---------- callouts ---------- */
+
+.callout {
+  font-family: var(--sans);
+  font-size: .875rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin: 1.9em 0;
+  padding: .1rem 0 .1rem 1.15rem;
+  border-left: 2px solid var(--rule);
+  scroll-margin-top: 3rem;
+}
+.callout + .callout { margin-top: -.9em; }
+.callout p { margin: 0 0 .8em; }
+.callout p:last-child { margin-bottom: 0; }
+.callout ul, .callout ol { margin-bottom: .8em; }
+.callout strong { color: var(--text); }
+.callout .scrollbox { margin-bottom: .8em; }
+.callout table { font-size: .8125rem; }
+
+.chip {
+  display: inline-block;
+  font-family: var(--sans);
+  font-size: .625rem;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: .2rem .45rem;
+  border-radius: 2px;
+  margin-bottom: .55rem;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* FIXED: settled and quiet. Solid stone rule, hollow chip, lowest contrast. */
+.callout-fixed { border-left-color: color-mix(in srgb, var(--stone) 45%, transparent); }
+.chip-fixed { color: var(--stone); border-color: color-mix(in srgb, var(--stone) 35%, transparent); }
+
+/* PROPOSAL: provisional. Dashed rule, sand chip. Reads as not yet set. */
+.callout-proposal {
+  border-left-style: dashed;
+  border-left-color: color-mix(in srgb, var(--sand) 55%, transparent);
+}
+.chip-proposal { color: var(--sand); border-color: color-mix(in srgb, var(--sand) 40%, transparent); }
+
+/* OPEN: wants something from the reader. Thickest rule, filled chip, tinted. */
+.callout-open {
+  border-left-width: 4px;
+  border-left-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 7%, transparent);
+  padding: .85rem 1rem .85rem 1.1rem;
+  border-radius: 0 3px 3px 0;
+  color: var(--text);
+}
+.chip-open { color: var(--bg); background: var(--ember); border-color: var(--ember); }
+
+/* REVISED: a correction. A doubled verdigris rule reads as struck and restated,
+   distinct at a glance from the single rules the other three carry. */
+.callout-revised {
+  border-left-style: double;
+  border-left-width: 5px;
+  border-left-color: var(--verdigris);
+  padding-left: 1rem;
+}
+.chip-revised { color: var(--verdigris); border-color: color-mix(in srgb, var(--verdigris) 45%, transparent); }
+
+.callout-note { border-left-color: var(--rule); }
+
+/* a bare line of dialogue */
+.voice {
+  margin: 2em 0;
+  padding: 0 0 0 1.15rem;
+  border-left: 2px solid color-mix(in srgb, var(--sand) 30%, transparent);
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+.voice p { margin: 0; }
+
+/* ---------- world boundaries ---------- */
+
+.boundary {
+  margin: 4.5rem 0;
+  padding: 0 var(--pad);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--sand) 6%, transparent) 50%, transparent);
+  scroll-margin-top: 2rem;
+}
+.boundary-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--sand) 60%, transparent) 20%, color-mix(in srgb, var(--sand) 60%, transparent) 80%, transparent);
+}
+.boundary-inner {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.75rem 0;
+  font-family: var(--sans);
+  font-size: .875rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-align: center;
+}
+.boundary-inner p { margin: 0 0 .7em; }
+.boundary-inner p:last-child { margin-bottom: 0; }
+.boundary-inner p:first-child strong {
+  display: block;
+  font-size: .75rem;
+  font-weight: 700;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+  color: var(--sand);
+  margin-bottom: .6rem;
+}
+
+/* ---------- table of contents ---------- */
+
+.toc {
+  position: fixed;
+  top: 0; left: 0;
+  z-index: 50;
+  font-family: var(--sans);
+}
+.toc-toggle {
+  position: fixed;
+  top: .75rem; left: .75rem;
+  z-index: 51;
+  font: inherit;
+  font-size: .6875rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--bg-raise);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: .4rem .7rem;
+  cursor: pointer;
+}
+.toc-toggle:hover { color: var(--text); border-color: var(--stone); }
+/* On a phone the toggle floats over the prose, so it steps out of the way
+   while reading forward and comes back the moment you scroll up. */
+.toc-toggle { transition: opacity .18s ease, transform .18s ease; }
+.toc-toggle.tucked { opacity: 0; transform: translateY(-140%); pointer-events: none; }
+
+.toc-list {
+  position: fixed;
+  top: 3rem;
+  left: .75rem;
+  width: 15rem;
+  max-height: calc(100vh - 4.5rem);
+  overflow-y: auto;
+  margin: 0;
+  padding: .75rem 0;
+  list-style: none;
+  background: var(--bg-raise);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  font-size: .75rem;
+  line-height: 1.4;
+  display: none;
+}
+.toc-list { scrollbar-width: none; }
+.toc-list::-webkit-scrollbar { width: 0; height: 0; }
+.toc.open .toc-list { display: block; }
+.toc-list li { margin: 0; }
+.toc-list a {
+  display: block;
+  padding: .3rem .9rem;
+  color: var(--text-faint);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+}
+.toc-list a:hover { color: var(--text); }
+.toc-list a.active { color: var(--sand); border-left-color: var(--sand); }
+.toc-l1 > a { color: var(--text-dim); letter-spacing: .06em; text-transform: uppercase; font-size: .6875rem; margin-top: .35rem; }
+.toc-l2 > a { padding-left: 1.5rem; }
+
+@media (min-width: 1180px) {
+  .toc-toggle { display: none; }
+  .toc-list {
+    display: block;
+    top: 3.5rem;
+    left: max(1rem, calc(50vw - var(--measure) / 2 - 17.5rem));
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--rule);
+    border-radius: 0;
+    max-height: calc(100vh - 7rem);
+    opacity: .55;
+    transition: opacity .2s;
+    padding: 0;
+  }
+  .toc-list:hover { opacity: 1; }
+}
+
+@media (max-width: 640px) {
+  :root { --pad: 1.15rem; }
+  body { font-size: 1.0625rem; line-height: 1.62; }
+  .doc { padding: 3.25rem 0 5rem; }
+  h1 { font-size: 1.25rem; }
+  h2 { font-size: 1rem; }
+  .boundary { margin: 3rem 0; }
+  .boundary-inner { padding: 1.35rem 0; font-size: .8125rem; }
+  .decisions > summary { font-size: .75rem; }
+  .callout { font-size: .84375rem; }
+}
+
+@media print {
+  .toc, .progress, .toc-toggle { display: none; }
+  body { background: #fff; color: #000; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<div class="progress" id="progress" role="presentation"></div>
+<nav class="toc" id="toc" aria-label="Table of contents">
+<button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+<ol class="toc-list" id="toc-list"><li class="toc-l1"><a href="#worlds-the-three-world-structure">WORLDS - the three-world structure</a></li>
+<li class="toc-l1"><a href="#what-meeting-2-changed">WHAT MEETING 2 CHANGED</a></li>
+<li class="toc-l2"><a href="#revisions">Revisions</a></li>
+<li class="toc-l2"><a href="#new-material-with-no-prior-version">New material with no prior version</a></li>
+<li class="toc-l1"><a href="#the-geography-and-what-does-not-reconcile">THE GEOGRAPHY, AND WHAT DOES NOT RECONCILE</a></li>
+<li class="toc-l2"><a href="#what-was-already-written">What was already written</a></li>
+<li class="toc-l2"><a href="#what-meeting-2-says">What meeting 2 says</a></li>
+<li class="toc-l2"><a href="#what-reconciles-and-it-is-almost-all-of-it">What reconciles, and it is almost all of it</a></li>
+<li class="toc-l2"><a href="#proposal-move-the-beat-do-not-cut-it">PROPOSAL: move the beat, do not cut it</a></li>
+<li class="toc-l1"><a href="#the-three-worlds">THE THREE WORLDS</a></li>
+<li class="toc-l2"><a href="#the-law-and-the-escalation-that-proves-it">The law, and the escalation that proves it</a></li>
+<li class="toc-l2"><a href="#world-1-the-tomb">World 1 - THE TOMB</a></li>
+<li class="toc-l2"><a href="#world-2-the-older-floor-and-the-gate">World 2 - THE OLDER FLOOR, AND THE GATE</a></li>
+<li class="toc-l2"><a href="#world-3-area-51-and-the-other-side">World 3 - AREA 51, AND THE OTHER SIDE</a></li>
+<li class="toc-l1"><a href="#the-enchantments">THE ENCHANTMENTS</a></li>
+<li class="toc-l2"><a href="#what-the-enchantments-cost-verified-against-the-code">What the enchantments cost, verified against the code</a></li>
+<li class="toc-l1"><a href="#the-raygun-and-the-sunspear">THE RAYGUN, AND THE SUNSPEAR</a></li>
+<li class="toc-l1"><a href="#the-voices-and-who-owns-which-surface">THE VOICES, AND WHO OWNS WHICH SURFACE</a></li>
+<li class="toc-l2"><a href="#what-each-costs-verified">What each costs, verified</a></li>
+<li class="toc-l1"><a href="#the-flashbacks-priced">THE FLASHBACKS, PRICED</a></li>
+<li class="toc-l2"><a href="#what-a-cut-scene-actually-costs">What a cut scene actually costs</a></li>
+<li class="toc-l2"><a href="#proposal-put-the-flashbacks-on-the-jars-and-there-is-no-cut-">PROPOSAL: put the flashbacks on the jars and there is no cut scene</a></li>
+<li class="toc-l1"><a href="#the-timeline-problem-and-its-fix">THE TIMELINE PROBLEM, AND ITS FIX</a></li>
+<li class="toc-l1"><a href="#what-hetepheres-becomes">WHAT HETEPHERES BECOMES</a></li>
+<li class="toc-l1"><a href="#the-unification">THE UNIFICATION</a></li>
+<li class="toc-l1"><a href="#the-order-of-work">THE ORDER OF WORK</a></li>
+<li class="toc-l2"><a href="#the-five-things-to-protect-while-building-world-1">The five things to protect while building World 1</a></li>
+<li class="toc-l1"><a href="#structural-findings-that-affect-all-three-worlds">STRUCTURAL FINDINGS THAT AFFECT ALL THREE WORLDS</a></li>
+<li class="toc-l1"><a href="#open-across-all-three">OPEN ACROSS ALL THREE</a></li></ol>
+</nav>
+<main class="doc" id="doc">
+<h1 id="worlds-the-three-world-structure">WORLDS - the three-world structure<a class="anchor" href="#worlds-the-three-world-structure" aria-label="link to this section">#</a></h1>
+<div class="banner" role="note">
+<span class="banner-tag">Two names settled 2026-08-01</span>
+<p>The queen is <strong>HETEPHERES</strong>, and the pre-Egyptian builders of the gate are <strong>THE ANCIENTS</strong>. Both are locked and applied throughout. The Ancients are called that in fiction because no one can read their writing, so no one knows what they called themselves: the name is an admission of ignorance rather than a label.</p>
+<p class="banner-note">The two story-meeting transcripts are left alone. They record what was said in the room, and the words said there were different.</p>
+</div>
+<details class="decisions" id="decisions">
+<summary><span class="d-title">Decisions waiting on you</span> <span class="d-counts">2 open, 4 proposals</span></summary>
+<div class="d-body">
+<p class="d-note">Every OPEN and every PROPOSAL in the document, in the order they appear. Read the story first. These are here so you can go straight back to what needs your call.</p>
+<div class="d-group"><h3 class="d-h">Open, genuinely undecided (2)</h3><a class="d-row d-open" href="#m-5">
+<span class="chip chip-open">OPEN</span>
+<span class="d-text"><span class="d-section">THE RAYGUN, AND THE SUNSPEAR</span>OPEN, with a recommendation.</span>
+</a>
+<a class="d-row d-open" href="#m-6">
+<span class="chip chip-open">OPEN</span>
+<span class="d-text"><span class="d-section">PROPOSAL: put the flashbacks on the jars and there is no cut scene</span>OPEN, and it is a taste call rather than an engineering one. The alternative is 2D: draw the silhouettes as a flat overlay on the curtain, which costs about 60 lines and four hand-made...</span>
+</a></div>
+<div class="d-group"><h3 class="d-h">Proposals, overrule at no cost (4)</h3><a class="d-row d-proposal" href="#m-2">
+<span class="chip chip-proposal">PROPOSAL</span>
+<span class="d-text"><span class="d-section">And then he is thrown away</span>PROPOSAL, mine. If the Ancients are what got remembered as the Egyptian gods, then the five bosses of World 1 are the gatekeeper's colleagues, still at their posts. They come for the player...</span>
+</a>
+<a class="d-row d-proposal" href="#m-3">
+<span class="chip chip-proposal">PROPOSAL</span>
+<span class="d-text"><span class="d-section">And then he is thrown away</span>PROPOSAL: keep the button and make it the last frame. He goes through, the gate shuts, and the death card comes up on the far side the way it has come up thirty times. KEEP THE VIGIL...</span>
+</a>
+<a class="d-row d-proposal" href="#m-4">
+<span class="chip chip-proposal">PROPOSAL</span>
+<span class="d-text"><span class="d-section">THE ENCHANTMENTS</span>PROPOSAL, mine, and it does two jobs: the enchantment survives death and every shrine boon does not. shrines.js already drops every boon on death and the docs already read that as the gods...</span>
+</a>
+<a class="d-row d-proposal" href="#m-7">
+<span class="chip chip-proposal">PROPOSAL</span>
+<span class="d-text"><span class="d-section">THE TIMELINE PROBLEM, AND ITS FIX</span>PROPOSAL: show it once in Act 3 of World 1, after she is taken, unremarked. Down a long sightline, her lamp is standing still and the horde is flowing around it. Not away from it and not...</span>
+</a></div>
+
+</div>
+</details>
+
+<p>Rewritten 2026-08-01 against <code>docs/story-meeting-2-2026-08-01.md</code>, reconciled
+with meeting 1 and with four rounds of owner steering.</p>
+<p><strong>This document is downstream of <code>docs/NARRATIVE.md</code>.</strong> The story lives there,
+told once, straight through. This document is the structure: what each world is
+for, how the three fit together, what they cost, and what is still open. It does
+not retell the plot and it should never be the place someone goes to find out
+what happens.</p>
+<p><code>docs/WORLD-1.md</code> is downstream of both and is the buildable design for World 1.</p>
+<p>Marker conventions are the same in all three files: plain prose is transcript or
+owner decision or shipped code, <strong>FIXED</strong> is decided, <strong>OPEN</strong> carries a
+recommendation, <strong>PROPOSAL</strong> is invented by this lane, <strong>REVISED</strong> means meeting
+2 overturned something and the old version is named.</p>
+<hr>
+<h1 id="what-meeting-2-changed">WHAT MEETING 2 CHANGED<a class="anchor" href="#what-meeting-2-changed" aria-label="link to this section">#</a></h1>
+<p>Sixteen deltas. Everything above the line is a revision to something already
+written; everything below it is new material with no prior version.</p>
+<h2 id="revisions">Revisions<a class="anchor" href="#revisions" aria-label="link to this section">#</a></h2>
+<ol>
+<li><p><strong>The death loop has two owners, not one.</strong> Meeting 1 read it as the evil
+ spirit raising the player. Meeting 2 adds a second, good spirit - an ancient
+ gatekeeper - who stands him up because he judges him worthy and needs him.
+ Both are true. She made him a corpse that walks; the gatekeeper keeps that
+ corpse on its feet. See <code>NARRATIVE.md</code>, &quot;What stands the player up&quot;.</p></li>
+<li><p><strong>The player is not a vessel.</strong> The old twist was that he was personally
+ housing the spirit, which is why he kept rising. Meeting 2 supplies a better
+ mechanism and keeps the consequence: he is part of the infected, so he goes
+ through the gate with everything else. He is inventory, not a container.</p></li>
+<li><p><strong>There is no rescue.</strong> At 11:54: &quot;Not rescue the girl. We find the girl.&quot;
+ The dramatic question of World 1 can no longer be &quot;who took her name and can
+ we get her back&quot;. It is now &quot;what happened here, and what am I&quot;, and the four
+ jars answer it in quarters.</p></li>
+<li><p><strong>The archaeologist IS the evil spirit and the evil spirit is a real Egyptian
+ god.</strong> Not a possessed victim who might be saved. The good one is &quot;one of the
+ ancient people&quot;, pre-Egyptian, and male throughout.</p></li>
+<li><p><strong>The origin is concrete and it is a government's fault.</strong> An anomaly at the
+ pyramids, a government that already knew what was down there, a team of
+ scientists and archaeologists sent in as test subjects under cover of
+ discovery, a gate opened, a spirit out, a team dead, one hiding, one
+ conscious with no memory, one bleeding out in the courtyard. Meeting 1 had
+ none of this.</p></li>
+<li><p><strong>The player died OUTSIDE the pyramid.</strong> Confirms the pre-existing grave
+ decision rather than changing it. Meeting 2 at 01:47 and the owner's separate
+ &quot;he died where we start the game&quot; are the same fact. <code>(0, 30)</code> stays unmarked.</p></li>
+<li><p><strong>The four jars are solved.</strong> They are the souls of the player's own dead
+ team, consumed for knowledge, and they feed a machine. This replaces &quot;each
+ jar restores one glyph of her name&quot; as the chain's PURPOSE. The glyphs
+ survive as what the player thinks he is doing.</p></li>
+<li><p><strong>The perks are replaced by per-world enchantments.</strong> One spell per world,
+ each countering that world's special attack. World 1 swarms by numbers and
+ is countered by <strong>DOUBLE DAM</strong>, a name the owner locked three times. World 2
+ spits poisonous vomit that slows, countered by a dash that teleports through
+ enemies. World 3 is the Raygun.</p></li>
+<li><p><strong>The Raygun is ancient, not alien.</strong> Made by the Ancients, in the same
+ hieroglyphs as the pyramid, and the gatekeeper is one of the Ancients. It is
+ not a weapon. It is the key that locks the gate.</p></li>
+<li><p><strong>The ending is replaced.</strong> The gatekeeper is freed from Area 51, gives the
+  player the Raygun, and then pushes him through the gate rather than letting
+  him close it, clears the witnesses, shuts the door and returns to his post.
+  The betrayal is the ending. The Blockbuster is demoted from twist to coda.</p></li>
+<li><p><strong>The world roster is named.</strong> World 1 mummies, World 2 zombies, World 3
+  aliens. Not &quot;three floors of the same thing deeper&quot;.</p></li>
+<li><p><strong>The geography is a three-way tunnel</strong>, not one pyramid descended. Egypt,
+  through the parallel universe, out at Area 51, which was built around a
+  second gate. See &quot;The geography, and what does not reconcile&quot; below, because
+  this is the one place the two designs genuinely collide.</p></li>
+<li><p><strong>The tell is that the horde ignores her</strong>, and it always has, and the player
+  never noticed. Meeting 2 places this in World 2. The pre-existing tell - that
+  she STOPS ASKING - is in World 1. Both survive; see the timeline note below.</p></li>
+<li><p><strong>Meeting 1's alien experiment is gone.</strong> The experiment was the
+  government's. The aliens at the end are the audience, not the researchers.
+  Straight improvement: the Blockbuster stops having to carry an explanation.</p></li>
+</ol>
+<h2 id="new-material-with-no-prior-version">New material with no prior version<a class="anchor" href="#new-material-with-no-prior-version" aria-label="link to this section">#</a></h2>
+<ol start="15">
+<li><p><strong>Four things meeting 2 introduces that no document had:</strong> the flashbacks of
+  the team as black silhouettes, seen while passing through the gate; the
+  government infiltrated by the other side; the other realm's biome growing
+  through the gate as moss or crystal; and the scientist who is pulled in and
+  comes back wrong.</p></li>
+<li><p><strong>The gatekeeper speaks.</strong> A few words at a time, like an announcer, and he
+  is the first voice in this game that is neither a system message nor the
+  archaeologist.</p></li>
+</ol>
+<hr>
+<h1 id="the-geography-and-what-does-not-reconcile">THE GEOGRAPHY, AND WHAT DOES NOT RECONCILE<a class="anchor" href="#the-geography-and-what-does-not-reconcile" aria-label="link to this section">#</a></h1>
+<p><strong>The two geographies are compatible in every particular except one, and the one
+is worth naming plainly rather than papering over.</strong></p>
+<h2 id="what-was-already-written">What was already written<a class="anchor" href="#what-was-already-written" aria-label="link to this section">#</a></h2>
+<p><code>WORLDS.md</code> before meeting 2 had a single descent: three worlds going DOWN
+through one pyramid, ceilings tightening from thirty units to five to under six
+to none, and at the bottom the floor opens and there is no ceiling at all. The
+player emerges at the POINT of a second pyramid in open space with the building
+he spent three worlds inside hanging above him, inverted, and recognises it
+without being told because the 62-unit stepped mass on the skyline was the first
+image the game ever showed him.</p>
+<h2 id="what-meeting-2-says">What meeting 2 says<a class="anchor" href="#what-meeting-2-says" aria-label="link to this section">#</a></h2>
+<p>A three-way tunnel. Egypt, into a gate at the bottom of the pyramid, out into a
+parallel universe, across it to a SECOND gate, and out of that one into Area 51,
+which the government built around it. Speakers 1 and 2 go back and forth on this
+between 28:20 and 29:32 and it does not fully settle: at 29:12 the end of World 2
+is Area 51 and World 3 is the other universe, but at 28:42 the crossing of the
+parallel universe is what gets you TO Area 51, which would make the other
+universe World 2 and Area 51 the seam.</p>
+<h2 id="what-reconciles-and-it-is-almost-all-of-it">What reconciles, and it is almost all of it<a class="anchor" href="#what-reconciles-and-it-is-almost-all-of-it" aria-label="link to this section">#</a></h2>
+<p>The descent is not in conflict with the tunnel. A tunnel has to start somewhere,
+and meeting 2 puts its mouth at the bottom of the pyramid, which is exactly where
+two worlds of descent were already heading. The ceiling ladder survives. The
+mummies-then-zombies roster survives. The biome leaking up through the gate
+explains, for free, why the deep stone gets stranger, which the enclosure ladder
+was carrying on atmosphere alone.</p>
+<p><strong>The single incompatibility is apex to apex.</strong> That beat requires the player to
+come out at the bottom of the EGYPTIAN pyramid and look up at it. The three-way
+tunnel routes him out at Area 51 instead, under a different desert, and the
+inverted pyramid never happens.</p>
+<h2 id="proposal-move-the-beat-do-not-cut-it">PROPOSAL: move the beat, do not cut it<a class="anchor" href="#proposal-move-the-beat-do-not-cut-it" aria-label="link to this section">#</a></h2>
+<p><strong>Put apex-to-apex at the World 2 to World 3 crossing rather than at the end.</strong></p>
+<p>He goes through the gate at the bottom of the pyramid, and instead of more stone
+there is a sky, and the ground under his feet is the point of a pyramid, and the
+one he has been inside is hanging above him. Then he crosses the parallel
+universe on foot, finds the second gate, and goes through it into Area 51.</p>
+<p>What this keeps:</p>
+<ul>
+<li>The whole descent, unmodified, for two worlds.</li>
+<li>&quot;Down becomes out&quot;, delivered exactly once, in one cut, at full strength.</li>
+<li>The recognition, which needs no caption and is the only image in the project
+that will never need one.</li>
+<li>The three-way tunnel, complete and in meeting 2's own order.</li>
+<li>The asset economics. It is the existing exterior mesh at a different scale and
+orientation against a sky whose entire character is seven colour uniforms and
+a sun direction.</li>
+</ul>
+<p>What it costs, and it is a real cost: World 3 no longer ends on the trilogy's
+best image, because it now happens two thirds of the way through.</p>
+<p><strong>And the replacement is better.</strong> Two worlds of tightening enclosure, then one
+sudden sky with nothing over it, and then he walks to a door and goes back
+INDOORS, into a windowless government building under fluorescent light, for the
+rest of the game. The payoff arrives and is then taken away, which is what this
+story does to everything else in it. The last thing that happens to him is being
+put back outside through a door, permanently, by somebody who is closing it.</p>
+<p><strong>Recommendation: take this.</strong> The alternative is dropping either the inverted
+pyramid or Area 51, and Area 51 is load-bearing - it is where the gatekeeper is
+imprisoned, which is why the gate is unguarded, which is why there is an anomaly,
+which is why anyone came. It cannot be cut. The image can move.</p>
+<hr>
+<h1 id="the-three-worlds">THE THREE WORLDS<a class="anchor" href="#the-three-worlds" aria-label="link to this section">#</a></h1>
+<p>Purposes and structure only. The story is in <code>NARRATIVE.md</code>.</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th></th><th>World 1</th><th>World 2</th><th>World 3</th></tr></thead><tbody><tr><td><strong>Place</strong></td><td>the tomb, above and inside the pyramid</td><td>the older floor beneath it, and the gate</td><td>Area 51, then the other side</td></tr><tr><td><strong>Enemy</strong></td><td>mummies</td><td>zombies</td><td>aliens, and then everything at once</td></tr><tr><td><strong>Special attack</strong></td><td>swarm by numbers</td><td>poisonous vomit that slows you</td><td><strong>OPEN</strong></td></tr><tr><td><strong>Enchantment</strong></td><td><strong>DOUBLE DAM</strong></td><td>the dash that teleports through enemies</td><td>the Raygun</td></tr><tr><td><strong>Architecture</strong></td><td>Egyptian and knowable</td><td>older than the people who named it</td><td>not architecture at all, and then a lab</td></tr><tr><td><strong>Ceilings</strong></td><td>5 to 30</td><td>nothing over 6</td><td>unreadable, then none</td></tr><tr><td><strong>It proves</strong></td><td>you cannot kill a god by killing its body</td><td>you cannot kill it by killing a person</td><td>there is nothing left to kill it in</td></tr><tr><td><strong>Ends with</strong></td><td>the empty eleventh niche</td><td>being pushed through the gate</td><td>being pushed through it again</td></tr><tr><td><strong>Voice on the pill</strong></td><td>hers</td><td>hers, until she dies</td><td>his</td></tr></tbody></table></div>
+<h2 id="the-law-and-the-escalation-that-proves-it">The law, and the escalation that proves it<a class="anchor" href="#the-law-and-the-escalation-that-proves-it" aria-label="link to this section">#</a></h2>
+<aside class="callout callout-note"><p><strong>You cannot kill it by killing the thing it is in.</strong></p></aside>
+<p>Stated three times, at three scales, and each statement is physical rather than
+spoken. World 1 proves it on a god: Set falls and does not die, it goes
+somewhere. World 2 proves it on a person: the archaeologist dies and it does not.
+World 3 proves why: there is nothing left for it to be in except everything.</p>
+<p><strong>KILLING THE VESSEL DOES NOT REMOVE HER. IT DISTRIBUTES HER.</strong> Take away the
+thing she is in and everything becomes the thing she is in. The player caused
+World 3, not as a mistake and not as a punishment but as the correct consequence
+of doing what he was told, well, twice.</p>
+<aside class="callout callout-fixed" id="m-1" data-marker="fixed">
+<span class="chip chip-fixed">FIXED</span>
+<div class="callout-body"><p><strong>FIXED, and untouched by meeting 2.</strong> This is the owner's own formulation and
+it is the strongest structural idea in the project after the descent. Meeting 2
+does not contradict it anywhere.</p></div>
+</aside>
+<h2 id="world-1-the-tomb">World 1 - THE TOMB<a class="anchor" href="#world-1-the-tomb" aria-label="link to this section">#</a></h2>
+<p><strong>For: establishing that this place has rules, that they do not hold him, and
+that the one person who could tell him why stops being able to.</strong> Plus giving him
+a quarter of his memory back four times.</p>
+<p>Full buildable design in <code>docs/WORLD-1.md</code>. The three things World 2 inherits:</p>
+<ul>
+<li><strong>She has been taken and he does not know.</strong> Ten waves of silence he did not
+notice.</li>
+<li><strong>He has fed four of his own colleagues into a machine</strong> and called it
+restoring a name.</li>
+<li><strong>He has seen his own death</strong>, from her hiding place, in the fourth fragment,
+and still does not know it was him.</li>
+</ul>
+<p>The way out is the eleventh niche in the Serdab.</p>
+<h2 id="world-2-the-older-floor-and-the-gate">World 2 - THE OLDER FLOOR, AND THE GATE<a class="anchor" href="#world-2-the-older-floor-and-the-gate" aria-label="link to this section">#</a></h2>
+<p><strong>For: taking away the rules, taking away the air, showing him the room his team
+died in, and making him kill his friend.</strong></p>
+<p>Deeper stone, ceilings under six, no room that gives the eye distance, and the
+gods down here as carvings older than the gods. No shrine will forgive a death.</p>
+<p><strong>Its design principle, which meeting 2 promoted from decoration to load-bearing:
+World 2's iconography is World 1's, wrong.</strong> The same forms, cut by someone who
+had never seen the animals, in a place older than the people who named them. The
+Egyptians did not invent the pantheon. They found it down here and copied it.
+Never stated. Meeting 2 makes this literally true by making the Ancients real
+and prior, and by making the good gatekeeper one of them.</p>
+<p><strong>The recognition beat, staged as one object.</strong> He finds a niche exactly like the
+eleventh niche in the Serdab. It is not empty. What is in it is him.</p>
+<p><strong>The crescendo. FIXED: she dies. The spirit does not.</strong> And what makes it land
+is entirely World 1's work: he is killing the person who spent five questions
+trying to tell him what he was, and something took the asking away in Act 3 while
+he was busy.</p>
+<p><strong>Two facts, and the second is the one that matters: she stops getting up, and he
+never has.</strong></p>
+<p><strong>The twist that opens World 3.</strong> Not &quot;there is a floor below&quot;. It is that the
+dead get worse immediately. Killing her released it rather than reducing it, and
+the horde on the way out is the first evidence. He leaves World 2 having made the
+problem larger by winning.</p>
+<h2 id="world-3-area-51-and-the-other-side">World 3 - AREA 51, AND THE OTHER SIDE<a class="anchor" href="#world-3-area-51-and-the-other-side" aria-label="link to this section">#</a></h2>
+<p><strong>For: the rescue that meeting 1 promised, delivered at last and to the wrong
+person. The distribution at full extension. And the betrayal.</strong></p>
+<p><strong>PROPOSAL: still the shortest of the three.</strong> It is the answer, and answers
+should not take ten hours.</p>
+<h3 id="the-white-room-is-area-51-and-that-is-the-biggest-saving-in-">The white room is Area 51, and that is the biggest saving in the trilogy<a class="anchor" href="#the-white-room-is-area-51-and-that-is-the-biggest-saving-in-" aria-label="link to this section">#</a></h3>
+<p>The pre-meeting-2 draft proposed a white featureless space at the bottom - no
+wear, no dust, no tool marks, no shadow - and priced it as nearly free because it
+is the SUBTRACTION of the whole material and post chain. <code>world/materials.js</code> is
+warm sandstone with weathering and generated maps; <code>core/post.js</code> adds AO, height
+fog, bloom, tone mapping, a grade, chromatic aberration, vignette and grain. A
+white room is all of that turned off.</p>
+<p><strong>A government lab built around a gate is that room and it has a reason to
+exist.</strong> Concrete, fluorescent, unworn, unshadowed, endlessly corridored,
+impossible to measure yourself against. Same subtraction, same effect, and the
+mystery box becomes a building the government put there, which is worse.</p>
+<p>One honest caveat, verified in <code>post.js</code>'s own notes: the grade's shoulder is a
+ceiling, grain against a ceiling clips, and bloom contributed about 300 of 1090
+white-core pixels in a measured frame. So white blows out and the grain dies on
+it. <strong>That is not a problem to fix.</strong> Three worlds of film grain and then a frame
+with none is the difference between &quot;shot on something&quot; and &quot;not shot at all&quot;.</p>
+<h3 id="the-horde-and-the-final-boss">The horde, and the final boss<a class="anchor" href="#the-horde-and-the-final-boss" aria-label="link to this section">#</a></h3>
+<p>Everything he fights on the other side is her. The invasion and the possession
+are in the same room because they are the same event, and the soldiers are not a
+second faction - they are the newest thing she got into.</p>
+<p><strong>HONEST FINDING, and it survives meeting 2 unchanged: a coherent alien army is
+the most expensive art in the trilogy and the cheap version is the better one.</strong>
+<code>enemies/variants.js</code> opens with its own law - &quot;a variant that is only a
+different colour is not a variant... every entry here changes the OUTLINE before
+it changes anything else&quot; - so a reskinned shambler in a helmet violates the
+file's stated standard.</p>
+<p><strong>PROPOSAL: World 3's enemies do not agree on what they are.</strong> If everything is
+her, the correct silhouette is neither soldier nor mummy but something that
+cannot commit, and the deeper in, the less any two of them resemble each other.
+Cheaper than an army and truer to the distribution. The invasion is the ENGINE
+and never the SUBJECT. He never fights a faction. He fights her, in an increasing
+number of shapes.</p>
+<p><strong>The final boss re-condenses.</strong> Spawning stops. Every live actor stops attacking
+and walks to a point. Each one that arrives is consumed and her health goes up.
+She rises out of the floor as they go in.</p>
+<p>Verified against the code: consumption is <code>director.retire()</code>, which already
+frees the emitter, removes the group from the scene and swap-and-pops the live
+list. And <code>boss.js</code>'s dying branch already computes the rise exactly, backwards -
+it sinks by <code>s * spec.height * spec.scale</code> and scales by
+<code>spec.scale * (1 - s * 0.5)</code> for <code>s</code> running 0 to 1 while <code>setGlow</code> ramps down.
+<strong>Run <code>s</code> from 1 to 0 with the glow ramping up and it is the rise.</strong> The thing
+that goes away in World 1 by sinking and going dark comes back by rising and
+lighting, through the same code path.</p>
+<p><strong>One UI question with a recommendation.</strong> The boss bar reads <code>maxHealth</code>, so
+during the re-condensation the player watches a health bar's maximum grow.
+<strong>Recommendation: let it, and do not hide it.</strong> A boss bar filling itself from
+the corpses of everything he just killed is the clearest possible statement of
+what is happening, delivered by an element that already exists.</p>
+<h3 id="and-then-he-is-thrown-away">And then he is thrown away<a class="anchor" href="#and-then-he-is-thrown-away" aria-label="link to this section">#</a></h3>
+<p>Full staging in <code>NARRATIVE.md</code>. Two structural notes belong here.</p>
+<p><strong>The betrayal is not out of character, and World 1 rehearses it five times.</strong></p>
+<aside class="callout callout-proposal" id="m-2" data-marker="proposal">
+<span class="chip chip-proposal">PROPOSAL</span>
+<div class="callout-body"><p><strong>PROPOSAL, mine.</strong> If the Ancients are what got remembered as the Egyptian
+gods, then the five bosses of World 1 are the gatekeeper's colleagues, still at
+their posts. They come for the player because he came up out of the sand with
+everything else and their job is that such things are removed. Anubis weighs.
+Ammit devours the heart that fails. The death card is the verdict at the end of
+that process and the player keeps walking away from it, so the tomb sends
+something bigger.</p>
+<p>The boss ladder stops being a difficulty curve and becomes an immune response.
+And the ending is the sixth iteration of a beat the player has fought and won
+five times without once understanding what it was for.</p></div>
+</aside>
+<p><strong>The ending must not be a gotcha, and the fix is the button, not a fork.</strong></p>
+<p>A revelation the player cannot act on is something done to them. The pre-meeting-2
+draft solved this with a choice: <code>ui/death.js</code> ends every death with a card, a
+beat, and a button that arms and waits indefinitely, and the last time it appears
+it means the opposite of what it has always meant.</p>
+<p>Meeting 2 removes the choice by having the gatekeeper push him. The owner is
+right that the betrayal is the ending, so do not fork it.</p>
+<aside class="callout callout-proposal" id="m-3" data-marker="proposal">
+<span class="chip chip-proposal">PROPOSAL</span>
+<div class="callout-body"><p><strong>PROPOSAL: keep the button and make it the last frame.</strong> He goes through, the
+gate shuts, and the death card comes up on the far side the way it has come up
+thirty times. <code>KEEP THE VIGIL [ENTER]</code>. He presses it, because he always has.
+Nothing stands him up, because the thing that used to do that is on the other
+side of a shut door with its back to it, and the two words that have answered
+that card since the first death do not arrive.</p>
+<p>Same DOM node, same gate, same key. He asks to come back and there is nobody
+listening. Then white, then the fizz, then the shelf.</p>
+<p>Rejected: an unwinnable boss, a cutscene death, a two-ending fork. The first
+two take the choice away and the third makes it a menu.</p></div>
+</aside>
+<hr>
+<h1 id="the-enchantments">THE ENCHANTMENTS<a class="anchor" href="#the-enchantments" aria-label="link to this section">#</a></h1>
+<p><strong>REVISED.</strong> This replaces perks entirely. It is the divergence from Call of Duty
+Zombies that Speaker 2 asked for at 15:14, and he supplied it himself eighteen
+seconds later.</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>World</th><th>Enemy special</th><th>Counter</th><th>Status</th></tr></thead><tbody><tr><td>1</td><td>they swarm by numbers</td><td><strong>DOUBLE DAM</strong></td><td><strong>LOCKED. The owner said &quot;lock it&quot; three times.</strong></td></tr><tr><td>2</td><td>poisonous vomit, sticks to you, slows you</td><td>a dash that teleports you THROUGH enemies, no damage either way</td><td><strong>FIXED</strong></td></tr><tr><td>3</td><td><strong>OPEN</strong></td><td>the Raygun</td><td><strong>FIXED</strong></td></tr></tbody></table></div>
+<p>Rules, from the room at 15:23 - 17:41:</p>
+<ul>
+<li><strong>One per world.</strong> You find it, you do not buy it.</li>
+<li><strong>It fits the level.</strong> Each world's enemies have a baseline attack and a
+special, and the world's spell counters that world's special.</li>
+<li>Speaker 1's framing: &quot;whatever the peak in the chart is, your special weapon
+has to counter it&quot;.</li>
+</ul>
+<aside class="callout callout-proposal" id="m-4" data-marker="proposal">
+<span class="chip chip-proposal">PROPOSAL</span>
+<div class="callout-body"><p><strong>PROPOSAL, mine, and it does two jobs: the enchantment survives death and
+every shrine boon does not.</strong></p>
+<p><code>shrines.js</code> already drops every boon on death and the docs already read that
+as the gods withdrawing their favour from a thing that will not accept a
+verdict. If the enchantment persists through death while the gods' gifts do
+not, then the player has a permanent, visible, mechanical distinction between
+the two things resurrecting him - and it is on the HUD from the first world.</p>
+<p>Everything the gods give you is taken back every time you die. The one thing
+that stays is from the thing standing you up.</p></div>
+</aside>
+<aside class="callout callout-note"><p><strong>A collision to name: the Shrine of Set already ships &quot;DAMAGE AND RATE UP&quot;.</strong>
+Verified in <code>shrines.js</code>. So DOUBLE DAM must not be a shrine boon and must not
+be a floor drop, or it is a third version of something the game already has
+twice. <strong>Recommendation: it is an ACTIVE ability with a cooldown</strong>, which is
+the shape Speaker 1 described in the room - &quot;a 30-second period of unlimited
+ammo and then a 90-second refresh&quot;. Passive damage is Set's. Triggered damage
+on a timer is the enchantment's, and it is a different verb.</p></aside>
+<aside class="callout callout-note"><p><strong>Free reading, mine, offered and not insisted on.</strong> A dam holds back a flood.
+World 1's special attack is a flood. The spell that counters a flood is a dam.
+The owner locked the name three times and may already have heard it. Nothing
+needs to be built for this and nothing should point at it.</p></aside>
+<h2 id="what-the-enchantments-cost-verified-against-the-code">What the enchantments cost, verified against the code<a class="anchor" href="#what-the-enchantments-cost-verified-against-the-code" aria-label="link to this section">#</a></h2>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Piece</th><th>Status</th><th>Cost</th></tr></thead><tbody><tr><td>Timed-effect machinery</td><td><strong>EXISTS.</strong> <code>powerups.js</code> has a refresh-not-stack timer, a HUD chip, and a <code>clearEffects()</code> already called on death</td><td>free</td></tr><tr><td>Grant/revoke contract</td><td><strong>EXISTS.</strong> <code>shrines.js</code> boons are <code>apply()</code> plus <code>remove()</code>, capped, HUD-backed</td><td>free</td></tr><tr><td>A damage multiplier</td><td><strong>DOES NOT EXIST</strong>, but there is one obvious place to put it</td><td>~30-40 lines, and see the caveat</td></tr><tr><td>An on-demand cast with a cooldown</td><td><strong>DOES NOT EXIST.</strong> <code>powerups.js</code> is a drop system, <code>shrines.js</code> is a purchase</td><td>~40-60 lines</td></tr><tr><td>The dash itself</td><td><strong>DOES NOT EXIST</strong>, but the slide is a complete template with burst speed, decel, max time and cooldown already tuned</td><td>~80-120 lines</td></tr><tr><td>Dashing THROUGH enemies</td><td><strong>FREE.</strong> Player-versus-enemy collision does not exist. No enemy module ever pushes to <code>world.colliders</code>. The player already walks through them</td><td>0 lines</td></tr><tr><td>No damage during the dash</td><td><strong>EXISTS.</strong> <code>combat.state.invulnerable</code> gates every damage path including boss projectiles and shockwaves, and is documented as unused by the game</td><td>~2 lines</td></tr><tr><td>The poison slow the dash counters</td><td><strong>DOES NOT EXIST.</strong> There is no status-effect system on the player at all - no slow, no DoT, no stack, no duration</td><td>~100 lines, and it is the risky half</td></tr></tbody></table></div>
+<p><strong>The caveat on the damage multiplier, and it matters.</strong> Bullet damage is
+computed in exactly one line, but grenade damage arrives at the combat system
+already computed by <code>grenades.js</code>, and melee is a third path. A DOUBLE DAM that
+silently excludes grenades and the khopesh is a bug report waiting to happen.
+Doing it honestly means applying the multiplier at the three points where an
+enemy is actually hurt rather than at the weapon-stats lookup.</p>
+<p><strong>The load-bearing finding: the poison is more expensive than the dash.</strong> World 2
+needs a player status-effect system that does not exist anywhere, and the one
+place a speed change can safely land is complicated by the fact that the existing
+speed perk is implemented as a second player update with a shorter delta
+specifically to avoid breaking collision. Slowing is the safe direction, which
+helps. Budget it as World 2's real engineering item.</p>
+<hr>
+<h1 id="the-raygun-and-the-sunspear">THE RAYGUN, AND THE SUNSPEAR<a class="anchor" href="#the-raygun-and-the-sunspear" aria-label="link to this section">#</a></h1>
+<aside class="callout callout-open" id="m-5" data-marker="open">
+<span class="chip chip-open">OPEN</span>
+<div class="callout-body"><p><strong>OPEN, with a recommendation.</strong></p></div>
+</aside>
+<p>The game already ships an energy rifle called the Sunspear, which the owner calls
+&quot;Raygun-ish&quot;. It is mystery-box exclusive and it is also the intended reward for
+World 1's four-jar chain.</p>
+<p><strong>Recommendation: keep both, and make the Sunspear the Raygun's lesser
+ancestor.</strong> Do not replace it, do not rename it, do not build the Raygun as a
+re-skin of it. The Sunspear is a small old-people tool left in a sealed chapel.
+The Raygun is the one that locks the gate. Same makers, same script, same light.</p>
+<p>What it buys: the player has been carrying a piece of the ending since World 1
+and using it to shoot mummies with, and when the gatekeeper hands him the Raygun
+in World 3 he is holding a bigger version of a thing he found in her serdab.</p>
+<p><strong>Cost of the Raygun, verified.</strong> Six or seven files, roughly 200 to 280 lines,
+two or three test files, no architecture change. The weapon table is genuinely
+data-driven but it is five to seven tables across four files, and one of them is
+geometry: the dominant cost is 130 to 200 lines of hand-authored procedural
+viewmodel geometry, measured against its peers in the same file. One hard rule:
+the weapon slot array IS the number-key binding, so a new weapon is <strong>appended</strong>,
+never inserted.</p>
+<hr>
+<h1 id="the-voices-and-who-owns-which-surface">THE VOICES, AND WHO OWNS WHICH SURFACE<a class="anchor" href="#the-voices-and-who-owns-which-surface" aria-label="link to this section">#</a></h1>
+<p><strong>PROPOSAL, mine, and it is the cheapest way to keep two supernatural powers
+distinguishable without a word of exposition.</strong></p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th></th><th>Surface</th><th>Register</th></tr></thead><tbody><tr><td><strong>The archaeologist, and the thing wearing her</strong></td><td>the notice pill</td><td>lowercase, the only lowercase in a game of capitals</td></tr><tr><td><strong>The gatekeeper</strong></td><td>the death card</td><td>two or three words, never a sentence</td></tr><tr><td><strong>Everything else</strong></td><td>the notice pill, the objective panel, the prompt</td><td>capitals, systemic, derived</td></tr></tbody></table></div>
+<p><strong>They never share a surface.</strong> That is the mechanical statement that they are
+different powers, and the player absorbs it without ever being told there are
+two.</p>
+<p><strong>And the channel is inherited.</strong> She owns the pill for all of World 1 and the
+first half of World 2. She dies. From that point the pill is his, and the game
+has a new voice in an old place, which is the only announcement the handover
+needs.</p>
+<h2 id="what-each-costs-verified">What each costs, verified<a class="anchor" href="#what-each-costs-verified" aria-label="link to this section">#</a></h2>
+<p><strong>The gatekeeper on the death card: near free.</strong> <code>ui/death.js</code> already stops the
+world, draws a cartouche with a verdict in it and a line beneath, holds a beat,
+and arms a button. Two words in a third slot is one span and a string table. This
+is the cheapest strong beat available in the entire project.</p>
+<p><strong>Her lowercase in the pill: small.</strong> The notice function is seven lines. It
+already overwrites in place with no transition at all, which is what makes the
+Kindling beat work. What she needs is a hold - a system notice arriving during
+one of her lines is dropped rather than deferred - which is one boolean, one
+timestamp, and one deliberate exception.</p>
+<p><strong>An in-run announcer queue: DOES NOT EXIST and should not be built for World
+1.</strong> There is no queue anywhere in the UI. Every text channel is last-write-wins
+or highest-priority-wins. A real &quot;few words at a time&quot; queue is roughly 80 to 120
+lines built on the existing priority bus. <strong>Recommendation: build it in World 2,
+when she is dead and the pill is free.</strong> In World 1 the gatekeeper speaks on the
+death card only, which is the surface she can never contest.</p>
+<p><strong>Voice audio is not achievable.</strong> The audio engine is 1,875 lines of synthesised
+WebAudio with no sample-playback path at all - no decode, no mp3, no ogg, no wav
+anywhere in the project. &quot;Voice&quot; in that file means a synth voice. Adding spoken
+lines is a real architectural addition to a file whose entire premise is that
+everything is generated. <strong>All three voices are text.</strong></p>
+<hr>
+<h1 id="the-flashbacks-priced">THE FLASHBACKS, PRICED<a class="anchor" href="#the-flashbacks-priced" aria-label="link to this section">#</a></h1>
+<p>Meeting 2 asks for a cut scene at the gate showing the science team as black
+silhouettes. That is a real new requirement and it is priced here honestly rather
+than assumed away.</p>
+<h2 id="what-a-cut-scene-actually-costs">What a cut scene actually costs<a class="anchor" href="#what-a-cut-scene-actually-costs" aria-label="link to this section">#</a></h2>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Piece</th><th>Status</th><th>Cost</th></tr></thead><tbody><tr><td>Fade to black and back</td><td><strong>EXISTS</strong>, but private to the space router, which deliberately exposes a read-only copy so nobody can strand the player in the dark</td><td>expose two methods, ~20 lines</td></tr><tr><td>Input lock</td><td><strong>EXISTS</strong>, and it clears as well as gates, which is the difference between a lock and a flag</td><td>1 line</td></tr><tr><td>Simulation freeze</td><td><strong>EXISTS</strong>, and there is already a precedent for exempting one lane from it</td><td>~5 lines</td></tr><tr><td>Letterbox</td><td><strong>DOES NOT EXIST</strong> anywhere</td><td>~15 lines of DOM</td></tr><tr><td>A sequence driver</td><td><strong>DOES NOT EXIST.</strong> The death card's three-phase state machine is the template</td><td>~60 lines</td></tr><tr><td>Silhouette figures</td><td><strong>the geometry EXISTS.</strong> There is a humanoid accumulator built specifically so that limb taper reads as a body rather than a mannequin, and an unlit black material is one line plus a tone-mapping opt-out</td><td>~100-150 lines</td></tr><tr><td><strong>A camera move</strong></td><td><strong>THIS IS THE PROBLEM.</strong> The camera is welded to the player's head. The only authored camera move in the game is the death fall, and it is additive-only - it can pitch, yaw, roll and drop the view, but it cannot detach it</td><td>80-150 lines, and every consumer reads through that rig</td></tr></tbody></table></div>
+<p><strong>Total for a real cut scene: one substantial new module of roughly 300 to 450
+lines plus surgical edits to three files, and the load-bearing risk is the camera
+rig, which is written on the assumption that the camera IS the player.</strong></p>
+<h2 id="proposal-put-the-flashbacks-on-the-jars-and-there-is-no-cut-">PROPOSAL: put the flashbacks on the jars and there is no cut scene<a class="anchor" href="#proposal-put-the-flashbacks-on-the-jars-and-there-is-no-cut-" aria-label="link to this section">#</a></h2>
+<p>Four jars, four fragments, delivered where the player already stops and
+interacts, spread across a whole world instead of dumped in one place. The fourth
+completes the picture and it lands in the deepest room of World 1. The gate
+crossing at the end of World 2 then needs no scripted sequence at all, because the
+player has known what happened since the fourth jar.</p>
+<p><strong>A fragment is: freeze, black, a still tableau of unlit black humanoids at a
+fixed distance in front of a camera that never moves, three seconds, out.</strong></p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Piece</th><th>Cost</th></tr></thead><tbody><tr><td>Curtain exposure</td><td>~20</td></tr><tr><td>Input lock and sim freeze</td><td>~6</td></tr><tr><td>Sequence driver</td><td>~60</td></tr><tr><td>Silhouette figures and a posed rig</td><td>~100-150</td></tr><tr><td><strong>Camera move</strong></td><td><strong>0. The camera never detaches, so the expensive item is not bought at all.</strong></td></tr></tbody></table></div>
+<p><strong>Roughly 190 to 240 lines, no letterbox, no camera work, no new art assets,
+because the humanoid geometry is procedural and already in the project.</strong> About
+half a cut scene, delivered four times instead of once, in the world that ships
+first.</p>
+<p>And it reads better. A held tableau with no camera is what a MEMORY looks like. A
+moving camera is what a SCENE looks like, and he is not remembering a scene. He is
+remembering four seconds at a time, from four dead people's positions.</p>
+<aside class="callout callout-open" id="m-6" data-marker="open">
+<span class="chip chip-open">OPEN</span>
+<div class="callout-body"><p><strong>OPEN, and it is a taste call rather than an engineering one.</strong> The
+alternative is 2D: draw the silhouettes as a flat overlay on the curtain, which
+costs about 60 lines and four hand-made images and no geometry at all.
+<strong>Recommendation: 3D, using the existing humanoid accumulator.</strong> The project has
+no hand-made image assets anywhere and introducing one pipeline for four
+pictures is a worse trade than 150 lines of procedural bodies.</p></div>
+</aside>
+<hr>
+<h1 id="the-timeline-problem-and-its-fix">THE TIMELINE PROBLEM, AND ITS FIX<a class="anchor" href="#the-timeline-problem-and-its-fix" aria-label="link to this section">#</a></h1>
+<p>Meeting 2 puts the horde's indifference to the archaeologist in World 2, and
+Speaker 1 lands the line that makes it work: &quot;and they always have. But you just
+never thought about it.&quot;</p>
+<p><strong>That claim is only true if the player COULD have seen it earlier</strong>, and in
+World 1 as designed she is never in the same frame as the horde. She is a lamp
+ahead in the dark and a voice, and she does not have a body until the Serdab. So
+a replaying player has nothing to go back and find, and the best line in meeting 2
+is a claim about a thing that never happened.</p>
+<aside class="callout callout-proposal" id="m-7" data-marker="proposal">
+<span class="chip chip-proposal">PROPOSAL</span>
+<div class="callout-body"><p><strong>PROPOSAL: show it once in Act 3 of World 1, after she is taken, unremarked.</strong></p>
+<p>Down a long sightline, her lamp is standing still and the horde is flowing
+around it. Not away from it and not toward it: past it, the way water goes past
+a rock, while the player is fighting for his life in the foreground.</p>
+<p>It does not contradict &quot;she is herself until the Kindling&quot;, because it happens
+after. It gives Act 3 the one visible fact it currently lacks - the design's own
+instruction for those ten waves is that nothing visibly changes, which is
+correct for the absence device and leaves the act with nothing to show. And it
+means that when the player finally SEES it in World 2, a second run can go back
+and find the exact wave it started.</p>
+<p><strong>Both tells survive and they are doing different jobs.</strong> The asking stops in
+World 1 and it is a removal nobody notices. The horde's indifference is what the
+player finally SEES in World 2, and it retroactively explains a thing they
+already had on screen.</p></div>
+</aside>
+<hr>
+<h1 id="what-hetepheres-becomes">WHAT HETEPHERES BECOMES<a class="anchor" href="#what-hetepheres-becomes" aria-label="link to this section">#</a></h1>
+<p>The full argument is in <code>NARRATIVE.md</code> under &quot;The two decisions waiting on the
+owner&quot;. The short version, because this is the file people will check:</p>
+<p><strong>Recommendation: she stays as a NAME and stops being a character.</strong> Hetepheres is
+the dead queen whose tomb this is. Restoring her effaced cartouche is what an
+archaeologist would actually be doing down here and it is what the player thinks
+he is doing while he charges a machine with four of his colleagues. Nobody
+rescues her. The antagonist is nameless in World 1 - a sign, not a noun.</p>
+<p><strong>If the owner wants the antagonist to literally be a named Egyptian goddess, as
+meeting 2 says: NEITH, and not until World 2.</strong> She is genuinely pre-dynastic and
+therefore older than most of the pantheon, she is a guardian of the dead, she is
+in neither the boss roster nor the shrine list so there is no collision, and she
+is already wired into this map as one of the four goddesses standing behind the
+four canopic sons. Which would mean the player hands his four dead colleagues
+into her custody, one at a time, personally.</p>
+<hr>
+<h1 id="the-unification">THE UNIFICATION<a class="anchor" href="#the-unification" aria-label="link to this section">#</a></h1>
+<p>The gate at the bottom of the pyramid, the second gate at Area 51, and the alien
+video store are the same route.</p>
+<ul>
+<li>The other universe is where the aliens live.</li>
+<li>The game closes in an alien video store.</li>
+<li>Therefore the door he is pushed through at the end opens onto the shelf.</li>
+</ul>
+<p>He has been walking toward that shelf since the first wave, which is to say since
+before the first wave, on a walk down an avenue that killed him.</p>
+<p>And it makes the last exchange of meeting 1 pay twice:</p>
+<aside class="voice"><p>&quot;And for them we're the aliens.&quot; / &quot;Yeah, exactly, we are the aliens.&quot;</p></aside>
+<p>The aliens have been trying to come through into our world. He goes OUT through
+it, and he is the thing coming through from the other side, and he is not going
+back.</p>
+<hr>
+<h1 id="the-order-of-work">THE ORDER OF WORK<a class="anchor" href="#the-order-of-work" aria-label="link to this section">#</a></h1>
+<ol>
+<li><strong><code>docs/NARRATIVE.md</code> exists.</strong> The story is written and sectioned. This was
+ the blocker and it is cleared.</li>
+<li><strong>The map lane is next, scoped from <code>WORLD-1.md</code>'s brief</strong>, which is written
+ against World 1's section of the narrative.</li>
+<li><strong>World 1 is finished and shipped complete.</strong> It confirms nothing.</li>
+<li><strong>World 2 is not designed until World 1 is playable end to end.</strong></li>
+<li><strong>World 3 is written last and stays short.</strong></li>
+</ol>
+<h2 id="the-five-things-to-protect-while-building-world-1">The five things to protect while building World 1<a class="anchor" href="#the-five-things-to-protect-while-building-world-1" aria-label="link to this section">#</a></h2>
+<ul>
+<li><strong><code>(0, 30)</code> stays unmarked.</strong> No prop, no stain, no line. He does not know and
+is never told, and every other plant is downstream of that.</li>
+<li><strong>The enclosure.</strong> No room taller than the Great Gallery. The run still ends in
+the five-unit Serdab.</li>
+<li><strong>The Star Shaft as the last time up is offered</strong>, with a rope in it that goes
+up into the dark and ends at nothing.</li>
+<li><strong>Her pattern, and the silence after it.</strong> Five questions in a recognisable
+shape, lowercase, unanswered, ending mid-sentence at the machine. If the
+pattern is not established, its ending is not audible, and the best device in
+the project produces nothing.</li>
+<li><strong>The bigger-inside-than-outside.</strong> True in the shipped build for engineering
+reasons, stated in the room graph's own header, never acknowledged by the game.
+It only has to survive somebody deciding to fix it.</li>
+</ul>
+<hr>
+<h1 id="structural-findings-that-affect-all-three-worlds">STRUCTURAL FINDINGS THAT AFFECT ALL THREE WORLDS<a class="anchor" href="#structural-findings-that-affect-all-three-worlds" aria-label="link to this section">#</a></h1>
+<p>Verified against the code. These are findings, not permission to build.</p>
+<p><strong>1. World 2 is structurally the CHEAPEST thing in this document, and that is the
+surprising result.</strong> The interior room graph is pure data with no geometry and no
+Three.js import, and the builder already takes the room list as a parameter with
+the shipped graph as its default. A second room graph passed to the same builder
+produces a second interior with zero changes to the builder. The work is: author
+the data, generalise the two-valued space enum into a keyed registry, move the
+hardcoded interior bounds onto the graph record, and make the entry point
+per-world. Roughly 90 to 150 lines of engineering, and everything else is design
+effort. <strong>No renderer work, no loader, no asset pipeline.</strong></p>
+<p><strong>2. Both worlds are resident in memory at boot and nothing is ever disposed.</strong>
+The space router toggles visibility on subtrees; no geometry is ever freed. The
+interior is described in its own comment as costing &quot;half a megabyte of
+geometry&quot;. <strong>This is the real constraint on the owner's &quot;we need more space&quot;, and
+it compounds when World 2 lands.</strong> The map lane should know it before it starts.</p>
+<p><strong>3. The Serdab is currently unreachable.</strong> Its portal is the only puzzle-gated
+door in the game and it reads a jar counter that is hardcoded to zero and never
+written. The room where World 1's entire ending happens cannot be entered in the
+shipped build.</p>
+<p><strong>4. The jar system does not exist in any form.</strong> Four jars are placed and have
+meshes, four niches are placed and have meshes, both are published to the rest of
+the game, and nothing reads either. There is no pickup, no carry, no deposit, no
+counter, no completion. There is also no carried-item primitive anywhere in the
+codebase to copy - the nearest analogue is proximity-collected floor drops.</p>
+<p><strong>5. The game has no concept of a run ending.</strong> The boss roster cycles forever
+and nothing in the main loop or the wave director can conclude a run. This is
+correct for an endless build and wrong for a world with an ending, and it is
+World 1's largest engine gap.</p>
+<p><strong>6. There is no player status-effect system.</strong> No slow, no poison, no
+damage-over-time, no duration on the player at all. World 2's poison needs one
+built from nothing.</p>
+<p><strong>7. Ordinary enemies have no ranged attack.</strong> Projectiles exist, pooled and
+gravity-arced, but only on bosses. World 2's vomit is either a boss-only
+mechanic, or the projectile pool is generalised down to variants.</p>
+<p><strong>8. There is no character model for the player and there never has been.</strong> The
+viewmodel is first-person hands and a weapon, rendered through its own camera in
+its own pass. The only time the player sees himself is the box art at the end.</p>
+<hr>
+<h1 id="open-across-all-three">OPEN ACROSS ALL THREE<a class="anchor" href="#open-across-all-three" aria-label="link to this section">#</a></h1>
+<p>Each is a question with a recommendation, not a menu.</p>
+<ol>
+<li><p><strong>Is Hetepheres a name on a wall, or the antagonist?</strong> <strong>Recommendation: a name
+ on a wall, and the antagonist stays nameless until World 2.</strong> This is one of
+ the two decisions genuinely waiting on the owner.</p></li>
+<li><p><strong>Is the Kindling rewritten?</strong> <strong>Recommendation: repointed, not rewritten.</strong>
+ Full cost in <code>docs/WORLD-1.md</code>. This is the other one.</p></li>
+<li><p><strong>Does he ever learn what he is, on screen?</strong> <strong>Recommendation: no explicit
+ statement.</strong> He learns it by being thrown through a door by somebody who is
+ sorting the infected from everything else, and by nothing arriving when he
+ asks to come back.</p></li>
+<li><p><strong>Does he ever learn she watched him die?</strong> <strong>Recommendation: yes, once, and
+ he does not recognise it.</strong> The fourth fragment is his own death seen from her
+ hiding place. The player works out whose eyes those are, or does not, and both
+ are acceptable outcomes for a first run.</p></li>
+<li><p><strong>Is the depth readout carried across all three worlds?</strong> <strong>Recommendation:
+ yes, and in World 3 it is the last instrument still reporting anything.</strong> The
+ owner has now also asked for the descent to shape the map, which supersedes
+ the earlier recommendation to leave the geometry horizontal. See the map brief
+ in <code>WORLD-1.md</code>.</p></li>
+<li><p><strong>How long is World 2?</strong> <strong>Recommendation: shorter than World 1.</strong> One
+ recognition and one killing.</p></li>
+<li><p><strong>Do the gods appear outside World 1?</strong> <strong>Recommendation: as carvings in World
+ 2, never as bosses.</strong> They are the gatekeeper's colleagues and they are still
+ in Egypt at their posts.</p></li>
+<li><p><strong>Does the horde in World 3 include shapes from World 1?</strong> <strong>Recommendation:
+ yes, and it should be the first thing he notices.</strong> A shambler in a government
+ corridor is the distribution stated in one silhouette.</p></li>
+<li><p><strong>Does she speak again after World 1?</strong> <strong>Recommendation: once.</strong> Not as
+ herself. As the thing wearing her, using her voice, in lowercase, saying
+ something that is unmistakably not a question. It is the only way to make the
+ player certain about what they half-noticed in Act 3, and it should cost her
+ life within the minute.</p></li>
+<li><p><strong>What is World 3's enemy special attack?</strong> <strong>Genuinely open and the room
+  never got to it.</strong> <strong>Recommendation: they do not have one, and the Raygun is
+  not a counter to anything.</strong> World 3's whole point is that the rules stop
+  applying, and a third neat attack-and-counter pair would be the game
+  insisting it still has a system when it should be losing one. The Raygun is a
+  key that happens to kill things.</p></li>
+<li><p><strong>Is there a World 4 hook?</strong> <strong>Recommendation: the shelf is full of other
+  boxes and none of them are legible.</strong> A named sequel turns an ending into an
+  advertisement.</p></li>
+</ol>
+</main>
+<script>
+(function () {
+  var bar = document.getElementById('progress');
+  var toc = document.getElementById('toc');
+  var toggle = document.getElementById('toc-toggle');
+  toggle.addEventListener('click', function () {
+    var open = toc.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  toc.addEventListener('click', function (e) {
+    if (e.target.tagName === 'A' && window.innerWidth < 1180) {
+      toc.classList.remove('open');
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  // Active section is recomputed on every settled scroll frame rather than by
+  // IntersectionObserver, which only reports elements whose state changed and
+  // so goes stale after a long jump.
+  var list = document.getElementById('toc-list');
+  var links = {};
+  var targets = [];
+  Array.prototype.forEach.call(document.querySelectorAll('.toc-list a'), function (a) {
+    var id = a.getAttribute('href').slice(1);
+    links[id] = a;
+    var el = document.getElementById(id);
+    if (el) targets.push(el);
+  });
+
+  var current = null;
+  function activeId() {
+    var best = targets.length ? targets[0].id : null;
+    for (var i = 0; i < targets.length; i++) {
+      if (targets[i].getBoundingClientRect().top <= 120) best = targets[i].id;
+      else break;
+    }
+    return best;
+  }
+
+  var ticking = false;
+  var lastY = 0;
+  function update() {
+    ticking = false;
+
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    var y = h.scrollTop || document.body.scrollTop;
+    var pct = max > 0 ? y / max : 0;
+    bar.style.width = (Math.min(1, Math.max(0, pct)) * 100).toFixed(2) + '%';
+
+    // tuck the floating toggle away while reading forward
+    if (!toc.classList.contains('open')) {
+      if (y > 260 && y > lastY + 4) toggle.classList.add('tucked');
+      else if (y < lastY - 4 || y <= 260) toggle.classList.remove('tucked');
+    }
+    lastY = y;
+
+    var id = activeId();
+    if (id && id !== current) {
+      if (current && links[current]) links[current].classList.remove('active');
+      current = id;
+      var a = links[current];
+      if (a) {
+        a.classList.add('active');
+        // keep the active entry visible inside the list without moving the page
+        var lr = list.getBoundingClientRect();
+        var ar = a.getBoundingClientRect();
+        if (ar.top < lr.top) list.scrollTop -= (lr.top - ar.top) + 8;
+        else if (ar.bottom > lr.bottom) list.scrollTop += (ar.bottom - lr.bottom) + 8;
+      }
+    }
+  }
+
+  window.addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+  }, { passive: true });
+  window.addEventListener('resize', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+  }, { passive: true });
+  update();
+})();
+</script>
+</body>
+</html>

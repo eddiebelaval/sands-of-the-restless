@@ -62,7 +62,7 @@ He is not learning to survive. He is failing to stay down.
 > that he chooses to stay down.
 >
 > Meeting 2 splits it in two. The spirit raised everything under the sand,
-> including his corpse. **The gatekeeper, one of the old people, imprisoned under
+> including his corpse. **The gatekeeper, one of the Ancients, imprisoned under
 > a different desert, is the one standing that corpse up after every death,
 > because he has picked it and needs it.**
 >
@@ -279,12 +279,12 @@ up while the player stands still reads as a bug before it reads as dread.
 the UI, no notice, no wall says what it is called.
 
 > **REVISED, and it is one of two decisions waiting on the owner.** The previous
-> draft had MERESANKH as the spirit's name, restored glyph by glyph by the jar
+> draft had HETEPHERES as the spirit's name, restored glyph by glyph by the jar
 > chain, and the rescue of that name as the dramatic question of World 1. Meeting
 > 2 kills the rescue at 11:54 and makes the antagonist "a real Egyptian god",
 > which a Fourth Dynasty queen is not.
 >
-> **Recommendation: Meresankh stays as the name on the struck cartouche and stops
+> **Recommendation: Hetepheres stays as the name on the struck cartouche and stops
 > being a character.** She is the dead queen whose tomb this is. Restoring an
 > effaced royal name is a real thing archaeologists do and it is what the
 > archaeologist was down here doing. The player finishes her work and thinks that
@@ -309,7 +309,7 @@ weighs. Ammit devours the heart that fails. The death card is the verdict at the
 end of that process, and he keeps walking away from it, so the tomb sends
 something bigger.
 
-> **Meeting 2 promotes this from flavour to structure.** If the old people are
+> **Meeting 2 promotes this from flavour to structure.** If the Ancients are
 > what got remembered as the Egyptian gods, the five bosses are the gatekeeper's
 > colleagues, still at their posts, removing things that came up out of the sand.
 > **Which means the ending of the trilogy is rehearsed five times in World 1 and
@@ -974,7 +974,7 @@ rest of M5". It is empty of purpose and it is waiting.
 
 **PROPOSAL: ten rock-cut figures of the same woman, shoulder to shoulder along the
 back wall, and an eleventh niche cut into the side wall on its own, empty.** Ten is
-the count in the real Meresankh serdab at Giza and shoulder to shoulder is how the
+the count in the real Hetepheres serdab at Giza and shoulder to shoulder is how the
 real one reads. The eleventh stands apart rather than at the end of the row, so it
 reads as an omission rather than as a gap somebody has not filled.
 
@@ -1389,7 +1389,7 @@ outside, in a space its own documentation calls the worst of the four.
 Ordered by how much they block. Each is a question with a recommendation, not a
 menu.
 
-1. **Is Meresankh a name on a wall or the antagonist?** **Recommendation: a name on
+1. **Is Hetepheres a name on a wall or the antagonist?** **Recommendation: a name on
    a wall, and the antagonist stays nameless in World 1.** One of the two
    decisions genuinely waiting on the owner. Argument in `NARRATIVE.md`.
 

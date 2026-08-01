@@ -1,0 +1,1814 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>WORLD 1 - the tomb</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  color-scheme: dark light;
+
+  --measure: 37rem;
+  --pad: 1.5rem;
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* dark is the considered one: lamp black, warm sand, old stone */
+  --bg: #100d0a;
+  --bg-sunk: #0a0806;
+  --bg-raise: #191510;
+  --text: #e6dcca;
+  --text-dim: #ab9f8b;
+  --text-faint: #7d7364;
+  --rule: #2b241b;
+  --rule-soft: #201a14;
+
+  --stone: #9b9078;
+  --sand: #c9a86a;
+  --ember: #e08b3c;
+  --ember-deep: #7a4416;
+  --verdigris: #78a292;
+
+  --shadow: 0 1px 0 rgba(255,255,255,.03);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4ecdd;
+    --bg-sunk: #eae0cd;
+    --bg-raise: #fbf6ec;
+    --text: #241d15;
+    --text-dim: #574b3b;
+    --text-faint: #7d7060;
+    --rule: #ded2bb;
+    --rule-soft: #e7ddc9;
+
+    --stone: #6f6552;
+    --sand: #8a6524;
+    --ember: #a9531a;
+    --ember-deep: #f0d9bf;
+    --verdigris: #3c6a59;
+
+    --shadow: 0 1px 0 rgba(0,0,0,.03);
+  }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--serif);
+  font-size: 1.1875rem;
+  line-height: 1.65;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+}
+
+/* ---------- reading progress ---------- */
+
+.progress {
+  position: fixed;
+  top: 0; left: 0;
+  height: 2px;
+  width: 0;
+  background: linear-gradient(90deg, var(--ember-deep), var(--sand));
+  z-index: 60;
+  transition: width .08s linear;
+  pointer-events: none;
+}
+
+/* ---------- document grid ---------- */
+
+.doc {
+  display: grid;
+  grid-template-columns:
+    1fr
+    min(var(--measure), 100% - (var(--pad) * 2))
+    1fr;
+  padding: 3.5rem 0 8rem;
+}
+.doc > * { grid-column: 2; }
+.doc > .boundary,
+.doc > .tablewide { grid-column: 1 / -1; }
+
+/* ---------- prose ---------- */
+
+p { margin: 0 0 1.35em; hanging-punctuation: first last; }
+
+h1, h2, h3 {
+  font-family: var(--sans);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  position: relative;
+}
+
+h1 {
+  font-size: 1.5rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin: 4rem 0 1.75rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--rule);
+  color: var(--text);
+}
+.doc > h1:first-of-type { margin-top: 0; }
+
+h2 {
+  font-size: 1.0625rem;
+  letter-spacing: .02em;
+  margin: 2.75rem 0 1rem;
+  color: var(--sand);
+}
+
+h3 { font-size: .9375rem; margin: 2rem 0 .75rem; color: var(--text-dim); }
+
+.anchor {
+  position: absolute;
+  margin-left: .4em;
+  color: var(--text-faint);
+  text-decoration: none;
+  opacity: 0;
+  font-weight: 400;
+  transition: opacity .15s;
+}
+h1:hover .anchor, h2:hover .anchor, h3:hover .anchor { opacity: .5; }
+
+a { color: var(--sand); text-underline-offset: 2px; }
+
+strong { font-weight: 600; color: var(--text); }
+em { font-style: italic; }
+
+code {
+  font-family: var(--mono);
+  font-size: .82em;
+  background: var(--bg-sunk);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: .08em .32em;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+pre {
+  margin: 0;
+  padding: 1rem 1.15rem;
+  font-family: var(--mono);
+  font-size: .82rem;
+  line-height: 1.55;
+  letter-spacing: .06em;
+  color: var(--sand);
+  background: var(--bg-sunk);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  text-align: center;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; color: inherit; }
+
+hr {
+  border: 0;
+  height: 1px;
+  background: var(--rule);
+  margin: 3rem 0;
+}
+
+ul, ol { margin: 0 0 1.35em; padding-left: 1.4em; }
+li { margin-bottom: .5em; }
+li::marker { color: var(--text-faint); }
+
+.scrollbox { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; margin: 0 0 1.5em; }
+.tablewide { padding: 0 var(--pad); margin: 2rem 0 2.5rem; }
+
+table { border-collapse: collapse; font-family: var(--sans); font-size: .875rem; line-height: 1.5; }
+.tablewide table { margin: 0 auto; max-width: 60rem; }
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: .6rem .85rem;
+  border-bottom: 1px solid var(--rule);
+}
+th { color: var(--sand); font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; }
+td { color: var(--text-dim); }
+td strong { color: var(--text); }
+.tbl-plain td:first-child { color: var(--text); white-space: nowrap; }
+
+/* ---------- banner ---------- */
+
+.banner {
+  margin: 0 0 3rem;
+  padding: 1.15rem 1.25rem;
+  background: var(--bg-raise);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--sand);
+  border-radius: 2px;
+  font-family: var(--sans);
+  font-size: .9375rem;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.banner p { margin: 0; }
+/* The second line of the banner is a footnote to the first, not a peer of it:
+   the names are the news, the transcript caveat is the provenance. Separated by
+   a rule rather than by a blank line so it cannot be mistaken for more news. */
+.banner-note {
+  margin-top: .8rem !important;
+  padding-top: .7rem;
+  border-top: 1px solid var(--rule);
+  font-size: .875rem;
+  opacity: .8;
+}
+.banner-tag {
+  display: block;
+  font-size: .6875rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--sand);
+  margin-bottom: .5rem;
+  font-weight: 600;
+}
+.banner strong { color: var(--text); letter-spacing: .03em; }
+
+/* ---------- decisions panel ---------- */
+
+.decisions {
+  margin: 0 0 3.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--bg-sunk);
+  font-family: var(--sans);
+}
+.decisions > summary {
+  cursor: pointer;
+  padding: .85rem 1.1rem;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem .75rem;
+  align-items: baseline;
+  font-size: .8125rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.decisions > summary::-webkit-details-marker { display: none; }
+.decisions > summary::before {
+  content: "+";
+  font-family: var(--mono);
+  color: var(--ember);
+  margin-right: .1rem;
+}
+.decisions[open] > summary::before { content: "\2212"; }
+.d-title { font-weight: 600; color: var(--text); }
+.d-counts { color: var(--ember); }
+.d-body { padding: 0 1.1rem 1.1rem; }
+.d-note { font-size: .8125rem; line-height: 1.5; color: var(--text-faint); margin: 0 0 1.25rem; }
+.d-group + .d-group { margin-top: 1.5rem; }
+.d-h {
+  font-size: .6875rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0 0 .6rem;
+  padding-bottom: .4rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.d-row {
+  display: flex;
+  gap: .7rem;
+  align-items: flex-start;
+  padding: .55rem .5rem .55rem .25rem;
+  margin: 0 -.25rem;
+  border-radius: 2px;
+  text-decoration: none;
+  color: var(--text-dim);
+  font-size: .8125rem;
+  line-height: 1.5;
+}
+.d-row:hover { background: var(--bg-raise); color: var(--text); }
+.d-row .chip { flex: 0 0 auto; margin: .1rem 0 0; }
+.d-text { min-width: 0; }
+.d-section {
+  display: block;
+  font-size: .6875rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: .15rem;
+}
+
+/* ---------- callouts ---------- */
+
+.callout {
+  font-family: var(--sans);
+  font-size: .875rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin: 1.9em 0;
+  padding: .1rem 0 .1rem 1.15rem;
+  border-left: 2px solid var(--rule);
+  scroll-margin-top: 3rem;
+}
+.callout + .callout { margin-top: -.9em; }
+.callout p { margin: 0 0 .8em; }
+.callout p:last-child { margin-bottom: 0; }
+.callout ul, .callout ol { margin-bottom: .8em; }
+.callout strong { color: var(--text); }
+.callout .scrollbox { margin-bottom: .8em; }
+.callout table { font-size: .8125rem; }
+
+.chip {
+  display: inline-block;
+  font-family: var(--sans);
+  font-size: .625rem;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: .2rem .45rem;
+  border-radius: 2px;
+  margin-bottom: .55rem;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* FIXED: settled and quiet. Solid stone rule, hollow chip, lowest contrast. */
+.callout-fixed { border-left-color: color-mix(in srgb, var(--stone) 45%, transparent); }
+.chip-fixed { color: var(--stone); border-color: color-mix(in srgb, var(--stone) 35%, transparent); }
+
+/* PROPOSAL: provisional. Dashed rule, sand chip. Reads as not yet set. */
+.callout-proposal {
+  border-left-style: dashed;
+  border-left-color: color-mix(in srgb, var(--sand) 55%, transparent);
+}
+.chip-proposal { color: var(--sand); border-color: color-mix(in srgb, var(--sand) 40%, transparent); }
+
+/* OPEN: wants something from the reader. Thickest rule, filled chip, tinted. */
+.callout-open {
+  border-left-width: 4px;
+  border-left-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 7%, transparent);
+  padding: .85rem 1rem .85rem 1.1rem;
+  border-radius: 0 3px 3px 0;
+  color: var(--text);
+}
+.chip-open { color: var(--bg); background: var(--ember); border-color: var(--ember); }
+
+/* REVISED: a correction. A doubled verdigris rule reads as struck and restated,
+   distinct at a glance from the single rules the other three carry. */
+.callout-revised {
+  border-left-style: double;
+  border-left-width: 5px;
+  border-left-color: var(--verdigris);
+  padding-left: 1rem;
+}
+.chip-revised { color: var(--verdigris); border-color: color-mix(in srgb, var(--verdigris) 45%, transparent); }
+
+.callout-note { border-left-color: var(--rule); }
+
+/* a bare line of dialogue */
+.voice {
+  margin: 2em 0;
+  padding: 0 0 0 1.15rem;
+  border-left: 2px solid color-mix(in srgb, var(--sand) 30%, transparent);
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+.voice p { margin: 0; }
+
+/* ---------- world boundaries ---------- */
+
+.boundary {
+  margin: 4.5rem 0;
+  padding: 0 var(--pad);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--sand) 6%, transparent) 50%, transparent);
+  scroll-margin-top: 2rem;
+}
+.boundary-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--sand) 60%, transparent) 20%, color-mix(in srgb, var(--sand) 60%, transparent) 80%, transparent);
+}
+.boundary-inner {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.75rem 0;
+  font-family: var(--sans);
+  font-size: .875rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  text-align: center;
+}
+.boundary-inner p { margin: 0 0 .7em; }
+.boundary-inner p:last-child { margin-bottom: 0; }
+.boundary-inner p:first-child strong {
+  display: block;
+  font-size: .75rem;
+  font-weight: 700;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+  color: var(--sand);
+  margin-bottom: .6rem;
+}
+
+/* ---------- table of contents ---------- */
+
+.toc {
+  position: fixed;
+  top: 0; left: 0;
+  z-index: 50;
+  font-family: var(--sans);
+}
+.toc-toggle {
+  position: fixed;
+  top: .75rem; left: .75rem;
+  z-index: 51;
+  font: inherit;
+  font-size: .6875rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--bg-raise);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: .4rem .7rem;
+  cursor: pointer;
+}
+.toc-toggle:hover { color: var(--text); border-color: var(--stone); }
+/* On a phone the toggle floats over the prose, so it steps out of the way
+   while reading forward and comes back the moment you scroll up. */
+.toc-toggle { transition: opacity .18s ease, transform .18s ease; }
+.toc-toggle.tucked { opacity: 0; transform: translateY(-140%); pointer-events: none; }
+
+.toc-list {
+  position: fixed;
+  top: 3rem;
+  left: .75rem;
+  width: 15rem;
+  max-height: calc(100vh - 4.5rem);
+  overflow-y: auto;
+  margin: 0;
+  padding: .75rem 0;
+  list-style: none;
+  background: var(--bg-raise);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  font-size: .75rem;
+  line-height: 1.4;
+  display: none;
+}
+.toc-list { scrollbar-width: none; }
+.toc-list::-webkit-scrollbar { width: 0; height: 0; }
+.toc.open .toc-list { display: block; }
+.toc-list li { margin: 0; }
+.toc-list a {
+  display: block;
+  padding: .3rem .9rem;
+  color: var(--text-faint);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+}
+.toc-list a:hover { color: var(--text); }
+.toc-list a.active { color: var(--sand); border-left-color: var(--sand); }
+.toc-l1 > a { color: var(--text-dim); letter-spacing: .06em; text-transform: uppercase; font-size: .6875rem; margin-top: .35rem; }
+.toc-l2 > a { padding-left: 1.5rem; }
+
+@media (min-width: 1180px) {
+  .toc-toggle { display: none; }
+  .toc-list {
+    display: block;
+    top: 3.5rem;
+    left: max(1rem, calc(50vw - var(--measure) / 2 - 17.5rem));
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--rule);
+    border-radius: 0;
+    max-height: calc(100vh - 7rem);
+    opacity: .55;
+    transition: opacity .2s;
+    padding: 0;
+  }
+  .toc-list:hover { opacity: 1; }
+}
+
+@media (max-width: 640px) {
+  :root { --pad: 1.15rem; }
+  body { font-size: 1.0625rem; line-height: 1.62; }
+  .doc { padding: 3.25rem 0 5rem; }
+  h1 { font-size: 1.25rem; }
+  h2 { font-size: 1rem; }
+  .boundary { margin: 3rem 0; }
+  .boundary-inner { padding: 1.35rem 0; font-size: .8125rem; }
+  .decisions > summary { font-size: .75rem; }
+  .callout { font-size: .84375rem; }
+}
+
+@media print {
+  .toc, .progress, .toc-toggle { display: none; }
+  body { background: #fff; color: #000; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<div class="progress" id="progress" role="presentation"></div>
+<nav class="toc" id="toc" aria-label="Table of contents">
+<button class="toc-toggle" id="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+<ol class="toc-list" id="toc-list"><li class="toc-l1"><a href="#world-1-the-tomb">WORLD 1 - the tomb</a></li>
+<li class="toc-l1"><a href="#what-meeting-2-changed-in-this-document">WHAT MEETING 2 CHANGED IN THIS DOCUMENT</a></li>
+<li class="toc-l1"><a href="#the-reading-everything-else-hangs-off">THE READING EVERYTHING ELSE HANGS OFF</a></li>
+<li class="toc-l2"><a href="#what-is-already-on-screen">What is already on screen</a></li>
+<li class="toc-l2"><a href="#the-four-as-a-set">The four, as a set</a></li>
+<li class="toc-l2"><a href="#the-first-frame-of-the-game-is-him-standing-on-his-own-grave">The first frame of the game is him standing on his own grave</a></li>
+<li class="toc-l2"><a href="#the-two-rules-this-must-obey">The two rules this must obey</a></li>
+<li class="toc-l1"><a href="#the-descent-and-what-world-1-owes-it">THE DESCENT, AND WHAT WORLD 1 OWES IT</a></li>
+<li class="toc-l2"><a href="#a-pyramid-is-famous-for-going-up">A pyramid is famous for going up</a></li>
+<li class="toc-l2"><a href="#the-inside-is-already-bigger-than-the-outside-and-it-ships-t">The inside is already bigger than the outside, and it ships today</a></li>
+<li class="toc-l2"><a href="#the-enclosure-ladder-as-shipped">The enclosure ladder, as shipped</a></li>
+<li class="toc-l2"><a href="#depth-and-the-owner-s-new-instruction">Depth, and the owner's new instruction</a></li>
+<li class="toc-l1"><a href="#the-cast">THE CAST</a></li>
+<li class="toc-l2"><a href="#the-spirit">The spirit</a></li>
+<li class="toc-l2"><a href="#the-five-gods-are-the-tomb-s-immune-system">The five gods are the tomb's immune system</a></li>
+<li class="toc-l2"><a href="#the-archaeologist">The archaeologist</a></li>
+<li class="toc-l2"><a href="#the-player">The player</a></li>
+<li class="toc-l1"><a href="#the-map-is-the-act-structure">THE MAP IS THE ACT STRUCTURE</a></li>
+<li class="toc-l2"><a href="#why-each-god-is-where-it-is">Why each god is where it is</a></li>
+<li class="toc-l1"><a href="#where-the-story-is-told">WHERE THE STORY IS TOLD</a></li>
+<li class="toc-l1"><a href="#she-asks-and-then-she-stops">SHE ASKS, AND THEN SHE STOPS</a></li>
+<li class="toc-l2"><a href="#how-she-speaks-at-all">How she speaks at all</a></li>
+<li class="toc-l2"><a href="#where-she-is-and-why-he-never-answers">Where she is, and why he never answers</a></li>
+<li class="toc-l2"><a href="#what-she-is-actually-asking">What she is actually asking</a></li>
+<li class="toc-l2"><a href="#where-she-stops">Where she stops</a></li>
+<li class="toc-l2"><a href="#the-one-visible-thing-in-act-3">The one visible thing in Act 3</a></li>
+<li class="toc-l2"><a href="#what-the-voice-costs-in-total">What the voice costs, in total</a></li>
+<li class="toc-l1"><a href="#the-gatekeeper-s-two-words">THE GATEKEEPER'S TWO WORDS</a></li>
+<li class="toc-l1"><a href="#the-camp-gets-warmer">THE CAMP GETS WARMER</a></li>
+<li class="toc-l1"><a href="#the-four-jars">THE FOUR JARS</a></li>
+<li class="toc-l2"><a href="#what-they-are">What they are</a></li>
+<li class="toc-l2"><a href="#what-each-one-does">What each one does</a></li>
+<li class="toc-l2"><a href="#what-the-fourth-one-does">What the fourth one does</a></li>
+<li class="toc-l2"><a href="#proposal-three-jars-run-the-machine-the-fourth-opens-the-roo">PROPOSAL: three jars run the machine, the fourth opens the room</a></li>
+<li class="toc-l1"><a href="#the-kindling-the-recommendation-and-what-it-costs">THE KINDLING: THE RECOMMENDATION, AND WHAT IT COSTS</a></li>
+<li class="toc-l2"><a href="#what-speaker-2-was-actually-objecting-to">What Speaker 2 was actually objecting to</a></li>
+<li class="toc-l2"><a href="#what-the-power-system-actually-is-verified">What the power system actually is, verified</a></li>
+<li class="toc-l2"><a href="#the-three-options-priced">The three options, priced</a></li>
+<li class="toc-l2"><a href="#and-the-story-reason-is-stronger-than-the-cost-reason">And the story reason is stronger than the cost reason</a></li>
+<li class="toc-l1"><a href="#the-serdab-is-the-stage">THE SERDAB IS THE STAGE</a></li>
+<li class="toc-l2"><a href="#and-a-serdab-is-where-the-soul-is-kept">And a serdab is where the soul is kept</a></li>
+<li class="toc-l2"><a href="#the-eleventh-niche-is-the-way-down">The eleventh niche is the way down</a></li>
+<li class="toc-l1"><a href="#the-boss-encounter-set-and-how-it-goes-away-reads">THE BOSS ENCOUNTER: SET, AND HOW &quot;IT GOES AWAY&quot; READS</a></li>
+<li class="toc-l1"><a href="#the-mario-twist-staged">THE MARIO TWIST, STAGED</a></li>
+<li class="toc-l2"><a href="#the-end-card">The end card</a></li>
+<li class="toc-l2"><a href="#and-then-the-player-is-in-the-niche-going-down">And then the player is in the niche, going down</a></li>
+<li class="toc-l1"><a href="#what-world-1-must-plant">WHAT WORLD 1 MUST PLANT</a></li>
+<li class="toc-l1"><a href="#the-map-brief">THE MAP BRIEF</a></li>
+<li class="toc-l2"><a href="#the-honest-finding-first">The honest finding first</a></li>
+<li class="toc-l2"><a href="#the-two-real-gaps">The two real gaps</a></li>
+<li class="toc-l2"><a href="#the-constraint-the-map-lane-must-know-before-it-starts">The constraint the map lane must know before it starts</a></li>
+<li class="toc-l2"><a href="#the-purposes-in-the-order-the-player-meets-them">The purposes, in the order the player meets them</a></li>
+<li class="toc-l2"><a href="#what-the-existing-rooms-become">What the existing rooms become</a></li>
+<li class="toc-l2"><a href="#four-warnings-for-the-map-lane">Four warnings for the map lane</a></li>
+<li class="toc-l1"><a href="#open-questions">OPEN QUESTIONS</a></li></ol>
+</nav>
+<main class="doc" id="doc">
+<h1 id="world-1-the-tomb">WORLD 1 - the tomb<a class="anchor" href="#world-1-the-tomb" aria-label="link to this section">#</a></h1>
+<div class="banner" role="note">
+<span class="banner-tag">Two names settled 2026-08-01</span>
+<p>The queen is <strong>HETEPHERES</strong>, and the pre-Egyptian builders of the gate are <strong>THE ANCIENTS</strong>. Both are locked and applied throughout. The Ancients are called that in fiction because no one can read their writing, so no one knows what they called themselves: the name is an admission of ignorance rather than a label.</p>
+<p class="banner-note">The two story-meeting transcripts are left alone. They record what was said in the room, and the words said there were different.</p>
+</div>
+<details class="decisions" id="decisions">
+<summary><span class="d-title">Decisions waiting on you</span> <span class="d-counts">0 open, 2 proposals</span></summary>
+<div class="d-body">
+<p class="d-note">Every OPEN and every PROPOSAL in the document, in the order they appear. Read the story first. These are here so you can go straight back to what needs your call.</p>
+<div class="d-group"><h3 class="d-h">Open, genuinely undecided (0)</h3></div>
+<div class="d-group"><h3 class="d-h">Proposals, overrule at no cost (2)</h3><a class="d-row d-proposal" href="#m-9">
+<span class="chip chip-proposal">PROPOSAL</span>
+<span class="d-text"><span class="d-section">The eleventh niche is the way down</span>PROPOSAL, mine, and it plants World 2 for free: there is a patch of the other realm's growth in the niche, the wrong colour, and he climbs past it without registering it. The first thing...</span>
+</a>
+<a class="d-row d-proposal" href="#m-10">
+<span class="chip chip-proposal">RECOMMENDATION</span>
+<span class="d-text"><span class="d-section">The two real gaps</span>RECOMMENDATION, mine: World 1 gets ONE real descent, not nine. Author the per-room depth number as data, as previously recommended, and build exactly one place where the player physically...</span>
+</a></div>
+
+</div>
+</details>
+
+<p>Rewritten 2026-08-01 against <code>docs/story-meeting-2-2026-08-01.md</code>, and reconciled
+with meeting 1, <code>MAP.md</code>, <code>STATE.md</code> and the shipped source.</p>
+<p><strong>This document is downstream of <code>docs/NARRATIVE.md</code></strong>, which holds the story
+told once, straight through. This is the buildable design for World 1: what is
+already on screen, what has to be built, what it costs, where every beat lands,
+and the brief the map lane will work from. It does not retell the plot.</p>
+<aside class="callout callout-note"><p><strong>HOW TO READ THIS.</strong></p>
+<div class="scrollbox"><table class="tbl tbl-plain"><tbody><tr><td>Plain text</td><td>transcript, owner decision, <code>MAP.md</code>, or shipped code. Cited where it is not obvious.</td></tr><tr><td><strong>FIXED</strong></td><td>decided. Not open.</td></tr><tr><td><strong>PROPOSAL</strong></td><td>invented by this lane. Overrule at no cost.</td></tr><tr><td><strong>REVISED</strong></td><td>meeting 2 overturned something this document previously said. The old version is named rather than quietly replaced.</td></tr></tbody></table></div>
+<p>Nothing here renames anything that exists. The gods, the weapons, the rooms,
+the boons, the death card and the four sons of Horus are all used as built.</p></aside>
+<hr>
+<h1 id="what-meeting-2-changed-in-this-document">WHAT MEETING 2 CHANGED IN THIS DOCUMENT<a class="anchor" href="#what-meeting-2-changed-in-this-document" aria-label="link to this section">#</a></h1>
+<p>Six things. Everything else in the previous draft survives, and the amount that
+survives is the argument that the reading was right.</p>
+<ol>
+<li><strong>The player is not the archaeologist's hired man.</strong> He is on the same
+ government manifest she is. She did not hire him. They are colleagues.</li>
+<li><strong>The sealed doorway is not a thing he never got through.</strong> He came OUT
+ through it, bleeding, four days ago. The first purchase in the game is going
+ back into the building he died escaping.</li>
+<li><strong>The four-jar chain is not a name being restored.</strong> It is four dead
+ colleagues being fed into a machine. The name is what he thinks he is doing.</li>
+<li><strong>The jars carry the flashbacks</strong>, which retires the cut scene meeting 2 asked
+ for and gives World 1 the whole origin, in quarters.</li>
+<li><strong>The Kindling is repointed rather than pulled.</strong> Feeding the third jar in
+ turns the power on. The lever goes; the fire bowl, the light ramp, the horn
+ and chime, the shrines waking and the notice all stay exactly as shipped.</li>
+<li><strong>Act 3 gets one visible fact it did not have:</strong> the horde walking past her
+ lamp, once, unremarked.</li>
+</ol>
+<p><strong>What did NOT change, and it is most of the document:</strong> the death loop, the four
+pieces of shipped machinery already playing it, the grave at the spawn, her five
+questions, the lowercase voice, the Kindling notice overwriting her mid-sentence,
+the camp gradient, the Serdab as the stage, the eleventh niche as the exit, Set's
+flare, and the end card.</p>
+<hr>
+<h1 id="the-reading-everything-else-hangs-off">THE READING EVERYTHING ELSE HANGS OFF<a class="anchor" href="#the-reading-everything-else-hangs-off" aria-label="link to this section">#</a></h1>
+<p><strong>The player dies constantly and gets back up, and he is one of the raised.</strong></p>
+<p>He is not learning to survive. He is failing to stay down.</p>
+<aside class="callout callout-revised" id="m-1" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED, and this is the largest single change in the project.</strong> The previous
+draft had ONE power doing this, and the twist was that the player was
+personally housing the spirit, which is why he kept rising, and the ending was
+that he chooses to stay down.</p>
+<p>Meeting 2 splits it in two. The spirit raised everything under the sand,
+including his corpse. <strong>The gatekeeper, one of the Ancients, imprisoned under
+a different desert, is the one standing that corpse up after every death,
+because he has picked it and needs it.</strong></p>
+<p><strong>What survives:</strong> he IS one of the risen, he IS part of her work, and at the
+end he goes through the gate with everything else that came through. Meeting 2
+says this outright at 31:24. <strong>What is discarded:</strong> the player as a vessel. He
+is not a container. He is inventory.</p>
+<p>Full argument, including the one line in meeting 2 that contradicts this and
+why to reject it, in <code>NARRATIVE.md</code> under &quot;What stands the player up&quot;.</p></div>
+</aside>
+<p><strong>World 1 says none of this and must not.</strong> It is written here so that nobody
+building World 1 accidentally spends it.</p>
+<h2 id="what-is-already-on-screen">What is already on screen<a class="anchor" href="#what-is-already-on-screen" aria-label="link to this section">#</a></h2>
+<p>None of the following is a proposal. All of it ships today.</p>
+<p><strong>The death card already says the player failed judgement and was sent back.</strong>
+<code>ui/death.js</code> puts UNWORTHY in a cartouche with THE HEART OUTWEIGHS THE FEATHER
+beneath it, and the file's own comment states why: in the Hall of Two Truths a
+heart that weighs too much is fed to Ammit and the name is erased. That is a
+final verdict. And then he stands up. The game has been contradicting its own
+death card since the card shipped.</p>
+<p><strong>The player's cartouche has no name in it, because he does not remember his
+name.</strong> A cartouche is the oval a NAME is written in, and <code>ui/death.js</code> says so
+in its own comment. The word inside the player's loop is UNWORTHY. That is a
+verdict standing where a name should be.</p>
+<p><strong>The reset rule is already the right rule.</strong> What carries over is what he earned
+with his hands - gold, weapons, Altar upgrades, ammunition, grenades, doors
+bought open, the power state of the necropolis. What does not carry over is the
+wave, the power-ups, and every shrine boon. Read as mechanics, a fair checkpoint.
+Read as story: you keep your possessions, and the gods take their favour back
+every single time.</p>
+<p><strong>Every death returns him to the exact place he was first killed.</strong> The strongest
+item on the list and it was built for an unrelated reason. The owner asked for a
+usability fix - spawn back at the beginning, not where I died - and it shipped in
+<code>d689bad</code>. <code>restart()</code> calls <code>toTheBeginning()</code>, which puts the body at the
+courtyard spawn facing the pyramid, by teleport if he died outside and through
+<code>spaces.enter('exterior')</code> if he died inside, because the interior is a different
+world and a written coordinate would drop him outside its bounds.</p>
+<p><strong>The beginning is where he was killed.</strong> <code>courtyard.js</code> names the spawn at
+<code>(0, 30)</code> twice in its own comments. So the game does not return him to a respawn
+point. It returns him to the spot, from either world, every time.</p>
+<p><strong>There are already two different ways to come back and the game distinguishes
+them.</strong> The Shrine of Anubis costs 1500, forgives one death, and announces
+itself: ANUBIS WEIGHS YOUR HEART AND RETURNS IT. A god, named, paid, once. Every
+other return has no god, no name, no notice and no price, and it puts him outside
+the door. The legitimate case is in the build as the control, which is what makes
+the other case legible as an anomaly. Anubis is also the cheapest shrine in the
+map and stands in the first room inside the pyramid. He is the only one still
+willing to deal.</p>
+<p><strong>The game already counts it.</strong> <code>state.resets</code> in <code>ui/death.js</code>.</p>
+<p><strong>The confirm button already says KEEP THE VIGIL.</strong> A vigil is a watch kept over
+the dead.</p>
+<h2 id="the-four-as-a-set">The four, as a set<a class="anchor" href="#the-four-as-a-set" aria-label="link to this section">#</a></h2>
+<p>Singly, coincidences. Together, the argument that this reading is right rather
+than imposed: a fail-state convention, a typographic rule, a usability complaint,
+and a level-design law, built for four unrelated reasons, that between them
+already stage the story.</p>
+<ol>
+<li><strong>The death card judges him personally and erases him, and then he stands up.</strong></li>
+<li><strong>His cartouche carries a verdict where a name should be.</strong></li>
+<li><strong><code>restart()</code> returns him to the place he died, every time</strong>, from either
+ world.</li>
+<li><strong>The Serdab, the only room with no spawn points, is the only room where the
+ twist can land without a horde arriving.</strong></li>
+</ol>
+<h2 id="the-first-frame-of-the-game-is-him-standing-on-his-own-grave">The first frame of the game is him standing on his own grave<a class="anchor" href="#the-first-frame-of-the-game-is-him-standing-on-his-own-grave" aria-label="link to this section">#</a></h2>
+<p>He died at <code>(0, 30)</code>. The game opens there, with the one person who knows
+standing near him, before a shot is fired and before the doorway is bought.</p>
+<p><strong>The avenue is the walk he did not survive</strong>, and the player repeats it every
+run. <code>courtyard.js</code> already describes the avenue exactly this way: the walk from
+the spawn to the doorway.</p>
+<aside class="callout callout-revised" id="m-2" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED.</strong> The previous draft said &quot;the sealed doorway at 1000 gold is the
+thing he died in front of and never got through&quot;. Meeting 2 makes that wrong.
+<strong>He came OUT through it.</strong> He was inside, the gate opened, the spirit killed
+the team, and he ran the whole length of the building and made it into the sun
+and got about thirty units up the avenue before he bled out.</p>
+<p>The correct line is better: <strong>the first purchase in this game is going back
+into the building he died escaping</strong>, and it costs a thousand gold he does not
+have, so he has to earn it off the dead first.</p></div>
+</aside>
+<h3 id="do-not-mark-the-spot">DO NOT MARK THE SPOT<a class="anchor" href="#do-not-mark-the-spot" aria-label="link to this section">#</a></h3>
+<p><strong>FIXED: nothing is placed at <code>(0, 30)</code>. Not a prop, not a stain, not a notice
+line, not a change in the dressing.</strong></p>
+<p>The entire design of this character is that he does not know and is never told,
+and a marker is the game telling him. It would also be the one piece of set
+dressing in the courtyard a first-time player would stop and look at, which is
+the opposite of what the beat needs. The spot is load-bearing precisely because
+it is unremarkable.</p>
+<p>One thing is placed nearby and it was already there: <code>courtyard.js</code> puts the first
+canopic jar in the west chapel he passes on the walk down from <code>(0, 30)</code>. That is
+the errand. It needs no annotation.</p>
+<h2 id="the-two-rules-this-must-obey">The two rules this must obey<a class="anchor" href="#the-two-rules-this-must-obey" aria-label="link to this section">#</a></h2>
+<p><strong>It must never be told.</strong> No notice text, no objective line, no wall carving says
+&quot;you are one of the raised&quot;. It is inferable from the death card, from what he
+keeps and loses, from where he wakes up, and from what the archaeologist does not
+say.</p>
+<p><strong>World 1 plants it and is complete without it.</strong> A player who finishes World 1
+and never joins the dots has a whole story: a tomb, a job, a friend, a name, and a
+room at the bottom with the wrong person sitting in it.</p>
+<hr>
+<h1 id="the-descent-and-what-world-1-owes-it">THE DESCENT, AND WHAT WORLD 1 OWES IT<a class="anchor" href="#the-descent-and-what-world-1-owes-it" aria-label="link to this section">#</a></h1>
+<h2 id="a-pyramid-is-famous-for-going-up">A pyramid is famous for going up<a class="anchor" href="#a-pyramid-is-famous-for-going-up" aria-label="link to this section">#</a></h2>
+<p>Every image anyone holds of a pyramid is a point against the sky. Going DOWN
+through one is wrong before anything has happened. World 1 does not have to earn
+that. It has to not spend it. Act 3 is the last floor that still looks like a tomb
+should: Egyptian, knowable, gods with names and a procedure. <strong>That belief is the
+asset. World 2 spends it.</strong></p>
+<h2 id="the-inside-is-already-bigger-than-the-outside-and-it-ships-t">The inside is already bigger than the outside, and it ships today<a class="anchor" href="#the-inside-is-already-bigger-than-the-outside-and-it-ships-t" aria-label="link to this section">#</a></h2>
+<p><code>rooms.js</code> opens with this, written as an engineering note:</p>
+<aside class="callout callout-note"><p>&quot;The interior is a separate cell from the courtyard rather than a literal
+cavity inside the exterior pyramid: the playable interior is far larger than
+the 62-unit stepped mass that reads well on the skyline, and no amount of
+scaling reconciles the two.&quot;</p></aside>
+<p>Read as engineering, a compromise. Read as story, the first symptom. Nine rooms, a
+38-unit gallery and a 30-unit shaft do not fit inside the building he walked up
+to, and the game has never once acknowledged it. <strong>What is required is that
+nobody ever fixes it and that no line of copy ever excuses it.</strong></p>
+<aside class="callout callout-note"><p><strong>Meeting 2 supplies a cause and it should not be used.</strong> A gate leaning open
+distorting the space around it is exactly what an unexplained gravitational
+anomaly and an impossible interior both look like. Keep the cause in the world
+for consistency. Do not write the line.</p></aside>
+<h2 id="the-enclosure-ladder-as-shipped">The enclosure ladder, as shipped<a class="anchor" href="#the-enclosure-ladder-as-shipped" aria-label="link to this section">#</a></h2>
+<p><code>rooms.js</code> carries a <code>height</code> per room:</p>
+<div class="scrollbox"><pre><code>star-shaft         30      the one gasp of height, and it points UP
+great-gallery      16
+kings-chamber      12
+hall-of-offerings   9
+embalming-chamber   8
+chamber-of-ascent   7
+granary-vault       7
+canopic-crypt       6
+serdab              5      the way down</code></pre></div>
+<p><strong>The last room of World 1 already has the lowest ceiling in the game, and nobody
+put it there for this reason.</strong> Fourteen by fourteen by five, the smallest room in
+the map by a factor of two, and it is where the player leaves. The enclosure
+bottoms out exactly at the exit.</p>
+<p>So World 1 owes the trilogy three refusals rather than three builds:</p>
+<ol>
+<li><strong>Do not add a room taller than the Great Gallery.</strong> Sixteen is the ceiling of
+ the ceilings.</li>
+<li><strong>Do not give the Serdab more height.</strong> Five is the floor.</li>
+<li><strong>Keep the Star Shaft as the last time up is ever offered.</strong> Thirty units of
+ void aimed at the sky with a rope in it that ends at nothing. It is a false
+ promise and it should stay one.</li>
+</ol>
+<h2 id="depth-and-the-owner-s-new-instruction">Depth, and the owner's new instruction<a class="anchor" href="#depth-and-the-owner-s-new-instruction" aria-label="link to this section">#</a></h2>
+<aside class="callout callout-revised" id="m-3" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED by an owner instruction after meeting 2: &quot;according to the story we
+go down deeper and deeper as we play, so we need a map building phase that
+connects the map with the story.&quot;</strong></p>
+<p>The previous recommendation was to leave the geometry horizontal and author a
+per-room <code>depth</code> number as data, on the grounds that rebuilding nine ratified
+rooms onto a vertical axis buys a number a data field buys for free. That
+recommendation is now superseded in part. See the map brief at the end of this
+document.</p></div>
+</aside>
+<p><strong>The depth readout still ships and the argument for it is unchanged.</strong> The wave
+number is a scoreboard; metres below the sand is a story. <code>index.html</code>'s ammo
+block already stacks two rows and states the rule in its own comment - &quot;it sits
+under the wave counter because it is the same fact at a different rate&quot; - and a
+depth row is a third fact at a third rate. The CSS already separates numerals from
+labels, so it costs one span and no new styling.</p>
+<p><strong>Recommendation: depth sits beside the wave counter, not instead of it</strong>, and it
+derives from the deepest room reached rather than from the wave. Depth that ticks
+up while the player stands still reads as a bug before it reads as dread.</p>
+<hr>
+<h1 id="the-cast">THE CAST<a class="anchor" href="#the-cast" aria-label="link to this section">#</a></h1>
+<h2 id="the-spirit">The spirit<a class="anchor" href="#the-spirit" aria-label="link to this section">#</a></h2>
+<p><strong>Nameless in World 1.</strong> It is a sign chiselled into walls, not a noun. Nothing in
+the UI, no notice, no wall says what it is called.</p>
+<aside class="callout callout-revised" id="m-4" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED, and it is one of two decisions waiting on the owner.</strong> The previous
+draft had HETEPHERES as the spirit's name, restored glyph by glyph by the jar
+chain, and the rescue of that name as the dramatic question of World 1. Meeting
+2 kills the rescue at 11:54 and makes the antagonist &quot;a real Egyptian god&quot;,
+which a Fourth Dynasty queen is not.</p>
+<p><strong>Recommendation: Hetepheres stays as the name on the struck cartouche and stops
+being a character.</strong> She is the dead queen whose tomb this is. Restoring an
+effaced royal name is a real thing archaeologists do and it is what the
+archaeologist was down here doing. The player finishes her work and thinks that
+is the job.</p>
+<p>Full argument, and the alternative if the owner wants a literal goddess, in
+<code>NARRATIVE.md</code>.</p></div>
+</aside>
+<p><strong>What this costs World 1: nothing, and it retires a problem.</strong> The antagonist
+being genuinely nameless in World 1 is what the document wanted anyway, and the
+effaced cartouche now has an unambiguous meaning: it is the mark of a thing that
+takes names, cut over the name of a woman who is not coming back.</p>
+<h2 id="the-five-gods-are-the-tomb-s-immune-system">The five gods are the tomb's immune system<a class="anchor" href="#the-five-gods-are-the-tomb-s-immune-system" aria-label="link to this section">#</a></h2>
+<p><code>boss.js</code> ships Anubis, Ammit, Apep, Sekhmet and Set, one per fifth wave, with
+telegraphed abilities.</p>
+<p><strong>PROPOSAL: they are the tomb's staff, not the antagonist's army.</strong> They come for
+him because he is a robber in a grave and because he will not stay judged. Anubis
+weighs. Ammit devours the heart that fails. The death card is the verdict at the
+end of that process, and he keeps walking away from it, so the tomb sends
+something bigger.</p>
+<aside class="callout callout-note"><p><strong>Meeting 2 promotes this from flavour to structure.</strong> If the Ancients are
+what got remembered as the Egyptian gods, the five bosses are the gatekeeper's
+colleagues, still at their posts, removing things that came up out of the sand.
+<strong>Which means the ending of the trilogy is rehearsed five times in World 1 and
+the player reads it as boss fights.</strong></p></aside>
+<p>Three consequences and none of them are flavour:</p>
+<ol>
+<li>The death card and the boss roster become one system rather than two Egyptian
+ things in the same game.</li>
+<li>Defeating four and finding the fifth was a puppet is not a cheat. He was never
+ fighting the antagonist. He was being processed, repeatedly, by an institution
+ that could not make it stick.</li>
+<li>It sets up World 2, which has no judges, no rules and no procedure, and the
+ player should feel the loss.</li>
+</ol>
+<h2 id="the-archaeologist">The archaeologist<a class="anchor" href="#the-archaeologist" aria-label="link to this section">#</a></h2>
+<p><strong>FIXED: they were friends. She watched him die. She is looking at him.</strong> Her
+surprise is not vague. She has certain, first-hand knowledge that he is dead. She
+was there.</p>
+<p><strong>She is the only one in the game who knows what he is, and he does not.</strong> That
+asymmetry is the entire relationship, it requires no dialogue system, and the
+player is on his side of it: they know exactly as much as he does, which is
+nothing.</p>
+<p><strong>She is herself when he meets her. She is taken DURING World 1</strong>, at the machine,
+and the Serdab is where he finds out rather than when it happened.</p>
+<aside class="callout callout-revised" id="m-5" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED by meeting 2 in one particular.</strong> She did not hire him. They are
+colleagues on the same government expedition. Everything else about her is
+unchanged, and the colleague version is stronger: she is not a client who lost
+a contractor, she is the last of seven.</p></div>
+</aside>
+<p><strong>PROPOSAL: she keeps working with him because she is hoping she was wrong.</strong> The
+colder read - she needs him and is using him - is playable, but it makes her a
+second manipulator in a game that already has one thing using people, and it makes
+her stopping mean less. If she has been hoping, then what the possession takes is
+the hope, and the silence is a bereavement the player does not know they are
+watching.</p>
+<h3 id="what-the-possession-does-to-her-it-removes-a-doubt">What the possession does to her: it removes a doubt<a class="anchor" href="#what-the-possession-does-to-her-it-removes-a-doubt" aria-label="link to this section">#</a></h3>
+<p>The coldest thing in the document and it is what makes the tell motivated rather
+than merely clever.</p>
+<p>Her questions are <strong>reconciliation, not curiosity.</strong> She is trying to square a
+body she personally witnessed against a man walking around in front of her. She is
+checking whether she is the one who is wrong.</p>
+<p><strong>The thing that takes her already knows the answer.</strong> It does not need to ask how
+he is walking around. It is the thing that raised him.</p>
+<p>So the possession adds no menace. <strong>It subtracts a doubt.</strong> Her confusion was the
+last human part of her still trying to reconcile what she saw, and when that goes,
+nothing appears in its place. That is why the tell is an absence.</p>
+<h3 id="the-objective-panel-does-not-change-hands-visibly">The objective panel does not change hands visibly<a class="anchor" href="#the-objective-panel-does-not-change-hands-visibly" aria-label="link to this section">#</a></h3>
+<p><code>ui/objective.js</code> has been naming the next thing to do since the first frame,
+derived from the live map, always true, never a script. For the first half of
+World 1 it is her, genuinely helping her friend. After she is taken it is the
+thing wearing her, and <strong>the panel is identical either side.</strong></p>
+<p>That is the difference between a twist and a cheat: <strong>the game never lies. The
+source of the instructions changes and the instructions do not.</strong> Every price,
+every route, every count stays accurate, because the panel is derived from real
+state and could not lie if it wanted to.</p>
+<p>And it disarms the Embalming Chamber notebook, which an earlier draft had as a
+trap. <strong>The four niches are chalk-numbered in the wrong order because she tried
+the chain and got it wrong.</strong> She is an archaeologist doing her job badly under
+pressure, in the dark, with something killing her crew. There is nothing sinister
+in that room. That is what makes it hers.</p>
+<p><strong>PROPOSAL: unnamed, and she has no body until the Serdab.</strong> For twenty-five waves
+she is a lamp ahead in the dark and a voice, and the Serdab is the first time she
+has a form at all, which is also the first look the player gets at what she has
+become.</p>
+<h2 id="the-player">The player<a class="anchor" href="#the-player" aria-label="link to this section">#</a></h2>
+<p><strong>FIXED by meeting 2: he is one of the seven the government sent in.</strong> A
+scientist or an archaeologist on the same manifest as his friend, dispatched under
+cover of discovery as a test subject.</p>
+<aside class="callout callout-revised" id="m-6" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED.</strong> The previous draft proposed he was her hired man - a looter or a
+freelance hand - and argued it from the game's economy. <strong>Meeting 2 supersedes
+the identity and the arguments survive intact, aimed at a better target:</strong></p>
+<ul>
+<li><strong>The economy is a looter's economy</strong>, and a man with no memory strips a tomb
+for gold because he has no idea he used to be the kind of person who would
+not. That is worse than a looter looting, which is the point.</li>
+<li><strong>The death card judges him personally.</strong> UNWORTHY only lands on somebody who
+could plausibly be found wanting, and the tomb is not wrong.</li>
+<li><strong>He starts the run holding grave gold and has never been inside.</strong>
+Difficulty hands out 750, 500 or 400 gold on the first frame. Nobody put that
+there for story reasons and it is there.</li>
+</ul>
+<p>Rejected, and still rejected: a soldier or mercenary escort, which explains the
+guns and nothing else. A descendant or a chosen one, which the tomb calling him
+UNWORTHY contradicts.</p></div>
+</aside>
+<p><strong>PROPOSAL: he is never named and never speaks.</strong> The first identity he gets is
+his own face on the box art at the end of World 3. That is a better first look at
+yourself than a name on a HUD, and it is the only name a man with an empty
+cartouche is ever going to get.</p>
+<p><strong>He never answers her, and this is the sharpest thing available.</strong> The player has
+no voice. To the player that is a genre convention so ordinary it is invisible. To
+her it is fifteen waves of calling to someone who will not say anything back.
+<strong>The player's silence is a UI limitation to the player and a symptom to her.</strong></p>
+<hr>
+<h1 id="the-map-is-the-act-structure">THE MAP IS THE ACT STRUCTURE<a class="anchor" href="#the-map-is-the-act-structure" aria-label="link to this section">#</a></h1>
+<p><code>MAP.md</code> ratifies three acts, three loops. World 1 uses them as written. Wave
+numbers are design intent; the economy paces the actual crossing.</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Act</th><th>Waves</th><th>Rooms</th><th>Boss</th><th>What the act is FOR</th></tr></thead><tbody><tr><td>1</td><td>1 - 5</td><td>avenue, Quarry, Canal, <strong>the camp</strong></td><td><strong>ANUBIS</strong> (5)</td><td>you are a robber, the tomb has noticed, and people were here</td></tr><tr><td>2</td><td>6 - 15</td><td>Chamber of Ascent, Hall of Offerings, Granary Vault, Great Gallery</td><td><strong>AMMIT</strong> (10), <strong>APEP</strong> (15)</td><td>somebody else has been down here, recently</td></tr><tr><td>3</td><td>16 - 25</td><td>Embalming Chamber, Canopic Crypt, Star Shaft, King's Chamber, Serdab</td><td><strong>SEKHMET</strong> (20), <strong>SET</strong> (25)</td><td>feed the machine, then find the niche empty</td></tr></tbody></table></div>
+<p><strong>World 1 runs twenty-five waves and ends.</strong> Five boss waves, one per god, no
+cycling.</p>
+<h2 id="why-each-god-is-where-it-is">Why each god is where it is<a class="anchor" href="#why-each-god-is-where-it-is" aria-label="link to this section">#</a></h2>
+<p>None of these are moves. Every one is the god the cycle already puts on that wave,
+in the room the map already puts the player in.</p>
+<p><strong>ANUBIS, wave 5, the avenue and the Act 1 circuit.</strong> Opener of the ways,
+conductor of the dead; abilities <code>summon</code> and <code>charge</code>. The first boss in the game
+raises more of them in front of you, which is the world's thesis in one fight.
+Fought outside, in a straight corridor with bought pockets, which is the hardest
+ground in Act 1 and is meant to be.</p>
+<p><strong>AMMIT, wave 10, the Great Gallery.</strong> Ammit eats the heart that fails the
+weighing, and by wave 10 the player has almost certainly read THE HEART OUTWEIGHS
+THE FEATHER. Wave 10 shows them what has been failing to finish the job. It
+happens in the biggest room in the map, under sixteen units of ceiling, on the
+two-loop floor, the only room that can hold <code>slam</code> and <code>volley</code> at once.</p>
+<p><strong>APEP, wave 15, the Star Shaft.</strong> Serpent of the outer dark that swallows the
+sun, fought at the bottom of thirty units of vertical void aimed at the stars.
+Apep teleports and volleys, the only ability pair that uses vertical space. Nobody
+placed this on purpose.</p>
+<p><strong>SEKHMET, wave 20, the King's Chamber.</strong> The lioness sent to slaughter mankind
+and stopped only by a trick. Charges and slams, 9600 health, fastest god in the
+roster. The largest room in the map, and since the two portals landed it is a room
+you can circle. On Hard it is not, until 1250 is paid.</p>
+<p><strong>SET, wave 25, the King's Chamber. The final boss of World 1.</strong> The usurper who
+murdered his brother and took his place. <code>boss.js</code> describes his crown in its own
+comment as &quot;the animal nobody has ever identified... exactly why it reads as WRONG
+rather than as any animal the player can name&quot;. A god whose own shape is not
+identifiable is the correct vessel for a thing that wears other people. He is also
+the only escalating boss, unlocking one more tell per quarter of health.</p>
+<hr>
+<h1 id="where-the-story-is-told">WHERE THE STORY IS TOLD<a class="anchor" href="#where-the-story-is-told" aria-label="link to this section">#</a></h1>
+<p>No cutscenes, no dialogue system. A beat that needs either is a beat that will not
+ship. The complete list of channels that exist today:</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Channel</th><th>File</th><th>Good for</th></tr></thead><tbody><tr><td><strong>The objective line</strong></td><td><code>ui/objective.js</code></td><td>the spine. One line, derived from the live map, never a script. It is also her instructions, and it does not have to change for that to be true.</td></tr><tr><td><strong>The notice pill</strong></td><td><code>main.js</code> <code>showNotice(text, ms)</code></td><td>events. Already carries THE KINDLING TAKES - THE PYRAMID WAKES.</td></tr><tr><td><strong>The death card</strong></td><td><code>ui/death.js</code></td><td>the theme, as a verdict, delivered on average twenty times a run. The most-read text in the game, <strong>and now the gatekeeper's only surface.</strong></td></tr><tr><td><strong>The prompt bus</strong></td><td><code>ui/prompt.js</code></td><td>one line under the crosshair, priority-arbitrated, with a refusal reason when a thing is not for sale at any price.</td></tr><tr><td><strong>The shrine boons</strong></td><td><code>systems/shrines.js</code></td><td>six named gods and what each grants. Buying one is choosing a patron; dying loses all of them.</td></tr><tr><td><strong>The canopic jar chain</strong></td><td><code>rooms.js</code>, <code>doors.js</code></td><td>four jars, four niches, one gate. UNBUILT, and the largest available surface.</td></tr><tr><td><strong>The geometry</strong></td><td><code>rooms.js</code> propSlots, <code>world/build.js</code></td><td>everything else, which is almost all of it.</td></tr><tr><td><strong>The boss telegraph</strong></td><td><code>boss.js</code> <code>setGlow()</code></td><td>an emissive ramp the player is trained to read as &quot;something is coming and you cannot stop it&quot;.</td></tr></tbody></table></div>
+<p>Six rules govern every beat below.</p>
+<ol>
+<li><strong>The objective line is the narrator, and it is derived rather than scripted.</strong>
+ Story enters it as milestones with a <code>done()</code> reading real state, exactly like
+ the rungs already there. Bolting a script on breaks the one property the file
+ was built for.</li>
+<li><strong>The notice pill is HER voice.</strong> One line, a few seconds, no queue. Used for
+ turns, never for exposition.</li>
+<li><strong>The death card is the GATEKEEPER's voice</strong>, and the two never share a
+ surface. That is the mechanical statement that they are different powers.</li>
+<li><strong>The geometry carries everything the text channels cannot.</strong></li>
+<li><strong>The telegraph glow is a loaded gun.</strong> Twenty-five waves teach the player that
+ a gold ramp means something is about to happen to them. It is used exactly once
+ on something that is not a boss, and that is the twist.</li>
+<li><strong>Nothing is told twice, and the central idea is never told once.</strong></li>
+</ol>
+<hr>
+<h1 id="she-asks-and-then-she-stops">SHE ASKS, AND THEN SHE STOPS<a class="anchor" href="#she-asks-and-then-she-stops" aria-label="link to this section">#</a></h1>
+<p>The device: she asks the same impossible question five times in five ways, and
+then she is taken, and <strong>nothing appears - something is subtracted.</strong> The dog that
+did not bark, running inside a wave shooter.</p>
+<p>Three things have to be true or it collapses:</p>
+<ol>
+<li><strong>She has to ask enough times, in a recognisable shape, that the silence is
+ loud.</strong> Two is not a pattern. Five is.</li>
+<li><strong>The player is never told it happened.</strong> No notice saying she seems different.</li>
+<li><strong>It has to be findable on a replay.</strong> A second-run player should be able to
+ name the exact moment.</li>
+</ol>
+<h2 id="how-she-speaks-at-all">How she speaks at all<a class="anchor" href="#how-she-speaks-at-all" aria-label="link to this section">#</a></h2>
+<p><strong>The load-bearing question. If she cannot speak, the beat collapses.</strong></p>
+<p><code>showNotice(text, ms)</code> is seven lines. It writes <code>notice.textContent</code>, adds a
+class, clears one timer and sets another. It is handed to ten systems. Three
+problems, verified, and they are real:</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Problem</th><th>Why it matters</th></tr></thead><tbody><tr><td><strong>No queue.</strong> A second call overwrites the first mid-sentence, instantly, with no transition at all - the CSS transition is on the <code>on</code> class only, so an overwrite while already on is a hard swap.</td><td>The player buys things constantly. &quot;Need 400 more gold&quot; would eat her.</td></tr><tr><td><strong>No attribution.</strong> A line in that pill has no speaker.</td><td>Her voice would read as a system message.</td></tr><tr><td><strong>Wrong register.</strong> The pill is terse, systemic, and in capitals.</td><td>So is every other string in the game.</td></tr></tbody></table></div>
+<p><strong>PROPOSAL, and it solves all three with one property: she is the only lowercase
+text in the game.</strong></p>
+<p>Everything in this interface is capitals. THE KINDLING TAKES - THE PYRAMID WAKES.
+ANUBIS WEIGHS YOUR HEART AND RETURNS IT. BUY THE SEALED DOORWAY. UNWORTHY. N OF 4
+SONS RETURNED. Boon names go through <code>.toUpperCase()</code>. There is not one lowercase
+character on the HUD.</p>
+<p>So she gets lowercase, in the same pill, in the same place. No new element, no new
+position, no new vocabulary the player has to be taught. <strong>The shape of the text is
+the attribution.</strong> <code>ui/tokens.js</code> already establishes that this interface signals
+category through treatment rather than words - the objective panel takes a lapis
+inlay for gates gold cannot buy, described in its own comment as &quot;the one signal
+on the HUD a player can read without reading it&quot;. Lowercase is the same move in a
+channel nobody has used.</p>
+<p><strong>Collision is fixed with a hold, not a queue.</strong> Her lines cannot be clobbered; a
+system notice arriving during one is dropped rather than deferred. A queue would
+make the game talk over itself several seconds later, which is worse. Cost: one
+boolean and one timestamp.</p>
+<p><strong>There is exactly one exception to the hold and it is the whole point.</strong></p>
+<h2 id="where-she-is-and-why-he-never-answers">Where she is, and why he never answers<a class="anchor" href="#where-she-is-and-why-he-never-answers" aria-label="link to this section">#</a></h2>
+<p><strong>She is ahead, in the dark, with a lamp.</strong> She is never a body in World 1. The
+player sees a lamp at distance in the rooms with real sightlines - the avenue, the
+Hall of Offerings down the colonnade aisle, the Great Gallery from the floor to
+the far ledge, the Star Shaft looking up - and she calls back. She can see him
+well enough to be certain it is him. He never gets a good look at her.</p>
+<p><strong>PROPOSAL: this also retires the camp gradient's biggest weakness.</strong> The lamps
+that get warmer as the player descends are not traces she left. They are her, just
+ahead. The player has been following a living person the whole time and reading it
+as archaeology.</p>
+<h2 id="what-she-is-actually-asking">What she is actually asking<a class="anchor" href="#what-she-is-actually-asking" aria-label="link to this section">#</a></h2>
+<p>Never &quot;how are you alive&quot;. She asks around it, the way a person does when the
+direct question is unaskable, and every one of them is her checking whether she is
+the one who is wrong.</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>#</th><th>Where</th><th>The line</th><th>First run</th><th>On replay</th></tr></thead><tbody><tr><td>1</td><td>the avenue, on the walk from <code>(0, 30)</code></td><td>&quot;i keep thinking you were further back. that walk in.&quot;</td><td>small talk under stress</td><td>she is describing the order they walked in when he was killed, and asking him to tell her she has it wrong</td></tr><tr><td>2</td><td>Chamber of Ascent, just inside</td><td>&quot;how many of us came in. i keep getting it wrong.&quot;</td><td>counting the crew</td><td>she counts the living and gets a number that includes him</td></tr><tr><td>3</td><td><strong>Great Gallery, mid-wave, from the far ledge</strong></td><td>&quot;you sound-&quot;</td><td>a bad line, a loud room</td><td>she almost has it, and stops herself</td></tr><tr><td>4</td><td>Canopic Crypt, Act 3</td><td>&quot;did anything happen to you. down there. anything you'd want to tell me.&quot;</td><td>are you hurt</td><td>she is holding the door open for him to say it, and he cannot</td></tr><tr><td>5</td><td>Embalming Chamber, at the machine</td><td>&quot;there's something i've been meaning to ask you since we-&quot;</td><td>interrupted</td><td>the last thing she ever says</td></tr></tbody></table></div>
+<p>Line 3 is the owner's &quot;very intense scene&quot;: the biggest room in the map, sixteen
+units of ceiling, two ledges and a bridge, and it is where the player is most
+likely to be fighting for their life while a woman six metres up says half a
+sentence about them. <strong>It passes by.</strong> It is also a removal inside the pattern,
+which pre-trains the player on her stopping short without them knowing.</p>
+<p><strong>Boss waves suppress her.</strong> Her lines defer to the next eligible room entry
+rather than firing into a boss fight. Two-line guard, and it protects the pattern
+from being spent on the one wave nobody will hear it.</p>
+<h2 id="where-she-stops">Where she stops<a class="anchor" href="#where-she-stops" aria-label="link to this section">#</a></h2>
+<p><strong>FIXED: at the machine, on the third jar, overwritten mid-sentence by the power
+notice.</strong></p>
+<p>She starts line 5. THE KINDLING TAKES - THE PYRAMID WAKES overwrites it, exactly
+as <code>showNotice</code> has done to everything since the day it shipped, in a frame where
+nine rooms are coming up and two sounds are landing and six shrines are waking and
+the player is looking at literally anything else.</p>
+<p><strong>And she never speaks again.</strong></p>
+<p>The player has been trained for fifteen waves that her lines always finish,
+because they hold. The one time a line is cut off is the last one. That is the
+same &quot;trained expectation, violated once&quot; device the Serdab reveal uses on the
+telegraph glow, which makes it the game's design language rather than a one-off
+trick.</p>
+<aside class="callout callout-revised" id="m-7" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED in trigger only, and it survives intact.</strong> The previous draft fired
+this on a lever pull in the Embalming Chamber. Meeting 2 asks for the jars to
+turn the power on instead. <strong>The beat is unchanged because the notice is
+unchanged</strong> - it fires on the third jar landing in its niche rather than on a
+lever, in the same room, with the same nine-room light ramp and the same two
+sounds behind it.</p>
+<p>It is arguably better. The game erases her in the same frame the machine starts
+running on her friends.</p></div>
+</aside>
+<p><strong>Ten waves of silence follow</strong>, waves roughly 16 to 25, all of Act 3. She is
+still seen. The lamps still move ahead. The rope in the Star Shaft still gets
+rigged. <strong>Nothing visibly changes</strong> - with one exception, below. The dog is still
+in the room.</p>
+<p>Alternatives considered and rejected:</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Moment</th><th>Rejected because</th></tr></thead><tbody><tr><td>First use of the Altar of Ptah</td><td>optional. Not every run does it, and the beat must be on the mandatory spine.</td></tr><tr><td>A boss wave</td><td>bosses recur every fifth wave; no unique landmark to name on a replay.</td></tr><tr><td>Entering the pyramid</td><td>too early. She has only asked once by then.</td></tr><tr><td>Buying into Act 3</td><td>there are three gallery gates and the player picks. Not a single moment.</td></tr></tbody></table></div>
+<p>The machine wins on every axis: mandatory, unique, once, loudest, and it already
+holds the microphone.</p>
+<h2 id="the-one-visible-thing-in-act-3">The one visible thing in Act 3<a class="anchor" href="#the-one-visible-thing-in-act-3" aria-label="link to this section">#</a></h2>
+<p><strong>PROPOSAL, mine, and it fixes a timeline problem meeting 2 created.</strong></p>
+<p>Once, after the machine runs, down a long sightline: <strong>her lamp is standing still
+and the horde is flowing around it.</strong> Not away from it and not toward it. Past it,
+the way water goes past a rock, while the player is fighting for his life in the
+foreground.</p>
+<p>Meeting 2 puts this tell in World 2 and has Speaker 1 land the line that makes it
+work - &quot;and they always have. But you just never thought about it.&quot; That claim is
+only true if the player could have seen it earlier, and as designed she is never in
+the same frame as the horde, so a replaying player has nothing to find.</p>
+<p><strong>What it costs:</strong> her lamp is already a proposed prop, actors already path, and
+the requirement is that the lamp sits somewhere actors path past during a wave.
+Near free.</p>
+<p><strong>What it must not do:</strong> be pointed at. No notice, no objective line, no camera
+help, no slowdown. It is one thing happening at the edge of a fight.</p>
+<h2 id="what-the-voice-costs-in-total">What the voice costs, in total<a class="anchor" href="#what-the-voice-costs-in-total" aria-label="link to this section">#</a></h2>
+<ul>
+<li>A one-shot voice list: <code>{ room, line }</code>, fired on first entry, suppressed during
+boss waves. <code>spaces.roomId</code> and the objective panel's own room helper already
+answer &quot;which room is the player in&quot;. Small.</li>
+<li>Lowercase styling on the notice pill: one class.</li>
+<li>The priority hold: one boolean, one timestamp, one deliberate exception.</li>
+<li>Her lamp at distance in four rooms plus one Act 3 placement: propSlots.</li>
+<li><strong>No dialogue system, no cutscene, no voice audio, no new UI element, no new
+position on screen.</strong></li>
+</ul>
+<p><strong>Voice audio is not on the table and should not be costed.</strong> The audio engine is
+1,875 lines of synthesised WebAudio with no sample-playback path at all - no
+decode, no mp3, no ogg, no wav anywhere in the project. All three voices in this
+trilogy are text.</p>
+<hr>
+<h1 id="the-gatekeeper-s-two-words">THE GATEKEEPER'S TWO WORDS<a class="anchor" href="#the-gatekeeper-s-two-words" aria-label="link to this section">#</a></h1>
+<p><strong>PROPOSAL, mine, and it is the cheapest strong beat available in the project.</strong></p>
+<p><code>ui/death.js</code> already stops the world, draws a cartouche with UNWORTHY in it and
+THE HEART OUTWEIGHS THE FEATHER beneath, holds a beat, and arms a button that
+waits indefinitely. That is a verdict being passed, on average twenty times a run,
+and it is the most-read text in the game.</p>
+<p><strong>Two or three words underneath it, in a different treatment, disagreeing with the
+verdict.</strong> Never a sentence. Never an explanation. The tomb says UNWORTHY and
+something else says otherwise, in two words, every single time, and then he stands
+up.</p>
+<p>Cost: one span, one string table, and the card is already built.</p>
+<p>What it buys, for that:</p>
+<ul>
+<li><strong>The loop acquires an owner the player can feel from the first death</strong>, without
+one line of exposition and without the game ever saying there are two powers.</li>
+<li><strong>The two voices get separate surfaces.</strong> She owns the pill. He owns the card.
+They never meet, and when she dies in World 2 the pill becomes his, which is the
+only announcement the handover needs.</li>
+<li><strong>The ending is set up thirty deaths in advance.</strong> The last time that card
+appears, on the far side of a shut gate, the two words do not arrive.</li>
+</ul>
+<aside class="callout callout-note"><p><strong>Do not build an in-run announcer queue for World 1.</strong> There is no queue
+anywhere in the UI - every text channel is last-write-wins or
+highest-priority-wins - and a real &quot;few words at a time&quot; queue is roughly 80 to
+120 lines on top of the existing priority bus. Build it in World 2, when she is
+dead and the pill is free.</p></aside>
+<hr>
+<h1 id="the-camp-gets-warmer">THE CAMP GETS WARMER<a class="anchor" href="#the-camp-gets-warmer" aria-label="link to this section">#</a></h1>
+<p>The whole staging of the twist, done entirely in <code>propSlots</code>.</p>
+<p>The player has to arrive at the Serdab already knowing a living person is down
+here, without a line of text saying so. Her kit is scattered through the map in a
+gradient, and the gradient is <strong>temperature</strong>.</p>
+<ul>
+<li><strong>Act 1.</strong> Sun-bleached. Rope frayed, chalk washed out, a survey peg leaning
+over. Weeks old.</li>
+<li><strong>Act 2.</strong> Crisp. Chalk sharp, numbers legible, a lamp with no flame in it. Days
+old.</li>
+<li><strong>Act 3.</strong> Warm. A lamp still burning in the Canopic Crypt. Hours, or none.</li>
+<li><strong>The King's Chamber has nothing modern in it at all.</strong> The trail stops at the
+door of the boss arena. Whoever left it either never went in or never came out.</li>
+</ul>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Room</th><th>What is there</th><th>Reads as</th></tr></thead><tbody><tr><td>Courtyard, the camp</td><td><strong>NEW.</strong> Tents, crates, a generator still running, an instrument array still logging</td><td>seven people came here on purpose with equipment and are not here</td></tr><tr><td>Courtyard, west chapel</td><td>jar 1 (already placed), a coil of survey line, peg 01, bleached</td><td>somebody catalogued this and left</td></tr><tr><td>Courtyard, the doorway</td><td>the first <strong>effaced cartouche</strong>, chiselled, with fresh chalk survey marks around it</td><td>somebody has been erasing names, and recently</td></tr><tr><td>Chamber of Ascent</td><td>folding stool, cold lamp, chalk arrows pointing at BOTH debris doors</td><td>they mapped it and could not decide either</td></tr><tr><td>Hall of Offerings</td><td>the ten colonnade columns chalk-numbered 01 to 10</td><td>a survey, done properly</td></tr><tr><td>Granary Vault</td><td>an empty stand with a chalk outline round where a jar used to be</td><td><code>MAP.md</code> moved jar 1 outside. The outline is the diegetic reason, and it turns a data move into a beat for free</td></tr><tr><td>Great Gallery</td><td>rope strung as a handline along both ledges and across the bridge</td><td>somebody rigged this room to be walked safely, so they expected to come back</td></tr><tr><td>Embalming Chamber</td><td>a notebook open on the offering table, chalk numbers 1 to 4 above the four niches <strong>in the wrong order</strong></td><td>they tried the chain and got it wrong</td></tr><tr><td>Canopic Crypt</td><td>a lamp, lit</td><td>they are here now</td></tr><tr><td>Star Shaft</td><td>a rope going up into the dark that ends at nothing</td><td>they went looking upward and it did not help</td></tr><tr><td>King's Chamber</td><td>nothing</td><td>the trail stops</td></tr><tr><td>Serdab</td><td>the stool, the lamp, the notebook</td><td>this is where they have been sitting</td></tr></tbody></table></div>
+<p><strong>PROPOSAL: six new propSlot types.</strong> <code>lamp</code>, <code>stool</code>, <code>peg</code>, <code>chalk</code>, <code>rope</code>,
+<code>notebook</code>. All boxes and cylinders. <code>rooms.js</code> is pure data and <code>build.js</code> is the
+only module allowed to turn a record into a mesh, so this is additive in the shape
+the file was designed for.</p>
+<p>Rejected: audio logs, readable journals, found footage. All three are a dialogue
+system in a costume. Rejected: making the traces collectibles with a counter. The
+gradient works because the player is not counting.</p>
+<hr>
+<h1 id="the-four-jars">THE FOUR JARS<a class="anchor" href="#the-four-jars" aria-label="link to this section">#</a></h1>
+<aside class="callout callout-revised" id="m-8" data-marker="revised">
+<span class="chip chip-revised">REVISED</span>
+<div class="callout-body"><p><strong>REVISED. This is the biggest content change meeting 2 makes to World 1.</strong></p>
+<p>The previous draft had the chain restoring the spirit's name glyph by glyph, and
+the four jars were an errand whose purpose was the name. Meeting 2 solves them
+outright: <strong>&quot;The jars are the souls of the scientists.&quot; / &quot;We consume the jars
+to give us the knowledge.&quot; / &quot;Do we put it in a machine?&quot; / &quot;Absolutely.&quot;</strong></p>
+<p>The name survives as the cover story. The souls are the truth. Neither is
+revealed as a trick, because the game never claims either.</p></div>
+</aside>
+<h2 id="what-they-are">What they are<a class="anchor" href="#what-they-are" aria-label="link to this section">#</a></h2>
+<p>Four dead colleagues, in four jars stoppered with the heads of the four sons of
+Horus, standing in four rooms because that is where this building puts them.</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Jar</th><th>Son</th><th>Where it stands today</th><th>Guardian goddess</th></tr></thead><tbody><tr><td>1</td><td>Imsety, human-headed, the liver</td><td>courtyard, west chapel</td><td>Isis</td></tr><tr><td>2</td><td>Hapy, baboon, the lungs</td><td>Star Shaft</td><td>Nephthys</td></tr><tr><td>3</td><td>Duamutef, jackal, the stomach</td><td>Canopic Crypt</td><td>Neith</td></tr><tr><td>4</td><td>Qebehsenuef, falcon, the intestines</td><td>King's Chamber</td><td>Serqet</td></tr></tbody></table></div>
+<p>Four niches wait in the Embalming Chamber, one per son, order irrelevant. The
+Serdab portal is <code>kind: 'puzzle'</code>, <code>cost: 0</code>, and <code>ui/objective.js</code> already prints
+<code>N OF 4 SONS RETURNED</code> as its detail line rather than a price, because a gate gold
+cannot buy is not a price.</p>
+<h2 id="what-each-one-does">What each one does<a class="anchor" href="#what-each-one-does" aria-label="link to this section">#</a></h2>
+<p><strong>Taking a jar gives him a fragment of what that person saw.</strong> Four fragments,
+four dead people's positions, in the order the map hands them over rather than the
+order they happened.</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Jar</th><th>Where</th><th>The fragment</th></tr></thead><tbody><tr><td>1</td><td>courtyard, before he is even inside</td><td>seven black shapes in a stone room, doing something to a door. No faces, no sound he can place</td></tr><tr><td>2</td><td>Star Shaft</td><td>the same room, and now there is growth on the wall behind them in a colour that is not a colour, and one shape is standing much too close to the door</td></tr><tr><td>3</td><td>Canopic Crypt</td><td>the shapes are being killed, and one of them is him, and the perspective is wrong because he is watching from where she was hiding</td></tr><tr><td>4</td><td>King's Chamber</td><td>he sees himself die. Not how. Just that he did, and that she was there</td></tr></tbody></table></div>
+<aside class="callout callout-note"><p><strong>This is what retires the cut scene</strong>, and the pricing is in <code>WORLDS.md</code> under
+&quot;The flashbacks, priced&quot;. The short version: a cut scene at the gate costs one
+new module of 300 to 450 lines and its load-bearing risk is the camera rig,
+which is welded to the player's head. Four held tableaus with a camera that never
+moves cost roughly 190 to 240 lines and buy the same content four times over, in
+the world that ships first.</p></aside>
+<h2 id="what-the-fourth-one-does">What the fourth one does<a class="anchor" href="#what-the-fourth-one-does" aria-label="link to this section">#</a></h2>
+<p><strong>Fourth jar home, the struck cartouche in the Serdab becomes readable, and the
+door opens.</strong></p>
+<p>The reward for the puzzle is a WORD ON A WALL, the cheapest art asset in the
+project. The existing objective line becomes the story's progress bar with no code
+change: <code>2 OF 4 SONS RETURNED</code> already means &quot;you are halfway&quot;.</p>
+<p>Rejected, and still rejected: the jars restoring health, gold or a weapon. The
+Sunspear is already the Serdab's reward and the shrine cap already lifts from 4 to
+6. Those stay. What the chain gains is a MEANING, not a second prize.</p>
+<h2 id="proposal-three-jars-run-the-machine-the-fourth-opens-the-roo">PROPOSAL: three jars run the machine, the fourth opens the room<a class="anchor" href="#proposal-three-jars-run-the-machine-the-fourth-opens-the-roo" aria-label="link to this section">#</a></h2>
+<p><strong>Three of four charges it. The fourth completes the cartouche and unseals the
+Serdab.</strong></p>
+<p>Three reasons, and the first is a hard engineering one.</p>
+<ol>
+<li><strong>Jar 4 is in the King's Chamber, and one of the two doors into the King's
+ Chamber is the power gate.</strong> On Normal there is a second, free door from the
+ Embalming Chamber, so four-jars-then-power is not strictly circular. On Hard
+ that free door is 1250 of debris, so a player who has not paid it needs power
+ to reach the jar that would give him power. Three-then-one removes the
+ dependency entirely instead of relying on the player having paid.</li>
+<li><strong>It paces the silence correctly.</strong> Line 5 is cut off on jar 3, which lands
+ around the Act 2 to Act 3 seam, and the ten waves of silence run through the
+ King's Chamber, Sekhmet, jar 4, Set and the Serdab. Four-jars-then-everything
+ compresses the whole of Act 3 into one moment.</li>
+<li><strong>It makes the fourth jar the one that matters.</strong> It is the only one that is
+ both the last fragment and the thing that opens the door.</li>
+</ol>
+<hr>
+<h1 id="the-kindling-the-recommendation-and-what-it-costs">THE KINDLING: THE RECOMMENDATION, AND WHAT IT COSTS<a class="anchor" href="#the-kindling-the-recommendation-and-what-it-costs" aria-label="link to this section">#</a></h1>
+<p>Speaker 2, at 15:05: &quot;Now we're copying too much of [Call of Duty] Zombies.&quot;
+Speaker 1: &quot;That's coded in now, so we would have to change it.&quot; Speaker 2: &quot;We'd
+have to rewrite it. We have to somehow turn on the power, maybe with those jars.&quot;</p>
+<p><strong>Unresolved in the room. Here is the cost and the call.</strong></p>
+<h2 id="what-speaker-2-was-actually-objecting-to">What Speaker 2 was actually objecting to<a class="anchor" href="#what-speaker-2-was-actually-objecting-to" aria-label="link to this section">#</a></h2>
+<p><strong>The chain, not the object.</strong> Read the exchange in order: Speaker 1 describes
+power, then perks, then pack-a-punch, and Speaker 2 says that is too much Zombies.
+Eighteen seconds later Speaker 2 supplies the replacement himself: per-world
+enchantments instead of perks.</p>
+<p><strong>So the divergence he asked for is already paid for elsewhere.</strong> The Kindling
+does not have to die for it.</p>
+<h2 id="what-the-power-system-actually-is-verified">What the power system actually is, verified<a class="anchor" href="#what-the-power-system-actually-is-verified" aria-label="link to this section">#</a></h2>
+<ul>
+<li><code>systems/power.js</code> is 166 lines of which about 45 are executable. It is almost
+entirely a documented seam.</li>
+<li>It holds three fields: <code>powered</code>, <code>refused</code>, <code>thrownAt</code>.</li>
+<li>It does not own the lights. Its own comment states the split: this file decides
+WHEN, <code>world/build.js</code> decides WHAT.</li>
+<li>On the throw it does four things: sets the flag, fires a boss horn then a shrine
+chime 260 ms later, fires the notice, and calls its listeners.</li>
+<li><strong>It gates six shrines and exactly one door.</strong> Not the Altar, not the mystery
+box, not the wall buys, not the other ten doors. All verified by signature.</li>
+<li><strong>Its public API has seven members and only two of them name a lever.</strong></li>
+<li>And <code>power.js</code> says this about itself, in its own comment: <strong>it exists &quot;for the
+harness and for the day the puzzle chain wants to light the map from somewhere
+else.&quot;</strong></li>
+</ul>
+<p><strong>The code anticipated this exact change and left the door open.</strong></p>
+<h2 id="the-three-options-priced">The three options, priced<a class="anchor" href="#the-three-options-priced" aria-label="link to this section">#</a></h2>
+<p><strong>Option A: rewrite the power system.</strong> The naive reading of the room.
+Approximately 15 source files touched, 630 to 780 lines written or rewritten, four
+existing test harnesses rewritten plus one new one at 400 to 800 lines, and seven
+golden screenshots regenerated. <strong>Not recommended, and most of that number is not
+even the Kindling.</strong></p>
+<p><strong>Option B: build the jar system and retire the Kindling fixture entirely.</strong> The
+jar system is roughly 250 to 400 new lines plus a new test harness, and <strong>it has
+to be built regardless</strong> - the Serdab is currently unreachable because the jar
+counter is hardcoded to zero and never written, and World 1's ending is gated on
+that room. On top of that already-committed work, retiring the fixture costs
+roughly 215 source lines across five files, four test harnesses, and seven golden
+images.</p>
+<p><strong>Option C, RECOMMENDED: repoint it. Keep the system, keep the fixture, move the
+trigger.</strong></p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>What happens to it</th><th>Cost</th></tr></thead><tbody><tr><td><code>systems/power.js</code></td><td><strong>Untouched.</strong> Its API is preserved verbatim, so the six shrines, all six shrine light ramps, the brazier lift and the door enforcement stay out of the diff. The jar system calls the existing <code>throwSwitch()</code>.</td><td>0</td></tr><tr><td>The fire bowl in the Embalming Chamber</td><td><strong>Stays as scenery and still lights.</strong> It is a granite housing, a gold bowl, an ember sphere and a point light that goes from zero to full. It just stops being a thing you pull. Keeping the mesh saves the fixture, saves its golden screenshot, and keeps the light</td><td>~10</td></tr><tr><td>The lever's interactability</td><td>Deleted from <code>doors.js</code> - the switch record and the F-key branch</td><td>~45 removed</td></tr><tr><td>The objective step</td><td>The rung already exists with <code>done: () =&gt; power.powered</code>. Its text changes from LIGHT THE KINDLING to a jar-derived line</td><td>~15</td></tr><tr><td>The minimap</td><td>The flame glyph moves off the lever slot and onto the niches; jar and niche markers are wanted anyway</td><td>~35</td></tr><tr><td><code>rooms.js</code></td><td>The <code>power</code> interactSlot retires</td><td>~7</td></tr><tr><td>Tests</td><td>Two harnesses touched lightly rather than four rewritten</td><td>~40</td></tr><tr><td>Golden screenshots</td><td>Two or three rather than seven, because the visual states survive</td><td>-</td></tr></tbody></table></div>
+<p><strong>Roughly 150 lines across five files, over and above work that has to happen
+anyway.</strong> Against 630 to 780 for Option A.</p>
+<h2 id="and-the-story-reason-is-stronger-than-the-cost-reason">And the story reason is stronger than the cost reason<a class="anchor" href="#and-the-story-reason-is-stronger-than-the-cost-reason" aria-label="link to this section">#</a></h2>
+<p><strong>Meeting 2's own words are satisfied literally.</strong> &quot;We feed them into something
+that turns that thing on.&quot; That is what this is. The machine is the four niches
+and what it runs on is his team.</p>
+<p><strong>Turning on the power stops being a walk-to-the-switch errand</strong>, which is the
+specific thing that reads as Zombies, and becomes the payoff of the game's only
+puzzle chain.</p>
+<p><strong>And it keeps the best beat in World 1.</strong> The Kindling notice overwriting her
+mid-sentence is the single strongest device in the project. It survives untouched
+because the notice is untouched. It fires on the third jar instead of a lever, in
+the same room, in the same frame as the same nine-room light ramp and the same two
+sounds.</p>
+<aside class="callout callout-note"><p><strong>QUESTION FOR THE OWNER, and it is one of two waiting: take Option C?</strong>
+<strong>Recommendation: yes.</strong> It gives Speaker 2 the thing he asked for, keeps every
+line of a tested and screenshotted system, costs about a fifth of the
+alternative, and the beat that would otherwise have to be redesigned does not
+move.</p></aside>
+<hr>
+<h1 id="the-serdab-is-the-stage">THE SERDAB IS THE STAGE<a class="anchor" href="#the-serdab-is-the-stage" aria-label="link to this section">#</a></h1>
+<p>The observation the ending rests on, and it is architectural rather than literary.</p>
+<div class="scrollbox"><pre><code>serdab   1 portal   0 spawns   196 units   height 5   the smallest room in the map</code></pre></div>
+<p><code>rooms.js</code> gives the Serdab <strong>no spawn points at all</strong>, deliberately, and says
+why: the trainability law binds rooms that spawn things, so the honest fix for a
+one-door reward closet is to stop it spawning rather than write an exemption.</p>
+<p>The consequence nobody had written down: <strong>the Serdab is the only room in this
+game where the player can be alone.</strong> Every other space in twenty-five waves has a
+horde in it or a horde arriving. There is exactly one room where a beat can be
+delivered without something walking up behind the player, and it is already built,
+already gated behind the four-jar chain, and already sized like a chapel.</p>
+<p>That is where the twist happens. Not because it is thematic. <strong>Because it is the
+only room that can hold it.</strong></p>
+<h2 id="and-a-serdab-is-where-the-soul-is-kept">And a serdab is where the soul is kept<a class="anchor" href="#and-a-serdab-is-where-the-soul-is-kept" aria-label="link to this section">#</a></h2>
+<p>In a real Egyptian tomb the serdab is a sealed chamber holding the ka-statue, with
+eye-slots cut through the wall so the statue can look out into the chapel. <strong>It is
+the room where the soul lives.</strong> The body is in the burial chamber. The serdab is
+somewhere else, on purpose.</p>
+<p><code>rooms.js</code> says its payoff is &quot;authored by the puzzle chain, which lands with the
+rest of M5&quot;. It is empty of purpose and it is waiting.</p>
+<aside class="callout callout-note"><p><strong>And the rhyme is free.</strong> In World 3 the gatekeeper is found in a chamber built
+to hold him with people looking in at him, which is a serdab with a government
+budget. The player will have stood in the small version at the bottom of World
+1. Nothing should point at it.</p></aside>
+<h2 id="the-eleventh-niche-is-the-way-down">The eleventh niche is the way down<a class="anchor" href="#the-eleventh-niche-is-the-way-down" aria-label="link to this section">#</a></h2>
+<p><strong>PROPOSAL: ten rock-cut figures of the same woman, shoulder to shoulder along the
+back wall, and an eleventh niche cut into the side wall on its own, empty.</strong> Ten is
+the count in the real Hetepheres serdab at Giza and shoulder to shoulder is how the
+real one reads. The eleventh stands apart rather than at the end of the row, so it
+reads as an omission rather than as a gap somebody has not filled.</p>
+<p><strong>Cost, verified: the Serdab currently has five propSlots and one of them is a
+single statue.</strong> Ten figures plus one empty recess is new prop work, and it is the
+room's entire art budget.</p>
+<p>Three exit candidates were checked against <code>rooms.js</code>:</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Candidate</th><th>Verdict</th></tr></thead><tbody><tr><td><strong>King's Chamber</strong></td><td>REJECTED. The deepest room in Z, the largest in the map, and the boss arena. <code>MAP.md</code> ratified that it wants floor rather than furniture. Putting the world's exit in the room where the final fight happens means crossing it repeatedly during that fight. It also holds the sarcophagus, which is the BODY's room, and the whole twist is that the body is not what anyone is looking for.</td></tr><tr><td><strong>Star Shaft</strong></td><td>REJECTED. Thirty units of void with the columns deliberately truncated so the emptiness above is what the room is about. It is the one room already built around vertical space and it points the wrong way. The rope in it that goes up into the dark and ends at nothing is already doing the job of telling the player that up is not the answer.</td></tr><tr><td><strong>Serdab</strong></td><td><strong>YES.</strong></td></tr></tbody></table></div>
+<p><strong>The way down is the eleventh niche itself.</strong> A person-sized recess cut into
+stone with nothing in it. After the beat it is not a niche, it is a shaft. The
+player enters World 2 by climbing into the space where she should have been.</p>
+<p>Rejected: a trapdoor, a collapsing floor, or a stair revealed behind a statue. All
+three are a second object doing a job the first object can do, and all three
+announce themselves as a mechanism. The niche announces nothing.</p>
+<aside class="callout callout-proposal" id="m-9" data-marker="proposal">
+<span class="chip chip-proposal">PROPOSAL</span>
+<div class="callout-body"><p><strong>PROPOSAL, mine, and it plants World 2 for free: there is a patch of the other
+realm's growth in the niche</strong>, the wrong colour, and he climbs past it without
+registering it. The first thing World 2 does is explain something the player
+already saw.</p></div>
+</aside>
+<hr>
+<h1 id="the-boss-encounter-set-and-how-it-goes-away-reads">THE BOSS ENCOUNTER: SET, AND HOW &quot;IT GOES AWAY&quot; READS<a class="anchor" href="#the-boss-encounter-set-and-how-it-goes-away-reads" aria-label="link to this section">#</a></h1>
+<p>The transcript: &quot;it doesn't really die, it just goes away because it raises the
+dead again.&quot;</p>
+<p><code>boss.js</code> has one death sequence shared by all five gods: <code>deathT</code> ramps, the body
+topples ninety degrees on an axis derived from the killing shot,
+<code>setGlow(max(0, 1 - deathT * 0.6))</code> fades the gilding out, and after 1.9 seconds
+the body sinks through the floor while it scales to half.</p>
+<p><strong>PROPOSAL: Set gets a variant of that death and nothing else in the fight
+changes.</strong> Four beats, all reusing channels that exist.</p>
+<ol>
+<li><strong>The topple runs exactly as built.</strong> The player gets the kill they earned.
+ Whatever they did, it worked on the body.</li>
+<li><strong>The eye emissive goes to zero first.</strong> The face is out before anything else
+ happens. The god is finished.</li>
+<li><strong>Then the gilding flares.</strong> The accent emissive to full for about a third of a
+ second, brighter than any telegraph in the game, on a corpse. Then out. The
+ read is precise and it is not a ghost: <strong>the thing lighting up is the METAL,
+ not the god.</strong> Something left through the ornament.</li>
+<li><strong>On the flare frame, every live actor in the room stops and turns to face the
+ Serdab door.</strong> One second. Not an attack, a re-aim. Then they come back at the
+ player as if nothing happened.</li>
+</ol>
+<p>Two absences sell it:</p>
+<ul>
+<li><strong>No gold.</strong> Every other boss pays. This one does not.</li>
+<li><strong>The objective panel does not advance.</strong> It has named the next thing to do
+continuously since the first frame. After Set falls it holds, for a beat, on
+nothing. A panel that has never been silent going silent is the loudest thing
+this interface can do, and it costs a null return.</li>
+</ul>
+<p>Rejected: a wisp flying out of the corpse. It needs a particle system the game
+does not have, and it tells the player what happened where the flare and the
+turned heads make them work it out. Rejected: Set standing back up for a second
+phase, which reads as a fight, and the entire point is that the fight is over and
+it did not matter.</p>
+<p><strong>And the player has seen this before, from the inside.</strong> Something that is
+killed, goes out, and comes back is the shape of every death card they have read
+this run. World 1 never draws the line. The line is there.</p>
+<hr>
+<h1 id="the-mario-twist-staged">THE MARIO TWIST, STAGED<a class="anchor" href="#the-mario-twist-staged" aria-label="link to this section">#</a></h1>
+<p><strong>PROPOSAL: the player does not FIND the archaeologist. The player is
+delivered.</strong> Everything in World 1 was a job: open the doors, clear the gates,
+carry the four jars, run the machine, and bring the result down to the one room
+she could not open. The notebook has the niches numbered wrong. She tried and
+failed, and something arranged for a man who could keep failing until he
+succeeded.</p>
+<p>The staging, in order.</p>
+<p><strong>Before wave 25, if the player solved the chain early.</strong> The jars go home, the
+cartouche completes, the Serdab opens, and the player walks into a small room with
+ten carved women, one empty niche, and a folding stool with a lamp beside it.
+Nobody there. They take the Sunspear and leave.</p>
+<p>That early visit is not a spoiler; it is the setup. Returning to a room you have
+already stood in and finding somebody sitting in it is stronger than opening a
+door onto a stranger.</p>
+<p><strong>Set falls.</strong> The flare, the turned heads, the silence on the panel.</p>
+<p><strong>The panel comes back with one line it has never printed.</strong> No purchase, no
+price, no gold figure. A place. <code>ui/objective.js</code> is a ladder of milestones with a
+<code>done()</code> and a room, and its <code>toward()</code> already turns &quot;do X in room R&quot; into &quot;here
+is what stands in the way&quot;. This is one more rung and the file was built to take
+it.</p>
+<p><strong>The player walks to the Serdab.</strong> Nothing follows: it has no spawn points, and
+twenty-five waves have trained the player to expect that something will.</p>
+<p><strong>The eleventh niche is still empty.</strong> She is not here. The Peach beat, delivered
+by an absence in the geometry with no text at all.</p>
+<p><strong>She is sitting on the stool.</strong> Facing the empty niche, back to the door. The lamp
+that was burning in the Canopic Crypt is beside her, and the stool is the one the
+player has been finding since the Chamber of Ascent. She does not move and she is
+not hostile.</p>
+<p><strong>This is the first time in the game she has a body</strong>, and the first time she has
+been still. For twenty-five waves she has been a lamp ahead in the dark moving
+away from him, and now she is stopped, and she does not turn round.</p>
+<p><strong>She has not said anything for ten waves and the player has not noticed.</strong> That is
+the beat the whole world was built to deliver, and it lands here as a sensation
+before it lands as a fact.</p>
+<p><strong>The crosshair finds them and the interact prompt fires.</strong> The same one-line
+prompt that has quoted a price on every door, gun, shrine and altar in the game.
+This is the one fixture in the map that is not for sale. <code>ui/prompt.js</code> already
+arbitrates by priority and already has a refusal path that quotes no price at all,
+and states in its own header why: a player who cannot tell &quot;come back richer&quot; from
+&quot;come back later&quot; will grind gold for something that will never be offered. This
+fixture has neither. It has a name and an [F].</p>
+<p><strong>On F, three things happen and then the world ends.</strong></p>
+<ol>
+<li>She stands and turns.</li>
+<li>The effaced cartouche the player has been finding chiselled into walls since
+ the first minute of Act 1 is on her. <strong>PROPOSAL: on the lamp</strong> - the object the
+ player has followed all game, and already a light source, so the sign is lit
+ from inside.</li>
+<li>Her eyes take the telegraph ramp. <code>setGlow</code>'s exact curve, on a person, in the
+ one room with no enemies in it.</li>
+</ol>
+<p><strong>She does not ask him anything.</strong> That is the fourth channel saying it, after the
+ten waves of silence, the interrupted last line, and the sign on the lamp - and it
+is the only one the player can feel without having worked anything out.</p>
+<p>Then black, and the card.</p>
+<p><strong>Step 3 is the twist.</strong> Not the cartouche and not the empty niche - those are the
+information. The glow is the twist, because the player already knows what it
+means. They have been taught for twenty-five waves that a gold ramp is a wind-up
+they have between half a second and one and a quarter seconds to answer, and there
+is nothing here to shoot, nowhere to run, and the world ends before the tell
+resolves.</p>
+<p><strong>That is how you stage a reveal in a game with no cutscenes: you say it in the one
+language the player was forced to learn.</strong></p>
+<h2 id="the-end-card">The end card<a class="anchor" href="#the-end-card" aria-label="link to this section">#</a></h2>
+<p><strong>PROPOSAL: World 1 ends on a card in the death card's format, and it is a
+verdict, not a victory.</strong></p>
+<p><code>ui/death.js</code> builds a cartouche with a shen bar, one word inside, one line
+beneath. The World 1 card is the same frame. Inside the cartouche: the glyphs,
+struck out. Beneath it:</p>
+<div class="scrollbox"><pre><code>THE NAME IS NOT HERE</code></pre></div>
+<p>It says the twist without mentioning the archaeologist. It repeats the shape the
+player associates with a judgement being passed on them. It is the first time the
+game has shown that frame when the player did not lose. And it is the third empty
+cartouche in the world, which is the count that makes the player look back at the
+other two.</p>
+<p>Rejected: VICTORIOUS, or any word in the UNWORTHY slot. This game's card format is
+a verdict about the player, and &quot;you won&quot; is not one. Rejected: putting this on
+<code>ui/death.js</code> behind a flag. That file's own comment says the card is part of the
+death sequence and should not exist in the page of a game nobody has died in yet; a
+world-end card is a sibling module borrowing the same tokens.</p>
+<h2 id="and-then-the-player-is-in-the-niche-going-down">And then the player is in the niche, going down<a class="anchor" href="#and-then-the-player-is-in-the-niche-going-down" aria-label="link to this section">#</a></h2>
+<p><strong>The card IS the cut.</strong> The player confirms it, and when the frame comes back they
+are in the shaft the eleventh niche became, descending. World 2 begins in the fall.</p>
+<p>This is not a cutscene and it is not new technology. It is exactly what
+<code>ui/death.js</code> already does, once or twice a run, every run:</p>
+<ul>
+<li>a card comes up over a stopped world</li>
+<li>a confirm gate arms after a beat and waits indefinitely, Enter only, refused if
+the key was already held</li>
+<li>while the player reads it, <code>toTheBeginning()</code> calls <code>spaces.enter()</code>, which swaps
+the collider set, retargets the audio, moves the sky's lights and holds a curtain
+at full black for two DRAWN frames</li>
+<li>the frame comes back and the player is standing somewhere else</li>
+</ul>
+<p><strong>World 1's ending is the death card's machinery with a different word and a
+different destination.</strong> The hardest part of ending a world - changing the world
+underneath a player who cannot see it happening - is a solved problem in this
+codebase and has been since <code>a8baa5b</code>.</p>
+<p>Rejected: a fall animation, a fade through rock, or a shaft the player descends
+under their own control. The first two are cutscenes. The third sounds better than
+it is: the player has just been given information they cannot act on, and handing
+them thirty seconds of walking down a hole to think about it is thirty seconds for
+the beat to cool.</p>
+<hr>
+<h1 id="what-world-1-must-plant">WHAT WORLD 1 MUST PLANT<a class="anchor" href="#what-world-1-must-plant" aria-label="link to this section">#</a></h1>
+<p>Twenty-two things. Worlds 2 and 3 pay off all of them, and anything dropped here
+has to be re-established later at a worse moment. Eleven already ship or cost
+nothing but a refusal.</p>
+<p><strong>The death loop, planted and never confirmed:</strong></p>
+<ol>
+<li><strong>The contradiction on the death card.</strong> Judged, sentenced, erased, and back on
+ your feet. Ships today, costs nothing, most-read text in the game.</li>
+<li><strong>The player's cartouche has a verdict where a name should be.</strong> Ships today.</li>
+<li><strong>What a return costs.</strong> Gold and doors keep; the gods' favour does not.</li>
+<li><strong>You always wake up outside the door.</strong> Ships today.</li>
+<li><strong>Anubis as the control case.</strong> The one return that is announced, named, paid
+ for and legitimate, which is what makes every other return read as something
+ else.</li>
+<li><strong>The gatekeeper's two words on the death card.</strong> NEW, and it is the plant the
+ whole ending needs. If it is not there from the first death, his voice arrives
+ in World 3 as an author's convenience.</li>
+</ol>
+<p><strong>The story, planted openly:</strong></p>
+<ol start="7">
+<li><strong>The effaced cartouche as a recognisable sign.</strong> The mark the player reads as
+ the villain's and the name they reassemble in the Serdab are the same object.</li>
+<li><strong>The camp gradient, and that lamps get warmer.</strong> World 2 is entered following
+ a person and the player already knows how to track one.</li>
+<li><strong>The empty eleventh niche.</strong> World 2 is the search for what should have been
+ in it, and World 2's recognition beat is the same niche with him in it.</li>
+<li><strong>A completable set.</strong> Four sons, four niches, four fragments.</li>
+<li><strong>The law: kill the vessel, the thing moves on.</strong> World 2's crescendo repeats
+  it with a person instead of a god.</li>
+<li><strong>The horde belongs to somebody.</strong> Set falls and every live actor stops and
+  turns toward the Serdab. World 3's horde is her, distributed, and this is the
+  only moment in World 1 that says the dead have an owner.</li>
+<li><strong>The player is doing her work and calling it a rescue.</strong> World 1 must let this
+  read as heroism and must not wink.</li>
+<li><strong>The government, present and absent.</strong> The camp is the only place before Area
+  51 where the institution that caused this is physically in the frame. NEW.</li>
+<li><strong>The other realm's growth, one patch, in the niche.</strong> NEW, free, and it is the
+  first frame of World 2's whole visual thesis.</li>
+</ol>
+<p><strong>The descent, planted as architecture:</strong></p>
+<ol start="16">
+<li><strong>The enclosure, ending at five units.</strong> Costs a refusal, not a build.</li>
+<li><strong>The Star Shaft as the last time up is offered</strong>, with a rope in it that goes
+  up into the dark and ends at nothing.</li>
+<li><strong>The inside is bigger than the outside.</strong> True in the shipped build, stated in
+  <code>rooms.js</code>'s own header, never acknowledged. Only has to survive somebody
+  deciding to fix it.</li>
+<li><strong>The pyramid's silhouette on the skyline.</strong> The 62-unit stepped mass the
+  player walks an avenue toward in the opening minute, seen again from outside
+  and upside down at the World 2 to World 3 crossing. The one shape in the
+  project that will never need a caption, and it only works if World 1 spends
+  real time pointing the player at it. It already does.</li>
+</ol>
+<p><strong>The friend, planted as a pattern and then as a silence:</strong></p>
+<ol start="20">
+<li><strong>Her five questions, in a recognisable shape.</strong> The pattern is the only thing
+  that makes its ending audible.</li>
+<li><strong>Lowercase as her voice</strong>, established from the avenue, before the player has
+  any reason to notice it.</li>
+<li><strong>The silence, ten waves of it, unremarked - and the lamp the horde walks
+  past, exactly once.</strong> World 1 pays the silence off at the Serdab. World 2 pays
+  the lamp off when the player finally sees it happen in the open.</li>
+</ol>
+<p><strong>And the one refusal everything is downstream of:</strong></p>
+<p><strong><code>(0, 30)</code> stays unmarked.</strong> No prop, no stain, no line. If World 1 ever
+annotates the spawn point, the character stops being a man who does not know and
+becomes a man being told.</p>
+<hr>
+<h1 id="the-map-brief">THE MAP BRIEF<a class="anchor" href="#the-map-brief" aria-label="link to this section">#</a></h1>
+<p>The owner: &quot;we need more space. I want more space. and now according to the story
+we go down deeper and deeper as we play, so we need a map building phase that
+connects the map with the story.&quot;</p>
+<p>This section is what the story requires, in purposes rather than geometry. <strong>No
+coordinates, no dimensions, no layout.</strong> The map lane knows constraints this lane
+does not.</p>
+<h2 id="the-honest-finding-first">The honest finding first<a class="anchor" href="#the-honest-finding-first" aria-label="link to this section">#</a></h2>
+<p><strong>Every dramatic purpose World 1 needs, the existing nine interior rooms already
+have a home for.</strong> Not one of the interior purposes below is homeless. So the map
+is not too small in the sense of missing rooms, and adding interior rooms to make
+it feel bigger would produce exactly the thing the owner is complaining about: a
+space that exists because the map wanted another room.</p>
+<p><strong>What is genuinely missing is outdoors, and one vertical move.</strong></p>
+<h2 id="the-two-real-gaps">The two real gaps<a class="anchor" href="#the-two-real-gaps" aria-label="link to this section">#</a></h2>
+<p><strong>1. There is no expedition camp, and meeting 2 makes one mandatory.</strong> The
+government sent seven people with equipment and then classified the file. The
+evidence of that is the only thing in World 1 connecting this tomb to the
+institution that caused it, and there is currently nowhere for it to be. It is also
+where the fiction establishes, with no text at all, that people came here on
+purpose and are not here now.</p>
+<p><code>MAP.md</code> already calls the courtyard &quot;the worst of the four&quot; for trainability - a
+straight corridor with recessed pockets, closed at both ends, nothing to circle.
+The camp is the story's own reason to fix that, and Act 1 already has two authored
+spaces on a circuit that a third node can join.</p>
+<p><strong>2. The map is horizontal and the story is now explicitly vertical.</strong> Every floor
+is at y=0 and &quot;deeper&quot; runs along one axis from -140 to -272.</p>
+<aside class="callout callout-proposal" id="m-10" data-marker="proposal">
+<span class="chip chip-proposal">RECOMMENDATION</span>
+<div class="callout-body"><p><strong>RECOMMENDATION, mine: World 1 gets ONE real descent, not nine.</strong></p>
+<p>Author the per-room depth number as data, as previously recommended, and build
+exactly one place where the player physically goes down and can feel it, at the
+Act 2 to Act 3 break.</p>
+<p>If every room is a floor lower, the player stops registering any of them. The
+world already spends its one vertical gasp on a shaft that points UP and
+delivers nothing. <strong>One built descent against one built ascent is a shape. Nine
+floors is a number.</strong></p></div>
+</aside>
+<h2 id="the-constraint-the-map-lane-must-know-before-it-starts">The constraint the map lane must know before it starts<a class="anchor" href="#the-constraint-the-map-lane-must-know-before-it-starts" aria-label="link to this section">#</a></h2>
+<p><strong>Both worlds are resident in memory at boot and nothing is ever disposed.</strong> The
+space router toggles visibility on subtrees; no geometry is ever freed. The
+interior is described in its own comment as costing about half a megabyte of
+geometry, and it is built at boot deliberately, because building on first entry
+causes a visible hitch.</p>
+<p><strong>This is the real ceiling on &quot;more space&quot;, and it compounds when World 2 lands</strong> -
+and World 2 is structurally cheap, because the room graph is pure data and the
+builder already takes the room list as a parameter with the shipped graph as its
+default. A second interior is data authoring, not engineering. Which means the
+memory question arrives sooner than anyone expects.</p>
+<h2 id="the-purposes-in-the-order-the-player-meets-them">The purposes, in the order the player meets them<a class="anchor" href="#the-purposes-in-the-order-the-player-meets-them" aria-label="link to this section">#</a></h2>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>#</th><th>Purpose</th><th>Dramatically it is FOR</th><th>Today</th></tr></thead><tbody><tr><td>1</td><td><strong>THE GRAVE</strong></td><td>the first frame is him standing on it, unmarked, forever</td><td>courtyard spawn. <strong>Do not touch it.</strong></td></tr><tr><td>2</td><td><strong>THE CAMP</strong></td><td>the institution that did this, present and abandoned</td><td><strong>NEW.</strong></td></tr><tr><td>3</td><td><strong>THE ANOMALY</strong></td><td>why anyone came; instruments still logging something nobody is reading</td><td><strong>NEW, and it can live inside the camp.</strong></td></tr><tr><td>4</td><td><strong>THE WORKING GROUND</strong></td><td>space to fight and earn before you can afford to go in</td><td>avenue, Quarry, Canal. Already a circuit.</td></tr><tr><td>5</td><td><strong>THE FIRST JAR</strong></td><td>the first fragment, before the pyramid</td><td>courtyard west chapel. Placed.</td></tr><tr><td>6</td><td><strong>THE WAY BACK IN</strong></td><td>the first purchase is re-entering the building he died escaping</td><td>the sealed doorway.</td></tr><tr><td>7</td><td><strong>THE THRESHOLD</strong></td><td>the inside is bigger than the outside and nobody says so</td><td>Chamber of Ascent.</td></tr><tr><td>8</td><td><strong>THE SURVEY</strong></td><td>somebody worked here recently and did it properly</td><td>Hall of Offerings, Granary Vault.</td></tr><tr><td>9</td><td><strong>THE LOUD ROOM</strong></td><td>her third line is nearly said and lost in a fight</td><td>Great Gallery.</td></tr><tr><td>10</td><td><strong>THE ONE DESCENT</strong></td><td>the only place the player physically goes down</td><td><strong>NEW, at the Act 2 to Act 3 break.</strong></td></tr><tr><td>11</td><td><strong>THE UP THAT FAILS</strong></td><td>thirty units at the sky, a rope ending at nothing, and jar 2</td><td>Star Shaft.</td></tr><tr><td>12</td><td><strong>THE WARM CAMP</strong></td><td>she was here hours ago, and jar 3</td><td>Canopic Crypt.</td></tr><tr><td>13</td><td><strong>THE MACHINE</strong></td><td>four niches, four colleagues, and the frame she is erased in</td><td>Embalming Chamber.</td></tr><tr><td>14</td><td><strong>THE BODY</strong></td><td>the sarcophagus, the last boss, jar 4, and nothing modern in it at all</td><td>King's Chamber.</td></tr><tr><td>15</td><td><strong>THE SOUL ROOM</strong></td><td>the only room where the player can be alone, and the way down</td><td>Serdab.</td></tr></tbody></table></div>
+<h2 id="what-the-existing-rooms-become">What the existing rooms become<a class="anchor" href="#what-the-existing-rooms-become" aria-label="link to this section">#</a></h2>
+<p>Carrying a beat, or being space. Being space is not a criticism; a world needs
+somewhere to fight.</p>
+<div class="scrollbox tablewide"><table class="tbl"><thead><tr><th>Room</th><th>Verdict</th></tr></thead><tbody><tr><td>courtyard / avenue</td><td><strong>Three beats</strong>, and by its own documentation the weakest space in the map. Grows by the camp.</td></tr><tr><td>Quarry, Canal</td><td><strong>Space, deliberately.</strong> The Act 1 loop. They should stay pure fighting ground.</td></tr><tr><td>Chamber of Ascent</td><td>One line and the bigger-inside beat. Otherwise space.</td></tr><tr><td>Hall of Offerings</td><td><strong>Space</strong>, plus the survey dressing.</td></tr><tr><td>Granary Vault</td><td><strong>Space</strong>, plus the chalk outline where jar 1 used to stand.</td></tr><tr><td>Great Gallery</td><td><strong>Her third line</strong>, and it is the only room big enough and loud enough for a half-sentence to be lost in.</td></tr><tr><td>Embalming Chamber</td><td><strong>The machine and the erasure.</strong> The most important interior room in World 1.</td></tr><tr><td>Star Shaft</td><td><strong>The failed ascent, jar 2</strong>, and it is also the only room connecting to the Serdab.</td></tr><tr><td>Canopic Crypt</td><td><strong>The warm camp, jar 3.</strong></td></tr><tr><td>King's Chamber</td><td><strong>Jar 4 and the final boss</strong>, and its job is to have nothing modern in it.</td></tr><tr><td>Serdab</td><td><strong>The entire ending of the world.</strong> Load-bearing precisely because it is small.</td></tr></tbody></table></div>
+<h2 id="four-warnings-for-the-map-lane">Four warnings for the map lane<a class="anchor" href="#four-warnings-for-the-map-lane" aria-label="link to this section">#</a></h2>
+<p><strong>1. The Embalming Chamber is a mandatory one-door dead end and it is about to get
+busier, not quieter.</strong> Under the recommended Kindling change the player enters it
+four times instead of once. <code>MAP.md</code> already flags it as a problem and already
+specifies a portal to fix it. That room getting more traffic is a story
+requirement rather than a preference.</p>
+<p><strong>2. The Serdab is currently unreachable.</strong> Its portal is the only puzzle-gated
+door in the game and it reads a jar counter that is hardcoded to zero and never
+written. The room where World 1's entire ending happens cannot be entered in the
+shipped build. Whatever else happens, the jar system is the gate on shipping World
+1 at all.</p>
+<p><strong>3. The Serdab connects to the Star Shaft and to nothing else</strong>, through the
+narrowest portal in the map. The exit from World 1 therefore runs Star Shaft into
+Serdab into the niche, and the Star Shaft is also where jar 2 is. That is a lot of
+weight on one room and it is the map lane's to price.</p>
+<p><strong>4. Act 1 is the act the story grew the most and the map grew the least.</strong> The
+grave, the camp, the anomaly, jar 1, her first line and the way back in are all
+outside, in a space its own documentation calls the worst of the four.</p>
+<hr>
+<h1 id="open-questions">OPEN QUESTIONS<a class="anchor" href="#open-questions" aria-label="link to this section">#</a></h1>
+<p>Ordered by how much they block. Each is a question with a recommendation, not a
+menu.</p>
+<ol>
+<li><p><strong>Is Hetepheres a name on a wall or the antagonist?</strong> <strong>Recommendation: a name on
+ a wall, and the antagonist stays nameless in World 1.</strong> One of the two
+ decisions genuinely waiting on the owner. Argument in <code>NARRATIVE.md</code>.</p></li>
+<li><p><strong>Take Option C on the Kindling?</strong> <strong>Recommendation: yes.</strong> The other decision.
+ Cost table above.</p></li>
+<li><p><strong>World 1 needs an ending and the game has no concept of one.</strong> <code>boss.js</code>
+ <code>forWave()</code> cycles the five gods forever; nothing in <code>main.js</code> or <code>director.js</code>
+ can conclude a run. <strong>Recommendation: World 1 terminates at wave 25 on Set's
+ death.</strong> Endless mode stays as a separate mode off the start screen, where the
+ existing cycle is exactly right. <strong>Largest engine gap in the document.</strong></p></li>
+<li><p><strong>The four-jar chain is unbuilt and there is no carried-item primitive anywhere
+ in the codebase to copy.</strong> The nearest analogue is proximity-collected floor
+ drops, which is a different verb. Four jars and four niches are placed, meshed
+ and published to the rest of the game, and nothing reads either.
+ <strong>Recommendation: build it, because everything is gated on it</strong> - the Serdab,
+ the ending, the power, the flashbacks and the shrine cap. Roughly 250 to 400
+ lines plus a test harness.</p></li>
+<li><p><strong>Should the ending be gated on the jars at all?</strong> A player who never solves the
+ chain kills Set and has no Serdab to walk into. <strong>Recommendation: yes, gate it,
+ and have the objective ladder demand the jars before wave 25.</strong> The tracker is
+ derived and can carry a jar milestone the same way it carries the power state.</p></li>
+<li><p><strong>Does the death card get a resurrection count?</strong> <code>state.resets</code> already exists
+ and the stats line already prints <code>WAVE 05 · 1240 GOLD</code>. <strong>Recommendation: yes,
+ and use the antagonist's own verb.</strong> <code>RAISED 04</code>, third field, same tabular
+ numerals, no comment anywhere else in the game. <strong>The single cheapest and
+ strongest plant available.</strong> If one thing on this list ships, it should be this
+ and the gatekeeper's two words, which share the same card.</p></li>
+<li><p><strong>The archaeologist is a fixture that is not for sale</strong>, and the interact
+ handlers are <code>describe()</code> plus <code>buy()</code>. <strong>Recommendation: a new handler type
+ whose <code>buy()</code> fires the sequence and returns false.</strong> Smallest change that
+ keeps the one-raycast, one-prompt, one-F shape the file was built around. Note
+ that niches will need the same treatment - the interact layer skips any slot
+ type with no registered handler, and only four types are registered today.</p></li>
+<li><p><strong>There is no way to write text on a wall.</strong> The Serdab cartouche needs a
+ surface that changes as jars return. <code>doors.js</code> already builds a <code>CanvasTexture</code>
+ so the capability exists, but no room fixture uses it. <strong>Recommendation: four
+ discrete emissive glyph meshes rather than a canvas.</strong> Four booleans instead of
+ a texture upload, and it matches how shrines already show held state.</p></li>
+<li><p><strong><code>director.js</code> has no &quot;stop and face a point&quot; call.</strong> Needed for the Set beat,
+ and needed again for World 3's re-condensation. <strong>Recommendation: a one-shot on
+ the director rather than state on each actor.</strong></p></li>
+<li><p><strong><code>boss.js</code> has one death path for five gods.</strong> <strong>Recommendation: a <code>farewell</code>
+  field on the god record, absent on four of them.</strong> The dying branch already
+  reads <code>god.escalating</code> the same way.</p></li>
+<li><p><strong>The end card wants to be a sibling of <code>ui/death.js</code>, not a flag on it.</strong>
+  <strong>Recommendation: a second module sharing <code>ui/tokens.js</code>.</strong></p></li>
+<li><p><strong>Six new propSlot types</strong> (<code>lamp</code>, <code>stool</code>, <code>peg</code>, <code>chalk</code>, <code>rope</code>,
+  <code>notebook</code>) plus one fixture type for the archaeologist plus the Serdab's ten
+  figures and eleventh niche. <strong>Recommendation: build them as one lane.</strong> All
+  boxes and cylinders, and they are the entire environmental storytelling budget
+  for World 1.</p></li>
+<li><p><strong>The flashback fragments need a sequence driver that does not exist.</strong>
+  Roughly 190 to 240 lines for the held-tableau version. <strong>Recommendation: build
+  the curtain exposure and the driver once, and author four fragments against
+  it.</strong> Do not build a camera detach; the moment the camera moves this becomes a
+  cut scene and triples.</p></li>
+<li><p><strong>DOUBLE DAM collides with the Shrine of Set</strong>, which already ships DAMAGE AND
+  RATE UP. <strong>Recommendation: DOUBLE DAM is an ACTIVE ability on a cooldown, not a
+  shrine boon and not a floor drop, and it survives death while every shrine boon
+  does not.</strong> Passive damage is Set's; triggered damage on a timer is a different
+  verb; and persistence-through-death is the mechanical fingerprint of the second
+  resurrector. Roughly 60 to 90 lines, and see the honest caveat: a damage
+  multiplier applied at the weapon-stats lookup silently excludes grenades and
+  the khopesh.</p></li>
+<li><p><strong>Twenty-five waves may be too long for World 1 of three.</strong>
+  <strong>Recommendation: ship at 25 and cut on play, not on argument.</strong></p></li>
+<li><p><strong>Is her name spoken anywhere before the fourth jar?</strong> <strong>Recommendation: no.</strong>
+  Nowhere in the UI, nowhere in a notice, nowhere on a wall.</p></li>
+<li><p><strong>Does the player character get a name?</strong> <strong>Recommendation: no.</strong> His cartouche
+  is empty and stays empty. The first identity he gets is his face on the box art
+  at the end of World 3.</p></li>
+<li><p><strong>Does the depth readout ship with World 1?</strong> <strong>Recommendation: yes, even
+  though World 1 alone does not need it.</strong> A depth readout introduced in World 2
+  is a UI element. One that has been there since wave one is a fact.</p></li>
+<li><p><strong>The notice pill needs a hold and a lowercase mode.</strong> One boolean, one
+  timestamp, one class, and one deliberate exception at the machine.
+  <strong>Recommendation: build it with the voice list, not before.</strong></p></li>
+<li><p><strong>A one-shot voice list keyed on first room entry.</strong> <strong>Recommendation: keep it a
+  flat data list in one file, the way <code>rooms.js</code> is data.</strong> The moment her lines
+  are scattered across the systems that trigger them, the pattern stops being
+  auditable, and the pattern is the entire device.</p></li>
+<li><p><strong>Does she have a body before the Serdab?</strong> <strong>Recommendation: no.</strong> A lamp and
+  a voice for twenty-five waves, and a form exactly once.</p></li>
+<li><p><strong>What does the player see of her in Act 3, after she stops?</strong>
+  <strong>Recommendation: exactly what they saw before, plus one thing.</strong> The lamps
+  keep moving ahead and the rope still gets rigged. The single exception is the
+  horde walking past her lamp, once, unremarked. If Act 3 makes her sinister, the
+  removal stops being the clue.</p></li>
+</ol>
+</main>
+<script>
+(function () {
+  var bar = document.getElementById('progress');
+  var toc = document.getElementById('toc');
+  var toggle = document.getElementById('toc-toggle');
+  toggle.addEventListener('click', function () {
+    var open = toc.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  toc.addEventListener('click', function (e) {
+    if (e.target.tagName === 'A' && window.innerWidth < 1180) {
+      toc.classList.remove('open');
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  // Active section is recomputed on every settled scroll frame rather than by
+  // IntersectionObserver, which only reports elements whose state changed and
+  // so goes stale after a long jump.
+  var list = document.getElementById('toc-list');
+  var links = {};
+  var targets = [];
+  Array.prototype.forEach.call(document.querySelectorAll('.toc-list a'), function (a) {
+    var id = a.getAttribute('href').slice(1);
+    links[id] = a;
+    var el = document.getElementById(id);
+    if (el) targets.push(el);
+  });
+
+  var current = null;
+  function activeId() {
+    var best = targets.length ? targets[0].id : null;
+    for (var i = 0; i < targets.length; i++) {
+      if (targets[i].getBoundingClientRect().top <= 120) best = targets[i].id;
+      else break;
+    }
+    return best;
+  }
+
+  var ticking = false;
+  var lastY = 0;
+  function update() {
+    ticking = false;
+
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    var y = h.scrollTop || document.body.scrollTop;
+    var pct = max > 0 ? y / max : 0;
+    bar.style.width = (Math.min(1, Math.max(0, pct)) * 100).toFixed(2) + '%';
+
+    // tuck the floating toggle away while reading forward
+    if (!toc.classList.contains('open')) {
+      if (y > 260 && y > lastY + 4) toggle.classList.add('tucked');
+      else if (y < lastY - 4 || y <= 260) toggle.classList.remove('tucked');
+    }
+    lastY = y;
+
+    var id = activeId();
+    if (id && id !== current) {
+      if (current && links[current]) links[current].classList.remove('active');
+      current = id;
+      var a = links[current];
+      if (a) {
+        a.classList.add('active');
+        // keep the active entry visible inside the list without moving the page
+        var lr = list.getBoundingClientRect();
+        var ar = a.getBoundingClientRect();
+        if (ar.top < lr.top) list.scrollTop -= (lr.top - ar.top) + 8;
+        else if (ar.bottom > lr.bottom) list.scrollTop += (ar.bottom - lr.bottom) + 8;
+      }
+    }
+  }
+
+  window.addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+  }, { passive: true });
+  window.addEventListener('resize', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+  }, { passive: true });
+  update();
+})();
+</script>
+</body>
+</html>

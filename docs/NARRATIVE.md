@@ -29,7 +29,7 @@ If they disagree with this file, this file is right and they are stale.
 > - **The thing in the archaeologist** came through the gate. It raises
 >   everything buried and it will not let anything stay down. It made the player
 >   a corpse that walks.
-> - **The gatekeeper** is one of the old people, imprisoned in Area 51. He does
+> - **The gatekeeper** is one of the Ancients, imprisoned in Area 51. He does
 >   not raise the dead. He stands ONE dead man up, over and over, because he has
 >   picked him. He is the reason the player keeps getting back onto his feet
 >   after each death.
@@ -46,22 +46,25 @@ screen and the player learns it in quarters, out of order, from four jars.
 Writing it down first is the only way the four fragments can be authored to add
 up.
 
-## The old people, and what they were guarding
+## The Ancients, and what they were guarding
 
 Before Egypt there were people here, and they built the gate.
 
 They did not build it to open. They built it because it was already there, and
 what they built around it was a lock and a post and a rule. There is another
 universe on the far side and the two have been at war for as long as either has
-been able to reach the other. The old people's job was that nothing crossed.
+been able to reach the other. The Ancients' job was that nothing crossed.
 
 > **FIXED (meeting 2, 08:42 and 22:31).** "Maybe the Egyptian gods were the
 > gatekeepers of this universe and stopped the other universe from breaking
 > through, because they've been at war. So the Egyptian gods were real." And:
 > "No, the spirit is one of the old people." / "One of the ancient people."
+>
+> (Quoted as said. "The Ancients" is the name we settled on afterwards, and the
+> transcripts are left alone so the record still shows the words in the room.)
 
 > **PROPOSAL, mine, and it reconciles those two lines rather than choosing
-> between them.** The old people are what got remembered as the Egyptian gods.
+> between them.** The Ancients are what got remembered as the Egyptian gods.
 > The Egyptians did not invent the pantheon. They came later, found the works of
 > people who had been here first, and copied them, and the names we use now -
 > Anubis, Ammit, Apep, Sekhmet, Set - are Egyptian names for something older
@@ -72,17 +75,17 @@ been able to reach the other. The old people's job was that nothing crossed.
 > This was already proposed in `WORLDS.md` as World 2's design principle before
 > meeting 2 happened. Meeting 2 promoted it from decoration to load-bearing.
 
-The old people made tools for the job. The tools are cut with the same
+The Ancients made tools for the job. The tools are cut with the same
 hieroglyphs as the pyramid, because the pyramid is theirs, and the Egyptians
 copied the writing too. One of those tools is the Raygun, and it is not a
 weapon. It is the key that locks the gate.
 
-One of the old people was left on watch. He is the gatekeeper. He has been at
+One of the Ancients was left on watch. He is the gatekeeper. He has been at
 his post since before there was an Egypt, he does not age, and standing next to
 that door for that long has done something to him: he has been morphing into
-something that is no longer entirely one of the old people either.
+something that is no longer entirely one of the Ancients either.
 
-> **FIXED (meeting 2, 22:20 - 23:03).** The old people made the gun. The spirit
+> **FIXED (meeting 2, 22:20 - 23:03).** The Ancients made the gun. The spirit
 > is one of them. He is "the ancient gatekeeper tasked with staying around and
 > keeping track of everything", and he "got an effect from the gate. That's why
 > he started morphing."
@@ -97,11 +100,11 @@ not the body is kept.
 They did not know what was underneath them, or they knew it as a religion. Both
 readings are available and the game never settles it.
 
-> **PROPOSAL, mine.** The queen is MERESANKH, a real Fourth Dynasty queen buried
+> **PROPOSAL, mine.** The queen is HETEPHERES, a real Fourth Dynasty queen buried
 > at Giza whose tomb's famous feature is its serdab, with a row of women carved
 > into the wall. She is dead and she is not a character. Her name is on a
 > cartouche in the serdab and somebody struck it out. See "What happened to
-> Meresankh" at the end of this document, because meeting 2 changed what her
+> Hetepheres" at the end of this document, because meeting 2 changed what her
 > name is FOR and the change is worth reading on its own.
 
 ## The anomaly
@@ -231,7 +234,7 @@ sufficiently frightened or sufficiently obedient to follow it.
 
 A spirit. It kills everybody it can reach.
 
-It is not one of the old people and it is not from here. It came through, and
+It is not one of the Ancients and it is not from here. It came through, and
 what it does on this side is raise what is under the sand. Every tomb in every
 direction, and there are thousands, and that is what the pyramids are full of.
 The dead get up.
@@ -243,7 +246,7 @@ The dead get up.
 It is female throughout both meetings. It has no name of its own. It takes them.
 
 > **OPEN, and it is one of two decisions waiting on the owner. See "What
-> happened to Meresankh" at the end.**
+> happened to Hetepheres" at the end.**
 
 ## Seven people, seven outcomes
 
@@ -629,7 +632,7 @@ And in the sealed chapel at the bottom of the building, a cartouche cut into the
 back wall with its glyphs struck out lights up one glyph at a time and becomes
 readable for the first time in four thousand years.
 
-**MERESANKH.**
+**HETEPHERES.**
 
 He thinks he has restored a name. What he has actually done is finish charging a
 machine with the souls of four people he used to work with, and the machine has
@@ -654,7 +657,7 @@ and then comes back at him as if nothing happened.
 > it raises the dead again."
 
 > **PROPOSAL, mine, and meeting 2 upgraded it from flavour to structure.** If the
-> old people are what got remembered as the Egyptian gods, then the five gods the
+> Ancients are what got remembered as the Egyptian gods, then the five gods the
 > player fights across World 1 are the gatekeeper's colleagues. They are still at
 > their posts. They come for the player because the player is one of the things
 > that came up out of the sand and their job is that such things are removed.
@@ -946,8 +949,8 @@ enough to have been catalogued.
 >
 > **REVISED nineteen lines later, and the revision is better.** At 22:05 - 22:36
 > the room reverses itself: the Raygun is not alien technology. It is ancient,
-> made by the old people, cut with the same hieroglyphs as the pyramid, and the
-> gatekeeper is one of the old people who made it. The government has it in a lab
+> made by the Ancients, cut with the same hieroglyphs as the pyramid, and the
+> gatekeeper is one of the Ancients who made it. The government has it in a lab
 > because the government took it off him when they took him.
 
 ## He finds the gatekeeper
@@ -1158,14 +1161,14 @@ being a retail gesture.
 
 # THE TWO DECISIONS WAITING ON THE OWNER
 
-## 1. What happened to Meresankh
+## 1. What happened to Hetepheres
 
 **The problem.** `WORLD-1.md` is built on a rescue: the player reassembles the
-name MERESANKH glyph by glyph and the dramatic question of World 1 is "what was
+name HETEPHERES glyph by glyph and the dramatic question of World 1 is "what was
 her name and who took it". Meeting 2 says two things that break it. At 11:54:
 "Not rescue the girl. We find the girl." And at 02:42 the archaeologist IS the
 evil spirit and the evil spirit is "a real Egyptian god", while the good one is
-one of the ancient people. Meresankh is a real queen, not a god, and there is no
+one of the ancient people. Hetepheres is a real queen, not a god, and there is no
 longer anyone to rescue.
 
 She was chosen for good reasons that have not gone away: her tomb's defining
@@ -1176,7 +1179,7 @@ a person in a vessel that was not hers.
 
 **RECOMMENDATION: she stays, demoted from spirit to NAME.**
 
-Meresankh is the dead queen whose tomb this is. She is not a character, not an
+Hetepheres is the dead queen whose tomb this is. She is not a character, not an
 antagonist, and nobody rescues her. Her name is what the struck cartouche in the
 serdab says, restoring an effaced royal name is a real thing archaeologists
 actually do, and it is what the archaeologist was down here doing when everything
@@ -1215,7 +1218,7 @@ moment the archaeologist reveals what she is.** The name arrives in the same
 breath as the reveal, in the world where the gods are carvings older than the
 gods, and World 1 never has to say a word.
 
-**QUESTION FOR THE OWNER: is Meresankh a name on a wall (recommended), or is she
+**QUESTION FOR THE OWNER: is Hetepheres a name on a wall (recommended), or is she
 the antagonist?** If she is the antagonist, the "real Egyptian god" line has to
 go, because she is a queen. If she is a name on a wall, the antagonist stays
 nameless until World 2 and my recommendation for its name is NEITH.
