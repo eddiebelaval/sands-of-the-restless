@@ -506,10 +506,26 @@ export function createDirector({
         const other = p.from === id ? p.to : p.from;
         if (reach.has(other)) continue;
 
-        if (p.kind !== 'open') {
-          const b = barriers.find((x) => x.from === p.from && x.to === p.to);
-          if (b && !b.opened && !b.opening) continue;
-        }
+        /**
+         * ASK THE BARRIER LIST, NOT THE AUTHORED KIND.
+         *
+         * This used to skip the lookup entirely when the portal read 'open' in
+         * rooms.js, which was true right up until a portal could be open on one
+         * tier and walled on another. The two Act 3 loop doorways carry
+         * `onHard`: they are authored 'open' and they are a 1250-gold debris
+         * wall on Hard, so on that tier this shortcut declared the King's
+         * Chamber reachable through a wall the player had not bought - a wave
+         * spawning behind stone, never arriving, never ending, which is the
+         * exact failure the note above this function exists to prevent.
+         *
+         * A barrier record is only ever created for a doorway that actually has
+         * something standing in it, so the absence of one IS the open case and
+         * the check needs no other input. That makes this read the world that
+         * was built rather than the data it was built from, which is the only
+         * one of the two that knows what tier is being played.
+         */
+        const b = barriers.find((x) => x.from === p.from && x.to === p.to);
+        if (b && !b.opened && !b.opening) continue;
 
         reach.add(other);
         frontier.push(other);

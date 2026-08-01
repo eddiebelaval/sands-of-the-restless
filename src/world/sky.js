@@ -590,6 +590,30 @@ export function createSky(scene, { radius = 900 } = {}) {
   const _centre = new THREE.Vector3();
   const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
+  /**
+   * THROW AWAY THE DEPTH TARGET SO THE NEW SIZE IS ACTUALLY ALLOCATED.
+   *
+   * `sun.shadow.mapSize.set(n, n)` on its own resizes nothing. three.js
+   * allocates the shadow map lazily on first use and then keeps it forever, so
+   * changing mapSize afterwards writes a number that only the next allocation
+   * will read - and without this there is no next allocation.
+   *
+   * That failure is silent and it mimics success exactly: the fidelity switch
+   * flips, the reported map size changes, and the frame time does not move at
+   * all. The conclusion a reasonable person draws from that is "shadows are not
+   * the problem", which is how a 4096 map survives a performance pass. This
+   * project has a whole section in STATE.md about measurements that proved the
+   * wrong thing; this is the same shape and it is worth the paragraph.
+   *
+   * Null after dispose, because three checks for the property rather than for a
+   * disposed flag and will happily hand a freed target to the renderer.
+   */
+  function dropShadowMap() {
+    if (!sun.shadow.map) return;
+    sun.shadow.map.dispose();
+    sun.shadow.map = null;
+  }
+
   return {
     dome,
     sun,
@@ -661,6 +685,28 @@ export function createSky(scene, { radius = 900 } = {}) {
       // number the shadow map is actually allocated at.
       shadowTexels = high ? 4096 : 1024;
       sun.shadow.mapSize.set(shadowTexels, shadowTexels);
+      dropShadowMap();
+    },
+
+    /**
+     * Scale the shadow map between the two fidelity sizes, for the governor.
+     *
+     * 4096 squared is nearly seventeen million shadow texels, re-rasterised
+     * whenever the sun or the camera moves, and it is a resolution chosen on a
+     * machine that could afford it. Halving the side is a QUARTER of the shadow
+     * pass, and what it costs is edge crispness rather than the presence of a
+     * shadow - which is the right thing to spend first, and is why this sits
+     * above pixel ratio on the governor's ladder.
+     *
+     * The floor is 512. Below that the texel snap in follow() starts producing
+     * visible crawl along the pyramid's own edge as the camera moves.
+     */
+    setShadowScale(k) {
+      const next = Math.max(512, Math.min(4096, Math.round((4096 * k) / 512) * 512));
+      if (next === shadowTexels) return;
+      shadowTexels = next;
+      sun.shadow.mapSize.set(next, next);
+      dropShadowMap();
     },
   };
 }

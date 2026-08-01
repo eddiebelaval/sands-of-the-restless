@@ -9,7 +9,8 @@
 
 import * as THREE from 'three';
 
-import { createRenderer, bindResize, resolutionScale } from './core/renderer.js';
+import { createRenderer, bindResize, resolutionScale, setGovernorScale } from './core/renderer.js';
+import { createGovernor } from './core/governor.js';
 import { createPost } from './core/post.js';
 import { createInput } from './core/input.js';
 import { createSky } from './world/sky.js';
@@ -532,8 +533,32 @@ function boot() {
     btnLow.setAttribute('aria-pressed', String(!high));
   }
 
-  btnHigh.addEventListener('click', () => setFidelity(true));
-  btnLow.addEventListener('click', () => setFidelity(false));
+  /**
+   * Apply the governor's pixel scale and rebuild everything sized from it.
+   *
+   * Kept separate from setFidelity because they answer independent questions -
+   * fidelity is WHICH passes run, scale is how many fragments each one covers -
+   * and because the bottom rung of the ladder has to lower the scale while
+   * fidelity is already low.
+   */
+  function setPixelScale(k) {
+    setGovernorScale(k);
+    renderer.setPixelRatio(high ? resolutionScale() : k);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    post.composer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  /**
+   * Created further down, once `pause` and `spaces` exist for it to ask about
+   * transitions. Declared here because the fidelity buttons have to be able to
+   * tell it to stand down, and those are wired at this point in the file.
+   */
+  let governor = null;
+
+  // An explicit choice by the player ends the automatic one for the session. A
+  // system that argues with a button the player just pressed is a bug.
+  btnHigh.addEventListener('click', () => { governor?.yieldToPlayer(); setFidelity(true); });
+  btnLow.addEventListener('click', () => { governor?.yieldToPlayer(); setFidelity(false); });
   setFidelity(true);
 
   // -------------------------------------------------------------------------
@@ -555,7 +580,13 @@ function boot() {
     // binding in this scope and the panel has to see the value AFTER the corner
     // buttons change it. Both surfaces write through the same function, so the
     // two can never disagree about which fidelity is live.
-    fidelity: { get: () => high, set: (v) => setFidelity(!!v) },
+    // Setting it by hand also stands the governor down for the session, exactly
+    // as the corner buttons do. Two surfaces, one rule: the player's explicit
+    // choice is final and nothing overrides it afterwards.
+    fidelity: {
+      get: () => high,
+      set: (v) => { governor?.yieldToPlayer(); setFidelity(!!v); },
+    },
     onResume: () => {
       // Settings is also reachable from the title screen, where there is no
       // pointer lock to reacquire yet.
@@ -569,6 +600,37 @@ function boot() {
       // session. See input.relock(), which is that decision left alone.
       input.relock();
     },
+  });
+
+  /**
+   * THE GAME NO LONGER ASSUMES IT IS RUNNING ON THE MACHINE IT WAS BUILT ON.
+   *
+   * `setFidelity(true)` above used to be the entire hardware story: every
+   * machine got GTAO, a 4096 shadow map and nine fullscreen passes at 3.5
+   * megapixels, because that is what the author's M4 Max could afford. A player
+   * on a MacBook could not run it at all, which is the bug this closes.
+   *
+   * It still STARTS at full, deliberately. A fast machine should not be
+   * punished for the existence of slow ones, and starting low and climbing
+   * would make every player watch the game improve for the first eight seconds.
+   * The difference is that the frame is now measured from the first second and
+   * the ladder comes down the moment the budget says so. See core/governor.js
+   * for the rungs, and for why detecting the GPU at boot cannot work.
+   *
+   * Built here rather than beside setFidelity because it needs `pause` and
+   * `spaces`, and both are created below that point in this file.
+   */
+  governor = createGovernor({
+    post,
+    sky,
+    setFidelity,
+    setPixelScale,
+    // Transition frames are the most expensive in the game and the ones the
+    // player sees least of. Sampling them would let walking through a doorway
+    // permanently downgrade the picture. The pause menu is excluded for the
+    // same reason in reverse: a stopped simulation renders an unrepresentative
+    // frame and would look like free headroom.
+    paused: () => pause.paused || spaces.transition.phase !== 'idle',
   });
 
   /**
@@ -623,6 +685,24 @@ function boot() {
     economy.reset(tier.startGold);
     startScreen.lockIn();
     director.reset();
+
+    /**
+     * The two Act 3 loop doorways are the one thing in the map whose GEOMETRY
+     * depends on the tier, and this is the only line in the game that knows it.
+     *
+     * They are built as their `onHard` form at boot, because the interior is
+     * built at boot and the tier is picked after it - see the note on
+     * collectPortals in world/build.js. So Hard is the shape that ships and the
+     * gentler tiers delete it here, in the frame the choice becomes a fact,
+     * before the player has moved: no animation, no gold debited, no chime, no
+     * "the way is open". An Easy player never learns there was a wall.
+     *
+     * Deliberately NOT routed through systems/doors.js. That file owns what a
+     * barrier costs and whether it may be bought, and this transaction has no
+     * price and no buyer - putting it there would mean teaching the purchase
+     * path about a purchase that never happens.
+     */
+    spaces.interior.applyTier(tier.id);
 
     veil.hidden = true;
     hud.hidden = false;
@@ -910,6 +990,18 @@ function boot() {
 
     const dt = Math.min(raw, MAX_DELTA);
     elapsed += dt;
+
+    /**
+     * One frame of evidence for the governor, on the RAW delta.
+     *
+     * `dt` above is clamped so that a long frame cannot teleport the player
+     * through a wall - see MAX_DELTA. Feeding the governor that number would
+     * make it structurally incapable of seeing the frames it exists to react
+     * to: every hitch worse than the clamp would arrive as exactly the clamp,
+     * and a machine rendering at four frames a second would report the same
+     * delta as one merely stuttering. It gets the truth instead.
+     */
+    governor.sample(raw * 1000);
 
     // -----------------------------------------------------------------------
     // THE DEATH GATE, and it is a second and narrower kind of stopped.
@@ -1217,7 +1309,13 @@ function boot() {
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     pause,
     difficulty, startScreen,
-    setFidelity, start,
+    setFidelity, setPixelScale, start,
+    // The frame governor, and the composer it drives. Exposed so that
+    // tools/perf.mjs can toggle individual passes and read the rung the machine
+    // actually settled on - a claim about performance that cannot be measured
+    // from outside the page is not a claim worth making.
+    governor,
+    composer: post.composer,
     get elapsed() { return elapsed; },
     // Frames the loop has run, INCLUDING paused ones. Against `elapsed`, which
     // only moves when the simulation does, the pair is the whole claim.

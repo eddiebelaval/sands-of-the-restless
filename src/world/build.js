@@ -421,6 +421,38 @@ export function buildInterior(scene, rooms = ROOMS) {
       for (const a of animated) a.update(dt, t);
     },
 
+    /**
+     * The run has picked a tier. Settle the doorways that only exist on Hard.
+     *
+     * Called once, from start() in main.js, immediately after difficulty.lock()
+     * - which is the first moment in the process that the tier is a fact. Every
+     * `onHard` doorway was built as its Hard form at boot (see collectPortals),
+     * so this is the whole of the tier's effect on the map: on Hard nothing
+     * happens and the barriers stand, and on Easy and Normal they are deleted
+     * before the player has taken a step.
+     *
+     * It reports the ids it cleared rather than returning nothing, for the same
+     * reason systems/difficulty.js makes `set` report its refusal: a relaxation
+     * that quietly did nothing - because the tier string was misspelt, because
+     * the portals lost their `onHard` in a refactor, because this was called
+     * before the barriers existed - is indistinguishable from a working one
+     * until a player walks into a wall on Normal that is not supposed to be
+     * there. The caller can assert on the list and the harness can read it.
+     *
+     * @param {string} tierId 'easy' | 'normal' | 'hard'
+     * @returns {string[]} the barrier ids taken out of the world
+     */
+    applyTier(tierId) {
+      if (tierId === 'hard') return [];
+
+      const cleared = [];
+      for (const b of barriers) {
+        if (!b.hardOnly) continue;
+        if (b.clearInstantly()) cleared.push(b.id);
+      }
+      return cleared;
+    },
+
     setFidelity(high) {
       for (const l of lights) {
         l.light.distance = high ? l.distance : l.distance * 0.68;
@@ -478,13 +510,53 @@ export function buildInterior(scene, rooms = ROOMS) {
  * written on one side only, so a room's own record is not enough to know where
  * its openings are: the wall builder has to see both directions or it seals a
  * doorway from the far side.
+ *
+ * ---------------------------------------------------------------------------
+ * `onHard` IS RESOLVED HERE, AND IT IS RESOLVED PESSIMISTICALLY
+ * ---------------------------------------------------------------------------
+ *
+ * A portal carrying `onHard` is a doorway that stands open on Easy and Normal
+ * and is walled on Hard. The tier is not known at this point and CANNOT be: the
+ * whole interior is built at boot, before the title screen has been looked at,
+ * because half a megabyte of geometry built on first entry is a visible hitch
+ * at the exact moment the player has paid a thousand gold to see the room. See
+ * the note in systems/spaces.js, which is a decision rather than an accident.
+ *
+ * So the barrier is built as though the tier were Hard, always, and the tiers
+ * that do not want it clear it in one frame at difficulty.lock(). Building the
+ * OPTIMISTIC shape and adding a barrier later was the alternative and it is
+ * strictly worse: an 'open' portal produces no meshes, no colliders and no door
+ * record at all, so the Hard path would have had to construct a barrier into a
+ * live scene, mid-session, on a code path nothing else in this file uses - and
+ * a barrier that only ever exists on one tier is a barrier nothing ever looks
+ * at. This way the geometry every tier ships is the geometry every tier tests,
+ * and the tier-specific step is a deletion, which is the direction that cannot
+ * silently fail to produce something.
+ *
+ * `hardOnly` is carried on the flattened record so buildBarriers can mark the
+ * door it makes, and so the relaxation at lock() has something to select on
+ * that is not a hardcoded pair of room ids.
  */
 function collectPortals(rooms) {
   const out = [{ from: null, to: ENTRY.to, at: ENTRY.at, width: ENTRY.width, kind: ENTRY.kind, cost: ENTRY.cost }];
 
   for (const room of rooms) {
     for (const p of room.portals || []) {
-      out.push({ from: room.id, to: p.to, at: p.at, width: p.width, kind: p.kind, cost: p.cost });
+      const hard = p.onHard || null;
+      out.push({
+        from: room.id,
+        to: p.to,
+        at: p.at,
+        width: p.width,
+        // The Hard reading of the doorway when there is one. Everything
+        // downstream that asks a portal what it is - the barrier builder, the
+        // minimap's price label, the objective tracker's route cost - then sees
+        // one answer rather than two, and sees the same answer the colliders
+        // were built from.
+        kind: hard ? hard.kind : p.kind,
+        cost: hard ? hard.cost : p.cost,
+        hardOnly: !!hard,
+      });
     }
   }
   return out;
@@ -2085,6 +2157,22 @@ function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) 
       mine.push(c);
     }
 
+    /**
+     * Hand this barrier's cylinders back to the map.
+     *
+     * Lifted into its own function because there are now two ways a barrier
+     * stops being solid and only one of them is a purchase: open() below is the
+     * player paying for it, clearInstantly() is the tier saying it was never
+     * there. Both have to release exactly the same list, and a second copy of
+     * this splice loop is the kind of duplicate that gets updated once.
+     */
+    const releaseColliders = () => {
+      for (const c of mine) {
+        const i = colliders.indexOf(c);
+        if (i >= 0) colliders.splice(i, 1);
+      }
+    };
+
     const record = {
       id: `${p.from}/${p.to}`,
       from: p.from,
@@ -2102,6 +2190,14 @@ function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) 
       opening: false,
 
       /**
+       * Built from a portal's `onHard`, so it is a barrier on Hard and nothing
+       * at all on the tiers below. The relaxation pass reads this rather than a
+       * list of room ids, so a third doorway authored with `onHard` in rooms.js
+       * is wired by writing the data and nothing else.
+       */
+      hardOnly: !!p.hardOnly,
+
+      /**
        * Start clearing. Idempotent, and it drops the colliders on the FIRST
        * frame rather than the last: a player who has paid should be able to
        * walk into the doorway while it is still moving, which is what makes a
@@ -2111,10 +2207,37 @@ function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) 
         if (record.opened || record.opening) return false;
         record.opening = true;
 
-        for (const c of mine) {
-          const i = colliders.indexOf(c);
-          if (i >= 0) colliders.splice(i, 1);
-        }
+        releaseColliders();
+        return true;
+      },
+
+      /**
+       * Take the barrier out of the world as though it had never been built: no
+       * animation, no sound, no charge, no event, finished in the frame it is
+       * called in.
+       *
+       * This is what a tier below Hard does with an `onHard` doorway, and it
+       * cannot be open() with a faster animation. open() is the far end of a
+       * purchase: it hands the barrier to the animator and leaves `opening`
+       * true for the length of the collapse, and every surface that reads a
+       * door - the prompt, the minimap, the objective tracker - would spend
+       * that second and a half showing an Easy player a wall being cleared that
+       * they were never meant to know about. The finished state, written once,
+       * is the only honest spelling of "there is nothing here".
+       *
+       * THE COLLIDERS ARE RELEASED RATHER THAN THE MESHES MERELY HIDDEN. An
+       * invisible wall standing in an open doorway is the worse half of this
+       * bug and it is the half no screenshot catches.
+       */
+      clearInstantly() {
+        if (record.opened) return false;
+
+        releaseColliders();
+        record.opening = false;
+        record.opened = true;
+        // The whole group, so the debris chunks and the dust go together. The
+        // animated path ends the same way; see the note on `g.visible` below.
+        g.visible = false;
         return true;
       },
     };

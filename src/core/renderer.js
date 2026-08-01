@@ -43,11 +43,35 @@ const PIXEL_BUDGET = 3.5e6;
 const MAX_RATIO = 2;
 const MIN_RATIO = 1;
 
+/**
+ * THE BUDGET ABOVE IS ONE MACHINE'S ANSWER, AND THE GOVERNOR OVERRIDES IT.
+ *
+ * Every number in this file was measured on an M4 Max. That was honest work and
+ * it fixed a real bug, but a constant cannot describe a machine it has never
+ * run on: a player on a MacBook found the game unplayable at exactly these
+ * settings. 3.5 megapixels through nine fullscreen passes is a comfortable
+ * frame on the machine it was measured on and an impossible one two tiers down.
+ *
+ * So `resolutionScale` keeps deciding what the WINDOW can afford, and this
+ * multiplier lets `core/governor.js` say what the GPU can afford, which is the
+ * half nothing here could ever know. It is deliberately allowed below MIN_RATIO:
+ * that floor exists because SMAA has too little signal underneath it, which is a
+ * true statement about image quality and an irrelevant one at fifteen frames a
+ * second. The governor only goes there after it has already turned SMAA off, so
+ * the anti-aliasing is not fighting the downscale - it is not running at all.
+ */
+let governorScale = 1;
+
+export function setGovernorScale(k) {
+  governorScale = Math.max(0.5, Math.min(1, k));
+}
+
 export function resolutionScale(w = window.innerWidth, h = window.innerHeight) {
   const device = Math.min(window.devicePixelRatio || 1, MAX_RATIO);
   const area = Math.max(1, w * h);
   const affordable = Math.sqrt(PIXEL_BUDGET / area);
-  return Math.max(MIN_RATIO, Math.min(device, affordable));
+  const budgeted = Math.max(MIN_RATIO, Math.min(device, affordable));
+  return budgeted * governorScale;
 }
 
 export function createRenderer(canvas) {

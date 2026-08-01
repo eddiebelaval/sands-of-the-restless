@@ -852,6 +852,24 @@ export function createPost(renderer, scene, camera) {
   const smaa = new SMAAPass();
   composer.addPass(smaa);
 
+  /**
+   * Whatever is last and still enabled has to be the pass that writes to the
+   * screen. Everything before it renders into the composer's own targets.
+   *
+   * Factored out because there are now three callers that can change which
+   * passes are on - the fidelity switch, and the governor's two independent
+   * toggles - and every one of them gets this wrong the same way if it forgets:
+   * the frame goes black, which is fast, silent, and reads on a profiler as an
+   * enormous improvement.
+   */
+  function retarget() {
+    const passes = composer.passes;
+    for (const p of passes) p.renderToScreen = false;
+    for (let i = passes.length - 1; i >= 0; i--) {
+      if (passes[i].enabled) { passes[i].renderToScreen = true; break; }
+    }
+  }
+
   return {
     composer,
     bloom,
@@ -888,11 +906,50 @@ export function createPost(renderer, scene, camera) {
       fog.enabled = high;    // borrows GTAO's depth, so it goes with it
       // The viewmodel pass always stays on: disabling it would remove the gun.
 
-      const passes = composer.passes;
-      for (const p of passes) p.renderToScreen = false;
-      for (let i = passes.length - 1; i >= 0; i--) {
-        if (passes[i].enabled) { passes[i].renderToScreen = true; break; }
-      }
+      retarget();
+    },
+
+    /**
+     * AO on or off on its own, without moving the rest of the chain.
+     *
+     * This exists for the frame governor, which needs to give up the single
+     * most expensive thing in the frame WITHOUT dropping to low fidelity - that
+     * is the whole point of having a ladder rather than a switch. GTAOPass does
+     * not cost a fullscreen quad like every other pass here: it re-renders the
+     * ENTIRE SCENE through MeshNormalMaterial to fill its own G-buffer, so it is
+     * worth roughly 250 draw calls and 245,000 triangles a frame. Nothing else
+     * in the chain is in that league.
+     *
+     * FOG GOES WITH IT, and that is not a stylistic pairing. The height fog pass
+     * reads the depth buffer GTAO fills; leaving it enabled with GTAO off points
+     * it at a target nobody wrote this frame. `setFidelity` already knew this
+     * and the knowledge is duplicated here on purpose rather than factored out,
+     * because the coupling belongs next to each place that can break it.
+     */
+    setAO(on) {
+      gtao.enabled = !!on;
+      aoComposite.enabled = !!on;
+      fog.enabled = !!on;
+      retarget();
+    },
+
+    /** Bloom on its own, for the governor's ladder. */
+    setBloom(on) {
+      bloom.enabled = !!on;
+      retarget();
+    },
+
+    /**
+     * SMAA on its own, for the governor's ladder.
+     *
+     * Dropped one rung ABOVE the pixel ratio and never below it, because
+     * anti-aliasing a frame that is about to be scaled up from less than one
+     * device pixel per screen pixel is work spent fighting the downscale. See
+     * the note on MIN_RATIO in core/renderer.js.
+     */
+    setSMAA(on) {
+      smaa.enabled = !!on;
+      retarget();
     },
   };
 }

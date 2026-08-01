@@ -211,8 +211,43 @@ function createCurtain() {
 
   let shown = 0;
 
+  /**
+   * THE CURTAIN HAS A COLOUR NOW, AND IT IS THE DIRECTION OF TRAVEL.
+   *
+   * Going in, the screen goes to black: you step out of desert noon into a
+   * sealed mass and your eyes have not caught up, so the world is gone before
+   * the room arrives. That has always been what this sheet sold and it is why
+   * the entry reads as well as it does.
+   *
+   * Coming out is the SAME EFFECT WITH THE SIGN FLIPPED, and it was being
+   * played as a second blackout. Eyes adapted to a torchlit chamber do not go
+   * dark walking into daylight, they blow out: the doorway is a white hole, the
+   * white swallows the frame, and the courtyard resolves down out of it. A fade
+   * to black on the way out is the transition running backwards - it says the
+   * lights went out at the exact moment the player walked into the sun.
+   *
+   * LATCHED ON THE RISING EDGE, and that is the whole of the mechanism worth
+   * explaining. `active` flips inside `enter()`, which happens at full opacity
+   * in the middle of the transition, so a curtain that read the colour every
+   * frame would repaint white to black while covering the screen - and a repaint
+   * at opacity 1 is not invisible, it is the most visible frame in the sequence.
+   * The colour is therefore adopted only on the transition from nothing to
+   * something and held until the sheet is fully gone. You cannot change the
+   * colour of a curtain that is currently up; the guard is the assignment
+   * condition below rather than a comment asking nicely.
+   */
+  let tint = '#000';
+  let pending = '#000';
+
   return {
     get value() { return shown; },
+    get tint() { return tint; },
+
+    /**
+     * Ask for the colour the NEXT fade will use. Ignored for as long as the
+     * sheet is showing, which is the point - see the note above.
+     */
+    setTint(next) { pending = next; },
 
     /**
      * Quantised to the 255 steps the compositor can actually express, so a
@@ -222,6 +257,13 @@ function createCurtain() {
     set(v) {
       const a = Math.round((v < 0 ? 0 : v > 1 ? 1 : v) * 255) / 255;
       if (a === shown) return;
+
+      // Rising out of nothing is the only moment the colour may change.
+      if (shown === 0 && a > 0 && tint !== pending) {
+        tint = pending;
+        el.style.background = tint;
+      }
+
       shown = a;
       el.style.opacity = String(a);
       // Off the compositor entirely when there is nothing to cover, which is
@@ -230,6 +272,18 @@ function createCurtain() {
     },
   };
 }
+
+/**
+ * The two colours, named rather than inlined because the exit one is not white.
+ *
+ * A blown highlight on a real sensor is not #ffffff, it is the scene's own light
+ * clipped, and out here that light is desert sun off limestone - warm. Pure white
+ * reads as a UI flash, an alert, something the interface is doing to you. Pulling
+ * it a few points toward the sand keeps it reading as the world being too bright
+ * to look at, which is the thing being sold.
+ */
+const VEIL_IN = '#000';
+const VEIL_OUT = '#fffaf0';
 
 export function createSpaces({ scene, courtyard, sky }) {
   // Built at boot rather than on first entry. It costs a few milliseconds and
@@ -402,6 +456,18 @@ export function createSpaces({ scene, courtyard, sky }) {
       return;
     }
 
+    /**
+     * The colour is asked for from the space being LEFT, every idle frame, and
+     * the curtain decides whether it is allowed to take it. Inside means the
+     * next threshold crossed is the way out, so the fade that starts here is the
+     * blow-out; outside it is the blackout.
+     *
+     * Asked for here rather than at the moment the fade begins because there is
+     * no such moment to hook: the fade is a function of DISTANCE, not an event,
+     * so the frame the demand first goes positive is the only edge there is and
+     * it is the curtain that can see it.
+     */
+    curtain.setTint(active === 'interior' ? VEIL_OUT : VEIL_IN);
     curtain.set(demand);
   }
 
