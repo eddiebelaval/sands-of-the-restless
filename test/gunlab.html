@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gun lab</title>
+</head>
+<body>
+<p id="status">idle</p>
+<script type="module">
+/*
+ * The offline bench for src/core/audio.js.
+ *
+ * It builds the REAL audio graph - the same createAudio() the game runs, with
+ * the same buses, the same compressor and the same convolver - around an
+ * OfflineAudioContext, fires shots into it, and renders. Nothing here
+ * reimplements a single layer of the synthesis, because a bench that
+ * reimplements what it measures verifies the reimplementation.
+ *
+ * Rendering offline rather than driving the live game is the whole point: it is
+ * deterministic in timing, it runs faster than real time, and it produces
+ * samples that can be measured rather than a claim that a sound was played.
+ */
+import { createAudio } from '../src/core/audio.js';
+import { analyse, plotEnvelope, compare, burstCracks } from './gunlab-analysis.js';
+
+const RATE = 48000;
+
+// The bake is a one-off at context creation, and every offline render pays it
+// again because every render builds a fresh context. Recording it here is what
+// lets the cost figures separate 'the shots got more expensive' from 'the
+// harness built the buffers again'.
+let lastBakeMs = 0;
+
+/**
+ * Render one or more shots into a fresh offline context and return the buffer.
+ *
+ * A fresh context per render matters. Reusing one would carry the previous
+ * shot's convolver tail and its RNG-warmed noise buffer into the next
+ * measurement, and the variation check would then be measuring the leftovers
+ * rather than the synthesis.
+ */
+async function render(events, opts = {}) {
+  const seconds = opts.seconds ?? 1.6;
+  const oac = new OfflineAudioContext(2, Math.floor(RATE * seconds), RATE);
+
+  const audio = createAudio({ context: oac, volume: opts.volume ?? 1,
+                              limiter: opts.limiter !== false });
+  await audio.resume();
+  if (opts.space) audio.setSpace(opts.space);
+  if (opts.fidelity === 'low') audio.setFidelity(false);
+
+  for (const e of events) {
+    if (e.play) audio.play(e.play, e.opts || {});
+    else audio.shot(e.weapon, e.opts || {});
+  }
+
+  const buf = await oac.startRendering();
+  lastBakeMs = audio.stats().bakeMs || 0;
+  return buf;
+}
+
+async function one(weapon, opts = {}) {
+  const buf = await render([{ weapon, opts: opts.shot || {} }], opts);
+  return { buf, metrics: analyse(buf), plot: plotEnvelope(buf, 1400, opts.plotSeconds ?? 0.9) };
+}
+
+window.__GUNLAB__ = {
+  /**
+   * Do the baked variants actually differ from each other?
+   *
+   * vary() in gunsmith.js gives each variant its own body pitch, body length,
+   * crack decay and tail length. That is a claim about code, and a claim about
+   * code in this project is worth nothing until the bytes are checked: an
+   * earlier pass baked variants that differed ONLY in their noise and still
+   * measured 0.95 correlated, which is a variation system that ran and did
+   * nothing. This compares the baked buffers to each other directly, with no
+   * playback, no graph and no envelope in the way.
+   */
+  async variants(weapon) {
+    const oac = new OfflineAudioContext(2, 128, RATE);
+    const { bakeReport } = await import('../src/core/gunsmith.js');
+    const bank = bakeReport(oac, weapon);
+    if (!bank) return null;
+    // Two measures, because they answer different questions.
+    //
+    // The whole buffer is dominated by the body - a deterministic low frequency
+    // thump that is 100ms long against a crack that is 5ms long - so a high
+    // figure there mostly says the two shots are the same calibre, which they
+    // are and should be. The first 15ms is the crack, which is what actually
+    // carries "was that the same shot again", and that is the number to read.
+    const crackLen = Math.floor(RATE * 0.015);
+    const slice = (b) => {
+      const o = new OfflineAudioContext(2, crackLen, RATE).createBuffer(2, crackLen, RATE);
+      for (let c = 0; c < 2; c++) {
+        const src = b.getChannelData(c), dst = o.getChannelData(c);
+        for (let k = 0; k < crackLen; k++) dst[k] = src[k];
+      }
+      return o;
+    };
+    const pairs = [], crackPairs = [];
+    for (let i = 0; i < bank.length; i++) {
+      for (let j = i + 1; j < bank.length; j++) {
+        pairs.push(+compare(bank[i], bank[j]).correlation.toFixed(4));
+        crackPairs.push(+compare(slice(bank[i]), slice(bank[j])).correlation.toFixed(4));
+      }
+    }
+    const lens = bank.map((b) => b.length);
+    return {
+      weapon, count: bank.length,
+      lengthsSamples: lens,
+      distinctLengths: new Set(lens).size,
+      pairwiseCorrelation: pairs,
+      worst: Math.max(...pairs),
+      worstCrack: Math.max(...crackPairs),
+      // The mean as well as the max. With five variants there are ten pairs and
+      // the max is whichever two happened to land closest, which swings by a
+      // lot on a different random draw; the mean is the stable figure and the
+      // one to compare between builds.
+      meanCrack: +(crackPairs.reduce((a, b) => a + b, 0) / crackPairs.length).toFixed(4),
+      anyIdentical: pairs.some((c) => c > 0.9999),
+    };
+  },
+
+  /** What the one-off bake at context creation actually costs, and how much
+   *  float it leaves resident. Both land inside the Begin click. */
+  async bakeCost() {
+    const oac = new OfflineAudioContext(2, 128, RATE);
+    const audio = createAudio({ context: oac });
+    await audio.resume();
+    const st = audio.stats();
+    // The original synthesis has no bake at all; report zeroes rather than
+    // failing, so the same bench runs against both trees.
+    if (st.bakeMs === undefined) return { bakeMs: 0, banks: 0, buffers: 0, megabytes: 0 };
+    const { REPORTS, bakeReport, bakeMechanics, bakeRing } = await import('../src/core/gunsmith.js');
+    let samples = 0, buffers = 0;
+    for (const n of Object.keys(REPORTS)) {
+      for (const b of bakeReport(oac, n)) { samples += b.length * b.numberOfChannels; buffers++; }
+    }
+    for (const b of bakeMechanics(oac)) { samples += b.length * b.numberOfChannels; buffers++; }
+    const r = bakeRing(oac); samples += r.length * r.numberOfChannels; buffers++;
+    return { bakeMs: st.bakeMs, banks: st.reportBanks, buffers,
+             megabytes: +(samples * 4 / 1048576).toFixed(2) };
+  },
+
+  /** Which weapon profiles actually exist, as opposed to falling back. */
+  async profiles() {
+    const oac = new OfflineAudioContext(1, 128, RATE);
+    const audio = createAudio({ context: oac });
+    await audio.resume();
+    return audio.weaponNames ? audio.weaponNames() : [];
+  },
+
+  /** One shot of one weapon: metrics plus an envelope for the plot. */
+  async shot(weapon, opts = {}) {
+    const r = await one(weapon, opts);
+    return { weapon, space: opts.space || 'exterior', metrics: r.metrics, plot: r.plot };
+  },
+
+  /**
+   * CONSECUTIVE shots of the same weapon, compared sample by sample.
+   *
+   * Fired into one context, well apart, then sliced back out - not rendered in
+   * two separate contexts. Two separate contexts each start with no memory of
+   * what was played last, so both are free to pick the same variant and the
+   * measured similarity then depends on a coin toss rather than on the
+   * synthesis. What the player actually hears is shot N followed by shot N+1
+   * inside one session, and that is what this measures.
+   */
+  async variation(weapon, opts = {}) {
+    const count = opts.count ?? 6;
+    const gap = 0.5;
+    const events = [];
+    for (let i = 0; i < count; i++) events.push({ weapon, opts: { delay: i * gap } });
+    const buf = await render(events, { ...opts, seconds: count * gap + 0.6 });
+
+    const rate = buf.sampleRate;
+    const slices = [];
+    for (let i = 0; i < count; i++) {
+      const from = Math.floor(i * gap * rate);
+      const len = Math.floor(gap * rate);
+      const s = new OfflineAudioContext(2, len, rate).createBuffer(2, len, rate);
+      for (let c = 0; c < 2; c++) {
+        const src = buf.getChannelData(c), dst = s.getChannelData(c);
+        for (let k = 0; k < len; k++) dst[k] = src[from + k];
+      }
+      slices.push(s);
+    }
+
+    // Every adjacent pair, plus the worst case across all pairs. One lucky pair
+    // proves nothing; the maximum is the number that has to be low.
+    let worst = -1, worstPair = null;
+    const pairs = [];
+    for (let i = 0; i < count - 1; i++) {
+      const c = compare(slices[i], slices[i + 1]);
+      pairs.push(+c.correlation.toFixed(4));
+      if (c.correlation > worst) { worst = c.correlation; worstPair = c; }
+    }
+    return {
+      weapon, count,
+      cmp: { ...worstPair, correlation: +worst.toFixed(4), adjacentCorrelations: pairs },
+    };
+  },
+
+  /**
+   * The cost of the graph with nothing playing, so the per-shot figure can be
+   * separated from the fixed cost of the buses, the convolver and the master
+   * soft clipper. Without this, a render that got slower says nothing about
+   * whether the shots got more expensive.
+   */
+  async idleCost(seconds = 3.6, opts = {}) {
+    const run = async (limiter) => {
+      const t0 = performance.now();
+      await render([], { ...opts, seconds, limiter });
+      return { total: +(performance.now() - t0).toFixed(1), bake: lastBakeMs };
+    };
+    const withL = await run(true);
+    const noL = await run(false);
+    return {
+      seconds,
+      renderMs: +(withL.total - withL.bake).toFixed(1),
+      withoutLimiterMs: +(noL.total - noL.bake).toFixed(1),
+      bakeMs: withL.bake,
+    };
+  },
+
+  /**
+   * What the DynamicsCompressor that used to sit on the master bus did to a
+   * signal, isolated: the same buffer straight to the destination, through the
+   * old compressor, and through the soft clipper that replaced it.
+   *
+   * This is here because "the compressor was flattening the guns" is a claim,
+   * and a claim about a node is worth nothing in this codebase without the
+   * samples behind it.
+   */
+  async compressorForensics() {
+    const mk = async (mode, amp, freqHz, transient) => {
+      const o = new OfflineAudioContext(2, RATE, RATE);
+      const src = o.createBufferSource();
+      const b = o.createBuffer(2, RATE / 2, RATE);
+      for (let c = 0; c < 2; c++) {
+        const d = b.getChannelData(c);
+        if (transient) {
+          // A gunshot-shaped edge: two samples up, then a 4ms collapse.
+          //
+          // Seeded, NOT Math.random. The whole point of this probe is to feed
+          // three chains the identical signal and attribute the difference to
+          // the chain; a fresh random signal per chain attributes it to the
+          // dice, and the answer wobbles by half a decibel between runs.
+          let st = 0x1234567 >>> 0;
+          for (let i = 0; i < d.length; i++) {
+            st ^= st << 13; st >>>= 0; st ^= st >>> 17; st ^= st << 5; st >>>= 0;
+            const t = i / RATE;
+            d[i] = (st / 4294967296 * 2 - 1) * amp * Math.exp(-t / 0.004) * (i < 2 ? i / 2 : 1);
+          }
+        } else {
+          for (let i = 0; i < d.length; i++) d[i] = Math.sin(2 * Math.PI * freqHz * i / RATE) * amp;
+        }
+      }
+      src.buffer = b;
+      let node = o.destination;
+      if (mode === 'oldComp') {
+        const c = o.createDynamicsCompressor();
+        c.threshold.value = -14; c.knee.value = 12; c.ratio.value = 6;
+        c.attack.value = 0.004; c.release.value = 0.18;
+        c.connect(o.destination); node = c;
+      } else if (mode === 'softClip') {
+        const w = o.createWaveShaper();
+        const n = 4096, knee = 0.62, span = 1 - knee;
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const x = (i / (n - 1)) * 2 - 1, aa = Math.abs(x);
+          const y = aa <= knee ? aa : knee + span * Math.tanh((aa - knee) / span);
+          curve[i] = x < 0 ? -y : y;
+        }
+        w.curve = curve; w.oversample = 'none';
+        w.connect(o.destination); node = w;
+      }
+      src.connect(node); src.start(0.01);
+      const out = await o.startRendering();
+      const d = out.getChannelData(0);
+      let p = 0, pi = 0;
+      for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > p) { p = v; pi = i; } }
+      return { peak: +p.toFixed(4), peakMs: +(pi / (RATE / 1000)).toFixed(2) };
+    };
+    return {
+      transient0p30: {
+        direct: await mk('direct', 0.30, 0, true),
+        oldComp: await mk('oldComp', 0.30, 0, true),
+        softClip: await mk('softClip', 0.30, 0, true),
+      },
+      steadySine0p24: {
+        direct: await mk('direct', 0.24, 440, false),
+        oldComp: await mk('oldComp', 0.24, 440, false),
+        softClip: await mk('softClip', 0.24, 440, false),
+      },
+    };
+  },
+
+  /** One sound rendered with and without the master soft clipper in circuit. */
+  async limiterEffect(name) {
+    const out = {};
+    for (const bypass of [false, true]) {
+      const oac = new OfflineAudioContext(2, RATE * 3, RATE);
+      const audio = createAudio({ context: oac, volume: 1, limiter: !bypass });
+      await audio.resume();
+      audio.play(name, {});
+      const b = await oac.startRendering();
+      const m = analyse(b);
+      out[bypass ? 'bypassed' : 'inCircuit'] = { peakDb: m.peakDb, rmsDb: m.rmsDb };
+    }
+    return { name, ...out };
+  },
+
+  /**
+   * A burst: n shots spaced `gapMs` apart, rendered as one event so the
+   * envelope shows whether the cracks stayed separate or ran together.
+   */
+  async burst(weapon, opts = {}) {
+    const n = opts.count ?? 3;
+    const gap = (opts.gapMs ?? 40) / 1000;
+    const events = [];
+    for (let i = 0; i < n; i++) {
+      events.push({ weapon, opts: { ...(opts.shot || {}), delay: i * gap } });
+    }
+    const buf = await render(events, { ...opts, seconds: opts.seconds ?? 1.4 });
+    return {
+      weapon, count: n, gapMs: opts.gapMs ?? 40,
+      metrics: analyse(buf),
+      cracks: burstCracks(buf, opts.gapMs ?? 40, n),
+      plot: plotEnvelope(buf, 1400, opts.plotSeconds ?? 0.6),
+    };
+  },
+
+  /** Any non-weapon sound, by router name. Used to check nothing regressed. */
+  async sound(name, opts = {}) {
+    const buf = await render([{ play: name, opts: opts.shot || {} }], opts);
+    return { name, metrics: analyse(buf) };
+  },
+
+  /**
+   * Node cost. Counts how many AudioNodes one shot constructs, by monkey
+   * patching the factory methods on a throwaway context. Node count is the
+   * honest proxy for per-shot CPU in Web Audio: every node is a block-rate
+   * callback on the audio thread whether or not it is doing anything.
+   */
+  async cost(weapon, shots = 1, opts = {}) {
+    const oac = new OfflineAudioContext(2, Math.floor(RATE * 2.0), RATE);
+    const audio = createAudio({ context: oac, volume: 1 });
+    await audio.resume();
+    if (opts.space) audio.setSpace(opts.space);
+
+    // The factory methods live on BaseAudioContext.prototype, two links up the
+    // chain from an OfflineAudioContext instance. Looking only at the direct
+    // prototype finds none of them and silently reports a cost of zero nodes
+    // per shot, which is exactly the shape of wrong answer this bench exists to
+    // prevent, so the chain gets walked.
+    const counts = {};
+    for (let p = Object.getPrototypeOf(oac); p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+      for (const key of Object.getOwnPropertyNames(p)) {
+        if (!/^create[A-Z]/.test(key) || Object.hasOwn(counts, key)) continue;
+        const orig = typeof oac[key] === 'function' ? oac[key].bind(oac) : null;
+        if (!orig) continue;
+        oac[key] = (...a) => { counts[key] = (counts[key] || 0) + 1; return orig(...a); };
+        counts[key] = 0;
+      }
+    }
+    for (const k of Object.keys(counts)) counts[k] = 0;
+
+    const t0 = performance.now();
+    for (let i = 0; i < shots; i++) audio.shot(weapon, { delay: i * 0.08 });
+    const buildMs = performance.now() - t0;
+
+    let total = 0;
+    for (const k of Object.keys(counts)) {
+      if (counts[k] === 0) delete counts[k];
+      else total += counts[k];
+    }
+
+    return { weapon, shots, nodes: counts, nodesTotal: total,
+             nodesPerShot: +(total / shots).toFixed(2),
+             buildMsPerShot: +(buildMs / shots).toFixed(4) };
+  },
+
+  /** Time a full offline render, as a rough stand-in for DSP load. */
+  async renderCost(weapon, shots, opts = {}) {
+    const events = [];
+    for (let i = 0; i < shots; i++) events.push({ weapon, opts: { delay: i * 0.08 } });
+    const seconds = shots * 0.08 + 1.2;
+    const t0 = performance.now();
+    const buf = await render(events, { ...opts, seconds });
+    // Minus the bake: it is a one-off at context creation in the real game and
+    // counting it as per-second DSP load would be a lie in the flattering
+    // direction for the old code and the unflattering one for the new.
+    const ms = performance.now() - t0 - lastBakeMs;
+
+    // Sustained fire is where a mix clips. Nothing in Web Audio reports it, so
+    // it has to be counted in the samples.
+    let peak = 0, clipped = 0;
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < d.length; i++) {
+        const a = Math.abs(d[i]);
+        if (a > peak) peak = a;
+        if (a >= 0.999) clipped++;
+      }
+    }
+    return { weapon, shots, audioSeconds: +seconds.toFixed(2),
+             renderMs: +ms.toFixed(1),
+             realtimeFactor: +(seconds * 1000 / ms).toFixed(1),
+             sustainedPeak: +peak.toFixed(4), clippedSamples: clipped };
+  },
+};
+
+document.getElementById('status').textContent = 'ready';
+window.__GUNLAB_READY__ = true;
+</script>
+</body>
+</html>

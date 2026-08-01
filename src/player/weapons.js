@@ -93,7 +93,26 @@ export const BASE_STATS = {
     magazine: 18, reserve: 126,
     spreadHip: 0.030, spreadAds: 0.0075,
     pellets: 1, range: 55,
-    audio: 'pistol',
+
+    /**
+     * ITS OWN AUDIO PROFILE, AND NOT THE PISTOL'S, BECAUSE OF THE 41.6ms GAP.
+     *
+     * On the shared `pistol` profile the three rounds of a burst pile their
+     * tails on top of each other and the burst CLIMBS: measured at -13.22,
+     * -4.63 and -3.34 dB, a 9.88 dB crescendo across three rounds that are
+     * supposed to be identical. What the player hears is not three cracks, it
+     * is one swelling noise, which is precisely the small shotgun MAP.md
+     * forbids and the failure this weapon's whole identity depends on avoiding.
+     *
+     * `b3ar` is the pistol with half the body length and a third of the tail -
+     * the two layers that overlap at 41.6ms - and nothing else changed. Spread
+     * across the three rounds falls to 0.67 dB and the shallowest trough
+     * between them holds at 26.0 dB, so they read as three separate events.
+     *
+     * The rapid-fire duck in gunsmith.js alone gets this to 4.33 dB, which is
+     * most of the way. This takes it the rest.
+     */
+    audio: 'b3ar',
   },
 
   smg: {

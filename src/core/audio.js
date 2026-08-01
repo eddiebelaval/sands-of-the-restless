@@ -2,9 +2,20 @@
  * Audio.
  *
  * Every sound in this game is synthesised at runtime. There are no audio files,
- * no decodeAudioData, no network. A gunshot is a filtered noise burst plus a
- * sine thump plus a resonant tail, and the reverb is a noise impulse response
- * generated into an AudioBuffer the first time a room asks for it.
+ * no decodeAudioData, no network. The reverb is a noise impulse response
+ * generated into an AudioBuffer the first time a room asks for it, the enemies
+ * are formant-filtered sawtooths, and the weapons are muzzle blasts baked
+ * sample by sample into buffers the moment the context comes up.
+ *
+ * THE WEAPONS MOVED. Everything a gunshot is made of now lives in
+ * core/gunsmith.js, which bakes it offline into AudioBuffers; shot() below is
+ * the playback and mixing half of that arrangement and holds no synthesis of
+ * its own. The long version of why is at the top of that file, but the short
+ * version is that the old three-layer live graph could not produce a broadband
+ * transient - it was a bandpass, and a bandpass cannot make an edge - and
+ * fixing it by adding layers would have put ten more nodes per shot on the
+ * audio thread of a game that is already shedding visual quality to hold frame
+ * rate.
  *
  * Four rules run through the whole module, and breaking any of them is the
  * usual reason browser audio in a game sounds broken after ten minutes:
@@ -50,9 +61,12 @@
  *   setSpace(name)              'corridor' | 'chamber' | 'gallery' | 'shaft' |
  *                               'exterior'. Crossfades between two convolvers.
  *
- *   shot(weapon, opts)          'pistol' | 'smg' | 'shotgun' | 'rifle' |
- *                               'lmg' | 'bolt' | 'energy'.
+ *   shot(weapon, opts)          'pistol' | 'b3ar' | 'smg' | 'shotgun' |
+ *                               'rifle' | 'lmg' | 'bolt' | 'energy'.
  *                               opts.upgraded adds the pack-a-punch ring.
+ *                               opts.delay schedules it ahead of now.
+ *   hasWeapon(name)             is that a real profile, or will it fall back?
+ *   weaponNames()               every profile that exists.
  *   reloadClick() magOut() magIn() boltPull()
  *   adsIn() adsOut() weaponSwitch() dryFire()
  *
@@ -81,6 +95,8 @@
  * scales the voice, pitch multiplies every frequency in it.
  */
 
+import { REPORTS, SPACE_SEND, bakeReport, bakeMechanics, bakeRing } from './gunsmith.js';
+
 // Voice caps. These are voices, not nodes: one shotgun blast is one voice
 // holding four sources. Low fidelity is roughly what a 2015 laptop survives.
 const VOICE_CAP = { high: 28, low: 14 };
@@ -103,6 +119,18 @@ const SPACE_XFADE = 0.45;
 const NOISE_SECONDS = 3.0;
 
 /**
+ * The rapid-fire duck. See the long note inside shot().
+ *
+ * 0.16s is a little over the gap between rounds from the Apis at 620rpm, so
+ * every automatic weapon in the game articulates, while a weapon slow enough
+ * that its rounds are already separate events - the bolt gun, the shotgun - is
+ * never touched. 0.34 is about ten decibels, which is as far as the previous
+ * shot can be pulled down before the duck itself becomes the audible event.
+ */
+const DUCK_WINDOW = 0.16;
+const DUCK_FLOOR = 0.34;
+
+/**
  * Impulse response recipes. seconds is the tail length, decay is the exponent
  * of the amplitude envelope (higher = faster collapse), damp is a one-pole
  * lowpass coefficient applied down the tail so stone rooms go dark as they
@@ -121,47 +149,11 @@ const SPACES = {
 };
 
 /**
- * Weapon classes. crackHz/crackQ shape the noise burst that carries the
- * report, bodyHz is the sine or triangle thump under it, tailHz is the ringing
- * resonance left in the room. The three layers are what separates a gunshot
- * from a click: the crack alone is a hi-hat, the body alone is a kick drum.
+ * The weapon profiles are the table in core/gunsmith.js. Aliasing it here keeps
+ * the router, hasWeapon() and the fall-back in shot() all reading one list, so
+ * a profile that exists to the baker cannot be invisible to the caller.
  */
-const WEAPONS = {
-  pistol:  { crackHz: 2400, crackQ: 0.9, crackDur: 0.055, crackGain: 0.55,
-             bodyHz: 150, bodyDur: 0.085, bodyGain: 0.42, body: 'sine',
-             tailHz: 900, tailQ: 7, tailDur: 0.13, tailGain: 0.16, send: 0.30 },
-
-  smg:     { crackHz: 3100, crackQ: 1.1, crackDur: 0.038, crackGain: 0.44,
-             bodyHz: 175, bodyDur: 0.055, bodyGain: 0.28, body: 'triangle',
-             tailHz: 1300, tailQ: 6, tailDur: 0.09, tailGain: 0.11, send: 0.26 },
-
-  // Wide and low. The crack is long and dark because a shotgun is mostly a
-  // pressure event, not a supersonic crack.
-  shotgun: { crackHz: 1150, crackQ: 0.55, crackDur: 0.20, crackGain: 0.85,
-             bodyHz: 72, bodyDur: 0.24, bodyGain: 0.72, body: 'sine',
-             tailHz: 420, tailQ: 5, tailDur: 0.30, tailGain: 0.26, send: 0.45 },
-
-  rifle:   { crackHz: 3400, crackQ: 1.4, crackDur: 0.065, crackGain: 0.78,
-             bodyHz: 96, bodyDur: 0.14, bodyGain: 0.60, body: 'sine',
-             tailHz: 720, tailQ: 8, tailDur: 0.26, tailGain: 0.24, send: 0.40 },
-
-  lmg:     { crackHz: 2600, crackQ: 1.0, crackDur: 0.075, crackGain: 0.80,
-             bodyHz: 84, bodyDur: 0.16, bodyGain: 0.70, body: 'sine',
-             tailHz: 560, tailQ: 6, tailDur: 0.22, tailGain: 0.22, send: 0.38 },
-
-  // Bolt action: the sharpest crack and the longest tail, because a single
-  // heavy round in a stone room is mostly what happens after the round.
-  bolt:    { crackHz: 4200, crackQ: 1.8, crackDur: 0.055, crackGain: 0.92,
-             bodyHz: 66, bodyDur: 0.20, bodyGain: 0.78, body: 'sine',
-             tailHz: 480, tailQ: 10, tailDur: 0.46, tailGain: 0.30, send: 0.55 },
-
-  // The odd one out: the crack is a resonant sweep rather than a report, and
-  // the body glides down instead of thumping. Flagged so shot() branches.
-  energy:  { crackHz: 5200, crackQ: 9, crackDur: 0.16, crackGain: 0.50,
-             bodyHz: 620, bodyDur: 0.22, bodyGain: 0.36, body: 'sawtooth',
-             tailHz: 2400, tailQ: 14, tailDur: 0.34, tailGain: 0.22, send: 0.42,
-             sweep: true },
-};
+const WEAPONS = REPORTS;
 
 /** Ambience beds. Two brown noise layers, retargeted rather than rebuilt. */
 const AMBIENCE = {
@@ -194,9 +186,32 @@ export function createAudio(options = {}) {
   let ctx = null;
   let unlocked = false;   // set by resume(); the gate on ever creating a ctx
 
-  let master = null;      // final level, pre-compressor
-  let comp = null;        // master bus compressor
-  let dryBus = null;      // voices, unprocessed
+  /**
+   * An externally supplied context, used by exactly one caller: the offline
+   * measurement harness in test/gunlab.html, which hands us an
+   * OfflineAudioContext, fires one shot, and renders the graph to a buffer it
+   * can measure.
+   *
+   * This exists because a gunshot cannot be verified by reading the code that
+   * builds it. The defining failure in this codebase is a node that was
+   * constructed and never connected, or a gain that was scheduled and left at
+   * zero - both of which produce silence that looks exactly like working code.
+   * The only way to know a layer is audible is to render it and look at the
+   * samples, and the only way to render it is to let a test drive the real
+   * graph rather than a reimplementation of it.
+   *
+   * The alternative considered and rejected was a separate "describe the
+   * synthesis" export that the test walks symbolically. That verifies the
+   * description, not the sound, which is the same mistake in a new place.
+   */
+  const injected = options.context || null;
+  const offline = !!(injected && typeof injected.startRendering === 'function');
+
+  let master = null;      // the volume fader, last thing before the clipper
+  let limiter = null;     // final soft clipper, the only node touching output
+  let comp = null;        // mix compressor, on everything EXCEPT the weapons
+  let dryBus = null;      // non-weapon voices, unprocessed
+  let gunBus = null;      // weapon voices, routed around the compressor
   let sendBus = null;     // voices, into whichever convolver is live
   let convA = null, convB = null;
   let wetA = null, wetB = null;
@@ -204,6 +219,27 @@ export function createAudio(options = {}) {
 
   let whiteBuf = null;    // white noise, shared by every transient
   let brownBuf = null;    // brown noise, shared by both ambience beds
+
+  /**
+   * The baked weapon material. reports maps a profile name to its array of
+   * variants; mechBank and ringBuf are shared by every weapon.
+   *
+   * Baked once, at ensure(), which runs inside the Begin click - the same
+   * gesture that creates the context, while the world is still being built and
+   * the player is looking at a title card. bakeMs is reported by stats()
+   * because a cost you do not measure is a cost you find out about from a
+   * player, and this one lands at the single worst moment to be wrong about.
+   */
+  const reports = new Map();
+  let mechBank = [];
+  let ringBuf = null;
+  let bakeMs = 0;
+
+  /** Which variant each weapon fired last, so the next one is a different one. */
+  const lastVariant = new Map();
+
+  /** The most recent report, for the rapid-fire duck inside shot(). */
+  const lastReport = { at: -1, voice: null };
 
   const irCache = new Map();
 
@@ -237,13 +273,45 @@ export function createAudio(options = {}) {
   /**
    * Build the context and the fixed bus graph.
    *
-   *   voices -> dryBus ------------------\
-   *          \-> sendBus -> convA -> wetA -> master -> compressor -> out
-   *                      \-> convB -> wetB /
+   *   voices ---> dryBus ----> compressor --\
+   *          \                               >--> master --> soft clip --> out
+   *           \-> gunBus ------------------->/
+   *            \
+   *             \-> sendBus -> convA -> wetA -> compressor
+   *                         \-> convB -> wetB /
    *
-   * The compressor sits on the master bus rather than per voice. Its job is to
-   * keep a horde of overlapping shots from clipping the output, and it can
-   * only do that if it sees the sum.
+   * THE WEAPONS TAKE THEIR OWN PATH TO THE FADER, and that split is the single
+   * most consequential line in this file.
+   *
+   * Blink's DynamicsCompressorNode runs a fixed internal lookahead of about six
+   * milliseconds so that it can begin reducing gain BEFORE a transient arrives.
+   * That is the correct design for mastering music and it is fatal for a
+   * gunshot, because a gunshot IS its first three milliseconds. The attack
+   * control cannot save you - the reduction is already applied by the time the
+   * edge reaches the node. Measured on this graph, in isolation, feeding the
+   * same node the same material:
+   *
+   *     a gunshot-shaped edge, peak 0.270  ->  0.135, and its peak arrives
+   *                                            5.9ms late
+   *     a steady 440Hz sine, peak 0.240    ->  0.389
+   *
+   * Six decibels off the transients and four decibels of implicit makeup gain
+   * onto everything sustained. That node is the reason every gun in this game
+   * sounded thin, and no amount of re-synthesis upstream of it would have
+   * helped - the old shots measured a 13 to 18dB crest factor because this was
+   * standing on them.
+   *
+   * IT IS KEPT, UNCHANGED, for everything that is not a weapon. Deleting it
+   * looked right and was wrong: that +4dB of makeup is load-bearing, and
+   * removing it would have quietly dropped the ambience, the horde and every
+   * stinger by four decibels - a mix regression, in the same change that was
+   * supposed to be about the guns. Only the weapon voices go around it.
+   *
+   * The final soft clipper is what stops the two paths summing past full scale.
+   * Unlike a compressor it has no detector, no lookahead and no memory, so it
+   * cannot touch a transient; it simply bends the top off anything that would
+   * have clipped. Measured, it is within 0.02dB of transparent on material
+   * below its knee.
    *
    * Gated on `unlocked` so that a call to shot() or attachPositional() from
    * game code that runs before the player has clicked anything cannot quietly
@@ -252,25 +320,73 @@ export function createAudio(options = {}) {
   function ensure() {
     if (ctx || disposed || !unlocked) return;
 
-    const Ctor = window.AudioContext || window.webkitAudioContext;
-    if (!Ctor) return;
-    ctx = new Ctor({ latencyHint: 'interactive' });
+    if (injected) {
+      ctx = injected;
+    } else {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return;
+      ctx = new Ctor({ latencyHint: 'interactive' });
+    }
 
+    // The soft clipper: identity below 0.62, a smooth bend above it into an
+    // asymptote just under one. options.limiter === false takes it out of
+    // circuit. Nothing in the game passes that; the offline bench does, because
+    // the only honest way to attribute a level change to a node is to measure
+    // the same graph with and without it. That is how the compressor was
+    // caught, and the same probe then proved this node innocent.
+    if (options.limiter === false) {
+      limiter = ctx.createGain();
+      limiter.gain.value = 1;
+    } else {
+      limiter = ctx.createWaveShaper();
+      limiter.curve = softClipCurve(4096, 0.62);
+      // NO OVERSAMPLING, and this was measured rather than assumed.
+      //
+      // The usual reason to oversample a nonlinearity is that it generates
+      // harmonics above Nyquist which fold back down as inharmonic hash. That
+      // reasoning does not apply here, because below 0.62 this curve is exactly
+      // the identity and generates no harmonics at all - and the loudest thing
+      // the game produces, thirty rounds of sustained LMG fire in a stone
+      // chamber, measures 0.60. The bend is reached only by genuine overload,
+      // which is already an exceptional event.
+      //
+      // What oversampling DID cost was measurable on every shot: Blink
+      // implements it with up and down sampling FIR filters, and those filters
+      // ring on a two-sample edge. The same seeded transient measured 0.2796
+      // straight to the destination and 0.2692 through the 2x path - a third of
+      // a decibel off the peak of every gunshot in the game, permanently, to
+      // prevent aliasing in a case that does not occur. At 'none' the same
+      // comparison is bit identical.
+      limiter.oversample = 'none';
+    }
+    limiter.connect(ctx.destination);
+
+    master = ctx.createGain();
+    master.gain.value = muted ? 0 : volume;
+    master.connect(limiter);
+
+    // Unchanged from the settings this mix was built on. It has simply moved
+    // AHEAD of the fader, so how hard it works no longer depends on where the
+    // player left the volume slider - which was never intended and was only
+    // ever true by accident of ordering.
     comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14;
     comp.knee.value = 12;
     comp.ratio.value = 6;
     comp.attack.value = 0.004;
     comp.release.value = 0.18;
-    comp.connect(ctx.destination);
-
-    master = ctx.createGain();
-    master.gain.value = muted ? 0 : volume;
-    master.connect(comp);
+    comp.connect(master);
 
     dryBus = ctx.createGain();
     dryBus.gain.value = 1;
-    dryBus.connect(master);
+    dryBus.connect(comp);
+
+    // The weapons' own path to the fader. It holds no processing of its own and
+    // exists for exactly one reason: to reach the output without passing
+    // through the compressor's lookahead.
+    gunBus = ctx.createGain();
+    gunBus.gain.value = 1;
+    gunBus.connect(master);
 
     sendBus = ctx.createGain();
     sendBus.gain.value = 1;
@@ -285,11 +401,31 @@ export function createAudio(options = {}) {
     wetA.gain.value = 0;
     wetB.gain.value = 0;
 
-    sendBus.connect(convA); convA.connect(wetA); wetA.connect(master);
-    sendBus.connect(convB); convB.connect(wetB); wetB.connect(master);
+    // The reverb return goes through the compressor even for a weapon. A tail
+    // is not a transient - there is nothing there for the lookahead to destroy -
+    // and letting the room duck under a horde is precisely what a mix
+    // compressor is for.
+    sendBus.connect(convA); convA.connect(wetA); wetA.connect(comp);
+    sendBus.connect(convB); convB.connect(wetB); wetB.connect(comp);
 
     whiteBuf = makeWhiteNoise(NOISE_SECONDS);
     brownBuf = makeBrownNoise(6.0);
+
+    /**
+     * Bake every weapon now rather than on first use.
+     *
+     * Lazily baking each profile the first time it is fired spreads the same
+     * work out, but it puts a few milliseconds of synchronous DSP on the frame
+     * where a player pulls the trigger on a gun they just bought off a wall,
+     * which is a hitch at exactly the moment they are being charged for the
+     * thing. Doing it all here spends it once, during a click, before anything
+     * is moving.
+     */
+    const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    for (const name of Object.keys(REPORTS)) reports.set(name, bakeReport(ctx, name));
+    mechBank = bakeMechanics(ctx);
+    ringBuf = bakeRing(ctx);
+    bakeMs = +(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0)).toFixed(2);
 
     // Prime the active slot at full level. This is the one place a wet gain is
     // written instantly, and it is safe because no signal is flowing yet.
@@ -303,7 +439,10 @@ export function createAudio(options = {}) {
     for (const h of handles) materialize(h);
     if (ambienceProfile) applyAmbience();
 
-    startTick();
+    // An offline render has no wall clock to tick against and no player to
+    // hear ambience; a setTimeout there would fire after rendering finished
+    // and schedule drips into a context that is already done.
+    if (!offline) startTick();
   }
 
   function now() {
@@ -313,6 +452,28 @@ export function createAudio(options = {}) {
   // ---------------------------------------------------------------------------
   // noise sources
   // ---------------------------------------------------------------------------
+
+  /**
+   * A soft clip transfer curve: identity below `knee`, then a tanh bend that
+   * asymptotes just under unity.
+   *
+   * Continuous in value AND in slope at the knee, which matters more than it
+   * looks: a curve with a corner in it is a piecewise-linear distortion, and
+   * piecewise-linear distortion generates strong high harmonics on quiet
+   * material that only just crosses the corner. The tanh term is scaled so its
+   * derivative at the knee is exactly one.
+   */
+  function softClipCurve(n, knee) {
+    const curve = new Float32Array(n);
+    const span = 1 - knee;
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;
+      const a = Math.abs(x);
+      const y = a <= knee ? a : knee + span * Math.tanh((a - knee) / span);
+      curve[i] = x < 0 ? -y : y;
+    }
+    return curve;
+  }
 
   function makeWhiteNoise(seconds) {
     const n = Math.floor(ctx.sampleRate * seconds);
@@ -433,7 +594,12 @@ export function createAudio(options = {}) {
       // hands it the signal.
       v.out.connect(opts.dest);
     } else {
-      v.out.connect(dryBus);
+      // opts.weapon picks the bus that skips the compressor. It is a flag
+      // rather than a separate function because everything else about a weapon
+      // voice - the cap, the send, the teardown - is identical to every other
+      // voice, and forking the allocator would mean two places to forget to
+      // disconnect something.
+      v.out.connect(opts.weapon ? gunBus : dryBus);
       const s = ctx.createGain();
       s.gain.value = clamp(opts.send ?? 0.25, 0, 1);
       v.out.connect(s);
@@ -592,81 +758,145 @@ export function createAudio(options = {}) {
   // ---------------------------------------------------------------------------
 
   /**
-   * A gunshot in three layers.
+   * Fire a weapon.
    *
-   *   crack  bandpassed noise, the report. Carries the class.
-   *   body   a low sine or triangle sliding downward, the pressure wave.
-   *          Without it a shot is a hi-hat.
-   *   tail   a high-Q bandpass on more noise: the room and the receiver
-   *          ringing. Short, but it is what makes the shot sound placed in a
-   *          space rather than pasted on top of one.
+   * The synthesis is in core/gunsmith.js and has already happened; what is left
+   * here is the four decisions that have to be made per shot, and every one of
+   * them is about making the SAME baked material sound like a different event
+   * each time it is fired.
    *
-   * Upgraded weapons get a fourth layer: two detuned partials well above the
-   * tail, beating against each other. That beat is the metallic part; a single
-   * clean partial just sounds like a beep.
+   *   WHICH VARIANT. Three are baked per weapon and the same one is never
+   *   played twice running. Identical playback on every shot is the single most
+   *   artificial thing a game can do, and it is the one the old shot() failed
+   *   worst: two consecutive rounds measured 0.93 to 0.98 correlated, because
+   *   the only thing that varied was a filter's centre frequency.
+   *
+   *   HOW FAST AND HOW LOUD. A few percent of playback rate and about a decibel
+   *   of level, both per shot. Rate is doing double duty - it shifts pitch and
+   *   duration together, which is what a slightly different charge in a
+   *   slightly different chamber actually does.
+   *
+   *   HOW WET. The profile's send scaled by the space the player is standing
+   *   in. The same round in the open courtyard and in the stone gallery is the
+   *   same source and a completely different sound, and this module already
+   *   knew which one it was in; not using that was leaving the largest free
+   *   improvement on the table.
+   *
+   *   WHETHER TO GET OUT OF THE WAY. See the duck below.
    */
   function shot(weapon = 'pistol', opts = {}) {
-    const W = WEAPONS[weapon] || WEAPONS.pistol;
-    const v = voice({ dest: opts.dest, send: opts.send ?? W.send, gain: opts.gain ?? 1 });
+    const name = REPORTS[weapon] ? weapon : 'pistol';
+    const W = REPORTS[name];
+    const bank = reports.get(name);
+    if (!bank || !bank.length) return false;
+
+    // opts.delay schedules the shot ahead of now. The game never uses it - a
+    // trigger pull is always immediate - but the offline bench does, because an
+    // OfflineAudioContext's currentTime does not advance between calls, so
+    // three burst rounds would otherwise all land on the same sample.
+    const t = now() + (opts.delay || 0);
+    const pitch = opts.pitch ?? 1;
+
+    // Never the same variant twice running. Stepping to the next one rather
+    // than re-rolling keeps this branchless and bounded; re-rolling can in
+    // principle spin, and a loop with an unbounded worst case does not belong
+    // on a path that runs ten times a second.
+    let idx = Math.floor(Math.random() * bank.length);
+    if (bank.length > 1 && idx === lastVariant.get(name)) idx = (idx + 1) % bank.length;
+    lastVariant.set(name, idx);
+    const buf = bank[idx];
+
+    const rate = pitch * (1 + rand(-W.rateJitter, W.rateJitter));
+    const level = (opts.gain ?? 1) *
+                  Math.pow(10, rand(-W.levelJitterDb, W.levelJitterDb) / 20);
+
+    const spaceMul = SPACE_SEND[spaceName] ?? 1;
+    const v = voice({
+      dest: opts.dest,
+      send: opts.send ?? clamp(W.send * spaceMul, 0, 1),
+      gain: level,
+      weapon: true,
+    });
     if (!v) return false;
 
-    const t = now();
-    const pitch = opts.pitch ?? 1;
-    // Small per-shot variance. Identical repeats are the tell of synthesised
-    // gunfire; a few percent of scatter reads as mechanical, not digital.
-    const jitter = rand(0.94, 1.06);
+    /**
+     * THE DUCK: get the last shot out of the way of this one.
+     *
+     * This is the piece that makes the B3AR a burst weapon rather than a noise.
+     * Its three rounds land 40 ms apart, and even with a body short enough to
+     * clear in that window, the previous round's tail is still ringing when the
+     * next crack arrives. Three cracks sitting on an accumulating bed of their
+     * own tails is measurably a crescendo rather than three hits: on the old
+     * synthesis the third round of a burst peaked 9.8 dB ABOVE the first, purely
+     * from pile-up.
+     *
+     * Every mix engineer's answer to this is the same, and it costs one
+     * automation event and no nodes: when a new transient arrives, pull down
+     * what is already sounding so the new one lands in a hole. The amount is
+     * proportional to how close the two are, so an LMG at 620 rounds a minute
+     * gets a couple of decibels and a burst at 40 ms gets six.
+     *
+     * The alternative considered was shortening every tail until nothing ever
+     * overlapped. That is the same fix applied permanently instead of when it
+     * is needed, and it costs the single shot - the one the player hears most
+     * often - all of its size.
+     */
+    if (lastReport.voice && !lastReport.voice.dead && lastReport.voice !== v) {
+      const gap = t - lastReport.at;
+      if (gap > 0 && gap < DUCK_WINDOW) {
+        const g = lastReport.voice.out.gain;
+        const amount = DUCK_FLOOR + (1 - DUCK_FLOOR) * (gap / DUCK_WINDOW);
+        g.cancelScheduledValues(t);
+        g.setValueAtTime(g.value, t);
+        g.linearRampToValueAtTime(g.value * amount, t + 0.012);
+      }
+    }
+    lastReport.voice = v;
+    lastReport.at = t;
 
-    // --- crack -------------------------------------------------------------
-    const cn = noiseSrc(v);
-    const cf = filt(v, 'bandpass', W.crackHz * pitch * jitter, W.crackQ);
-    const cg = gain(v);
+    // --- the report ---------------------------------------------------------
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    own(v, src);
+    src.connect(v.out);
+    fire(v, src, t, t + buf.duration / rate + 0.02);
 
-    if (W.sweep) {
-      // Energy weapons: the resonance falls rather than the amplitude, which
-      // is what makes them read as a discharge instead of a detonation.
-      glide(cf.frequency, t, W.crackHz * pitch, W.crackHz * 0.16 * pitch, W.crackDur);
-    } else {
-      // Ordinary firearms open dark and brighten over a couple of milliseconds
-      // as the muzzle blast escapes, then close again.
-      cf.frequency.setValueAtTime(W.crackHz * 0.45 * pitch * jitter, t);
-      cf.frequency.exponentialRampToValueAtTime(W.crackHz * pitch * jitter, t + 0.006);
-      cf.frequency.exponentialRampToValueAtTime(W.crackHz * 0.30 * pitch, t + W.crackDur);
+    // --- the action ---------------------------------------------------------
+    //
+    // Skipped entirely at low fidelity. It is two of the five nodes a shot
+    // costs, which makes it the largest single saving available on this path,
+    // and it is the layer whose absence is least noticeable in a firefight -
+    // it is quiet, it is late, and at any distance the room has eaten it. The
+    // report itself is never degraded, because a machine that cannot afford
+    // full quality still has to tell the player where the shooting is.
+    if (W.mech && highFidelity && mechBank.length) {
+      const mb = mechBank[Math.floor(Math.random() * mechBank.length)];
+      const ms = ctx.createBufferSource();
+      ms.buffer = mb;
+      ms.playbackRate.value = pitch * rand(W.mech.rate[0], W.mech.rate[1]);
+      own(v, ms);
+      const mg = gain(v, W.mech.gain * rand(0.72, 1.28));
+      ms.connect(mg); mg.connect(v.out);
+      const mt = t + rand(W.mech.delayMs[0], W.mech.delayMs[1]) / 1000;
+      fire(v, ms, mt, mt + mb.duration / ms.playbackRate.value + 0.02);
     }
 
-    cn.connect(cf); cf.connect(cg); cg.connect(v.out);
-    const crackEnd = env(cg.gain, t, W.crackGain, 0.001, 0, W.crackDur);
-    fire(v, cn, t, crackEnd + 0.02, noiseOffset(W.crackDur));
-
-    // --- body --------------------------------------------------------------
-    const bo = osc(v, W.body, W.bodyHz * pitch);
-    const bg = gain(v);
-    glide(bo.frequency, t, W.bodyHz * 1.6 * pitch, W.bodyHz * 0.55 * pitch, W.bodyDur);
-    bo.connect(bg); bg.connect(v.out);
-    const bodyEnd = env(bg.gain, t, W.bodyGain, 0.002, 0, W.bodyDur);
-    fire(v, bo, t, bodyEnd + 0.02);
-
-    // --- tail --------------------------------------------------------------
-    const tn = noiseSrc(v);
-    const tf = filt(v, 'bandpass', W.tailHz * pitch, W.tailQ);
-    const tg = gain(v);
-    tn.connect(tf); tf.connect(tg); tg.connect(v.out);
-    const tailEnd = env(tg.gain, t + 0.008, W.tailGain, 0.004, 0, W.tailDur);
-    fire(v, tn, t + 0.008, tailEnd + 0.02, noiseOffset(W.tailDur));
-
-    // --- upgrade ring ------------------------------------------------------
-    if (opts.upgraded) {
-      const ringHz = W.tailHz * 3.2 * pitch;
-      const rg = gain(v);
-      const hp = filt(v, 'highpass', ringHz * 0.6);
-      rg.connect(hp); hp.connect(v.out);
-      const ringEnd = env(rg.gain, t + 0.004, W.tailGain * 0.7, 0.003, 0, W.tailDur * 2.4);
-
-      for (const detune of [-7, 9]) {
-        const ro = osc(v, 'triangle', ringHz);
-        ro.detune.value = detune;
-        ro.connect(rg);
-        fire(v, ro, t + 0.004, ringEnd + 0.02);
-      }
+    // --- the pack-a-punch ring ----------------------------------------------
+    //
+    // Also baked: five inharmonic partials beating against each other, played
+    // back at whatever rate puts them over this weapon. It used to be two
+    // detuned triangle oscillators through a highpass, which is four nodes and
+    // exactly two partials, and two partials beating is a tremolo rather than
+    // struck metal.
+    if (opts.upgraded && ringBuf) {
+      const rs = ctx.createBufferSource();
+      rs.buffer = ringBuf;
+      rs.playbackRate.value = (W.ringRate ?? 1.6) * pitch * rand(0.97, 1.03);
+      own(v, rs);
+      const rg = gain(v, 0.16);
+      rs.connect(rg); rg.connect(v.out);
+      fire(v, rs, t + 0.004, t + 0.004 + ringBuf.duration / rs.playbackRate.value + 0.02);
     }
 
     return true;
@@ -1517,7 +1747,11 @@ export function createAudio(options = {}) {
       unlocked = true;
       ensure();
       if (!ctx) return 'unavailable';
-      if (ctx.state !== 'running') {
+      // An OfflineAudioContext sits in 'suspended' until startRendering() is
+      // called by whoever owns it. Calling resume() on one is either a no-op or
+      // an error depending on the browser, and neither is what the harness
+      // wants: it wants the graph built and left alone until it renders.
+      if (ctx.state !== 'running' && !offline) {
         try { await ctx.resume(); } catch { /* rejected outside a gesture */ }
       }
       return ctx.state;
@@ -1575,6 +1809,18 @@ export function createAudio(options = {}) {
 
     shot(weapon, opts = {}) { ensure(); return ctx ? shot(weapon, opts) : false; },
 
+    /**
+     * Does a weapon profile of this name exist?
+     *
+     * shot() deliberately falls back to the pistol for an unknown name, because
+     * a weapon that makes the wrong noise is playable and a weapon that makes no
+     * noise is not. That fallback is silent, though, which means a caller asking
+     * for a profile that was never written gets a plausible sound and no signal.
+     * This is how anyone - the bench, a debug panel - finds out.
+     */
+    hasWeapon(name) { return Object.hasOwn(WEAPONS, name); },
+    weaponNames() { return Object.keys(WEAPONS); },
+
     startAmbience,
     stopAmbience,
 
@@ -1593,6 +1839,8 @@ export function createAudio(options = {}) {
         ambience: ambienceProfile,
         handles: handles.size,
         fidelity: highFidelity ? 'high' : 'low',
+        bakeMs,
+        reportBanks: reports.size,
       };
     },
 
@@ -1602,6 +1850,11 @@ export function createAudio(options = {}) {
       tickTimer = 0;
       for (const h of Array.from(handles)) h.dispose();
       for (const v of Array.from(voices)) kill(v);
+      // Three megabytes of baked float lives in here. Nothing else drops it.
+      reports.clear();
+      mechBank = [];
+      ringBuf = null;
+      lastReport.voice = null;
       if (bed) {
         try { bed.rumbleSrc.stop(); bed.airSrc.stop(); } catch { /* not started */ }
         bed = null;
