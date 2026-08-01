@@ -703,7 +703,17 @@ const DARK = shots.filter((s) => s.meanLuma < 6 || s.percentLit < 25);
 const checks = {
   'starts on 500 gold':              opening.gold === 500 && opening.hudGold === '500',
   'interior built and hidden':       opening.interiorHidden === true,
-  'ten doors exist':                 opening.doors === 10,
+  // TWELVE, and the two new ones are OUTSIDE. `doors.all` is every door in the
+  // game rather than every door in the pyramid, and it now carries the Quarry
+  // and the Canal - the two bought mouths in the courtyard - alongside the
+  // sealed doorway and the nine interior barriers.
+  //
+  // This assertion failed when that wiring landed, which is the assertion doing
+  // its job: an exact count is the only thing that catches a door authored and
+  // never adopted, which is precisely the state both Act 1 spaces were in for
+  // two commits. It is the same shape as the fixture count in test/economy.mjs,
+  // and it failed for the same good reason.
+  'twelve doors exist':              opening.doors === 12,
   'the two hard-only walls cleared': opening.hardOnly.length === 2
                                        && opening.hardOnly.every((s) => s.endsWith(':cleared')),
   'and took their colliders':        opening.hardOnlyColliders === 0,

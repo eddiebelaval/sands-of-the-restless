@@ -21,3 +21,11 @@ node_modules/
 # attribution required, commercial use fine. Committing it rather than fetching
 # it at build time means the repo runs offline and cannot be broken by an
 # upstream URL changing. See ASSETS-SOURCING.md for the provenance of each file.
+
+# Agent working notes. These are scratch by definition - probe scripts, raw
+# repro output, half-finished patch files handed between lanes. The nightly EOD
+# bot commits whatever is in the tree at 02:00, and on 2026-08-01 it swept 22 of
+# these into a snapshot that went straight to the live site. Ignored so that
+# cannot happen again; the findings that matter belong in STATE.md or a commit
+# message, not in a directory nobody reads.
+.scratch/
