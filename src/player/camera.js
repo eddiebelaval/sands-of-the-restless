@@ -244,6 +244,19 @@ export function createCameraRig(camera) {
     camera.position.x += bob.x * Math.cos(yaw) * bobK;
     camera.position.z += bob.x * -Math.sin(yaw) * bobK;
     camera.position.y += bob.y * bobK;
+
+    // THE CROUCH, and it is subtracted here rather than taken out of
+    // player.position because that vector is the STANDING-METRIC eye: two
+    // systems derive the player's feet from it and would put them underground
+    // the moment the posture changed. player/controller.js publishes the drop
+    // as its own number for exactly this line. See the posture note there.
+    //
+    // NOT faded by bobK. The bob is a walk cycle and correctly stops when the
+    // body stops holding itself up; the crouch is where the head IS, and a body
+    // that stands back up while it falls over is the one detail that would undo
+    // the whole death pose.
+    camera.position.y -= player.state.viewDrop || 0;
+
     camera.position.y -= dDrop;
 
     camera.rotation.set(0, 0, 0);

@@ -219,6 +219,29 @@ function boot() {
   mysterybox.attach(interacts.records);
   createBoonStrip(document.getElementById('r-boons'), shrines);
 
+  /**
+   * SQUARE IS CONTEXTUAL, and `core/input.js` decides which by reading the
+   * prompt element's `on` class. It is deliberately NOT wired to a source-level
+   * probe here.
+   *
+   * `input.setPromptProbe()` exists and takes one - and the obvious call,
+   * `() => !!interacts.candidate || !!doors.candidate`, was written, shipped and
+   * REVERTED. It reads the arbitrated fact rather than the artefact painted from
+   * it, which is better in principle, and it broke three green suites: with a
+   * prompt on screen Square reloaded instead of interacting, twice in
+   * test/rebind.mjs and once in test/gamepad.mjs.
+   *
+   * The suites are not wrong. They stage a prompt by writing to the element,
+   * because THE SCREEN IS THE CONTRACT: the rule is that Square answers what the
+   * player can see, and a probe that answers from state the player cannot see is
+   * answering a different question. No case has been demonstrated where the two
+   * disagree in play.
+   *
+   * If one ever is - a prompt suppressed during a transition while a candidate
+   * persists is the likely shape - the hook is here and takes one line. Until
+   * then this is a theoretical improvement that cost three passing tests.
+   */
+
   // The router needs these three, and none of them can exist before it does:
   // the player is constructed FROM world, and the audio context is illegal
   // outside a user gesture.
@@ -1258,6 +1281,23 @@ function boot() {
       sprinting: player.state.sprinting,
       ads,
       grounded: player.state.grounded,
+      /**
+       * The posture, because the VIEWMODEL DOES NOT SHARE THE PLAYER'S CAMERA.
+       *
+       * It renders through its own, which is what stops the gun clipping into
+       * geometry and what lets the ADS blend be independent of the world view.
+       * The cost is that lowering the head does nothing to the weapon: without
+       * these two the player drops into a crouch and the gun stays exactly where
+       * it was, floating at standing height in front of a crouched man.
+       *
+       * `crouch` is the BLEND rather than the boolean, 0 to 1, so the gun can
+       * follow the head down over the same 0.16s instead of snapping when the
+       * posture flips. `sliding` is separate because a slide is not a deep
+       * crouch - the body is travelling faster than a sprint and the weapon
+       * should read as being carried through it, not aimed.
+       */
+      crouch: player.state.crouch,
+      sliding: player.state.sliding,
       lookDx, lookDy,
     });
 

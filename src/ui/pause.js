@@ -85,6 +85,13 @@ export const BINDINGS = [
       { keys: ['W', 'A', 'S', 'D'], what: 'Move' },
       { keys: ['Shift'], what: 'Sprint' },
       { keys: ['Space'], what: 'Jump' },
+      // A TAP AND NOT A HOLD, and the row says so, because a player who holds C
+      // and watches the camera stay down has learned the wrong thing about the
+      // binding and will blame the second tap when it stands them up.
+      { keys: ['C', 'Ctrl'], what: 'Crouch - tap to go down, tap again to stand' },
+      // The slide is stated as what it is: a crouch taken at speed. It has no
+      // key of its own and the row is written so nobody goes looking for one.
+      { keys: ['C', 'Ctrl'], what: 'Slide - crouch while you are already sprinting' },
       { keys: ['Mouse'], what: 'Look' },
     ],
   },
@@ -143,6 +150,11 @@ export const PAD_BINDINGS = [
       { keys: ['Left stick'], what: 'Move' },
       { keys: ['Right stick'], what: 'Look' },
       { keys: ['R3'], what: 'Sprint - click once, it holds until you stop' },
+      { keys: ['L3'], what: 'Crouch - tap to go down, tap again to stand' },
+      // Stated as one binding doing two things rather than as a second binding,
+      // because that is what it is, and because a player hunting the pad for a
+      // slide button will find nothing and conclude the game has no slide.
+      { keys: ['L3'], what: 'Slide - crouch while you are already sprinting' },
       { keys: ['Cross'], what: 'Jump' },
     ],
   },
@@ -151,21 +163,27 @@ export const PAD_BINDINGS = [
     rows: [
       { keys: ['R2'], what: 'Fire - the trigger is read as an analog pull' },
       { keys: ['L2'], what: 'Aim down sight' },
-      { keys: ['Square'], what: 'Reload' },
+      // SQUARE IS CONTEXTUAL and the row has to say both halves in the order
+      // they resolve, because a player who reads only "Reload" will press it in
+      // front of a wall buy and be surprised, and a player who reads only
+      // "Interact" will hunt the pad for a reload that is under their thumb.
+      { keys: ['Square'], what: 'Interact when a prompt is up - Reload when it is not' },
       { keys: ['R1'], what: 'Hold to cook a grenade, release to throw' },
-      { keys: ['L1'], what: 'Khopesh' },
-      // The four rows above are the DEFAULT. Swap bumpers and triggers on the
-      // Game tab and they exchange in pairs: fire to R1, aim to L1, grenade to
-      // R2, khopesh to L2. Written here rather than redrawing the list, because
-      // a controls page that silently rearranges itself is harder to read
-      // against a pad in your hands than one that states the rule.
+      { keys: ['Circle'], what: 'Khopesh' },
+      { keys: ['L1'], what: 'Khopesh, second binding' },
+      // The shoulder rows above are the DEFAULT. Swap bumpers and triggers on
+      // the Game tab and they exchange in pairs: fire to R1, aim to L1, grenade
+      // to R2, the shoulder khopesh to L2. Circle is not part of the exchange
+      // and never moves. Written here rather than redrawing the list, because a
+      // controls page that silently rearranges itself is harder to read against
+      // a pad in your hands than one that states the rule.
       { keys: ['Swap'], what: 'Bumpers and triggers exchange - see the Game tab' },
     ],
   },
   {
     group: 'Controller - the world and the menu',
     rows: [
-      { keys: ['Circle'], what: 'Buy, open, and use - whatever is under the crosshair' },
+      { keys: ['Square'], what: 'Buy, open, and use - whatever is under the crosshair' },
       { keys: ['Triangle'], what: 'Next weapon' },
       { keys: ['D-pad'], what: 'Left and right cycle weapons, up inspects the one in hand' },
       { keys: ['Options'], what: 'Pause, and this panel' },
@@ -372,6 +390,10 @@ function buildSpec({ rig, audio, mute, fidelity, pad }) {
            * they become, and a player reaching for this row is trying to find
            * out where fire ends up.
            */
+          // The khopesh named here is the SHOULDER binding, which is the only
+          // one this setting moves. Circle is the khopesh in either layout and
+          // is left out rather than repeated on both lines, because a fact that
+          // is true on both sides of a toggle is not what the toggle is about.
           note: () => (pad.swapBumpers
             ? 'Fire R1, aim L1, grenade R2, khopesh L2'
             : 'Fire R2, aim L2, grenade R1, khopesh L1'),

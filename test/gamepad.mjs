@@ -1013,12 +1013,72 @@ await page.evaluate(() => window.__PAD__.btn(2, false));
 await page.evaluate(() => window.__G__.frames(2));
 
 check(reloading === true,
-  'SQUARE RELOADS - asserted on the weapon system, which core/input.js cannot reach',
+  'SQUARE RELOADS WHEN THERE IS NO PROMPT - asserted on the weapon system, which core/input.js cannot reach',
   `isReloading ${reloading}`);
 
 await page.evaluate(() => window.__G__.frames(40));
 
+// --- and Square does NOT reload when there is a prompt up --------------------
+//
+// SQUARE IS CONTEXTUAL NOW. The check above is made in an empty courtyard,
+// which is where a Square that always reloads would pass every test anyone
+// thought to write - so the interesting half is this one, and it has to be
+// asserted on the weapon system for the same reason: input.js dispatches a key
+// event and cannot see what happened to it.
+//
+// The prompt is put up the way the game puts it up, through the element the
+// prompt bus paints, because that class IS the condition core/input.js reads.
+
+await page.evaluate(async () => {
+  const g = window.__SANDS__;
+  // Spend a round again, so a refused reload and a reload that had nothing to
+  // do are not the same observation.
+  window.__PAD__.val(7, 1);
+  await window.__G__.frames(4);
+  window.__PAD__.val(7, 0);
+  await window.__G__.frames(30);
+
+  const el = document.getElementById('prompt');
+  el.textContent = 'OPEN THE GATE  [F]';
+  el.classList.add('on');
+});
+
+await page.evaluate(() => window.__PAD__.btn(2, true));    // Square, with a prompt up
+await page.evaluate(() => window.__G__.frames(2));
+const promptedReload = await page.evaluate(() => window.__SANDS__.weapons.isReloading);
+await page.evaluate(() => window.__PAD__.btn(2, false));
+await page.evaluate(() => window.__G__.frames(2));
+
+check(promptedReload === false,
+  'AND SQUARE DOES NOT RELOAD WITH A PROMPT UP - it went to the interact instead',
+  `isReloading ${promptedReload}`);
+
+await page.evaluate(() => {
+  const el = document.getElementById('prompt');
+  el.textContent = '';
+  el.classList.remove('on', 'deny');
+});
+await page.evaluate(() => window.__G__.frames(40));
+
 // --- melee ------------------------------------------------------------------
+//
+// CIRCLE IS THE KHOPESH'S PRIMARY BINDING and L1 is a second one, so both are
+// asserted. Not because two bindings are twice as likely to break, but because
+// the failure that matters is the SILENT one: Circle used to be the interact,
+// and a Circle that swung AND still bought whatever the crosshair was on would
+// look correct in every empty room in the map.
+
+await page.evaluate(() => window.__PAD__.btn(1, true));    // Circle
+await page.evaluate(() => window.__G__.frames(2));
+const circlePhase = await page.evaluate(() => window.__SANDS__.viewmodel.state.phase);
+await page.evaluate(() => window.__PAD__.btn(1, false));
+await page.evaluate(() => window.__G__.frames(2));
+
+check(circlePhase === 'meleeing',
+  'CIRCLE SWINGS THE KHOPESH - asserted on the viewmodel state machine',
+  `viewmodel phase ${circlePhase}`);
+
+await page.evaluate(() => window.__G__.frames(40));
 
 await page.evaluate(() => window.__PAD__.btn(4, true));    // L1
 await page.evaluate(() => window.__G__.frames(2));
@@ -1027,10 +1087,34 @@ await page.evaluate(() => window.__PAD__.btn(4, false));
 await page.evaluate(() => window.__G__.frames(2));
 
 check(meleePhase === 'meleeing',
-  'L1 SWINGS THE KHOPESH - asserted on the viewmodel state machine',
+  'AND L1 KEEPS IT as a second binding - asserted the same way',
   `viewmodel phase ${meleePhase}`);
 
 await page.evaluate(() => window.__G__.frames(30));
+
+// --- L3 is the crouch, and the posture is the PLAYER'S and not the input's ---
+//
+// Asserted on player/controller.js's own eye height, not on the input flag. A
+// crouch binding that sets a boolean nothing acts on is this project's defining
+// bug shape, and it is the reason test/crouchslide.mjs exists; this is the
+// smallest version of that check, made where the rest of the pad is tested.
+
+await stage();
+await page.evaluate(() => window.__G__.frames(2));
+const standTall = await page.evaluate(() => +window.__SANDS__.player.state.eyeHeight.toFixed(3));
+await tapButton(10);                                       // L3
+await page.evaluate(() => window.__G__.frames(8));
+const crouchedLow = await page.evaluate(() => +window.__SANDS__.player.state.eyeHeight.toFixed(3));
+await tapButton(10);                                       // L3 again
+await page.evaluate(() => window.__G__.frames(10));
+const standAgain = await page.evaluate(() => +window.__SANDS__.player.state.eyeHeight.toFixed(3));
+
+check(standTall === 1.68 && crouchedLow === 0.95 && standAgain === 1.68,
+  'L3 CROUCHES THE BODY - the eye went 1.68 to 0.95 and back, measured on the controller',
+  `${standTall} -> ${crouchedLow} -> ${standAgain}`);
+
+await page.evaluate(() => { window.__SANDS__.input.state.crouch = false; });
+await page.evaluate(() => window.__G__.frames(10));
 
 // --- weapon swap ------------------------------------------------------------
 
@@ -1231,14 +1315,34 @@ const padRows = await page.evaluate(() => {
 // documentation check is for. A controls panel that disagrees with the bindings
 // is worse than no controls panel, because the player trusts it and then blames
 // their own hands.
+//
+// SEVERAL KEYS NOW CARRY MORE THAN ONE ROW - Square is contextual, L3 is both
+// crouch and slide, the khopesh has two buttons - so this searches every row
+// bearing the key rather than the first one. `find` would have reported the
+// slide undocumented purely because crouch is listed above it.
 for (const [key, word] of [
-  ['R2', 'Fire'], ['L2', 'Aim'], ['Square', 'Reload'], ['R1', 'cook'],
+  ['R2', 'Fire'], ['L2', 'Aim'], ['R1', 'cook'],
   ['Options', 'Pause'], ['R3', 'Sprint'], ['Right stick', 'Look'],
+
+  // The five rows tonight's rebind put on the page. Square is asserted twice
+  // because a controls page that states only half of a contextual binding is
+  // worse than one that states neither: the player trusts it, presses it in
+  // front of a wall buy, and blames their own hands.
+  ['Square', 'Interact'], ['Square', 'Reload'],
+  ['Circle', 'Khopesh'],
+  ['L3', 'Crouch'], ['L3', 'Slide'],
 ]) {
-  const row = padRows.find((b) => b.keys.includes(key));
-  check(!!row && row.what.includes(word), `controls: ${key} is documented`,
-    row ? row.what : 'missing');
+  const rows = padRows.filter((b) => b.keys.includes(key));
+  check(rows.some((r) => r.what.includes(word)), `controls: ${key} is documented as ${word}`,
+    rows.map((r) => r.what).join(' | ') || 'no row with that key');
 }
+
+// AND THE SUPERSEDED CLAIM IS GONE, not merely outnumbered. Circle documented
+// as the interact is the exact line this rebind invalidated, and a page that
+// still carries it is the failure this whole section exists to catch.
+check(!padRows.some((b) => b.keys.includes('Circle') && /Buy, open/.test(b.what)),
+  'controls: the page no longer says Circle interacts',
+  padRows.filter((b) => b.keys.includes('Circle')).map((r) => r.what).join(' | '));
 
 // --- and CONFIRM ON RESUME GETS THE PLAYER OUT ------------------------------
 

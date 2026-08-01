@@ -65,6 +65,25 @@ import {
 
 const LOCK_TIMEOUT_MS = 400;
 
+/**
+ * THE CROUCH KEYS, and they are a TAP rather than a hold.
+ *
+ * C and the control keys, which is the pair every shooter on this keyboard
+ * layout offers, because the two hands disagree about which one is natural and
+ * the argument is older than the genre. Binding both costs one array entry and
+ * settles it.
+ *
+ * A TAP because the PAD's crouch is a tap - L3 is under the thumb that steers,
+ * and a held stick-click while steering is the input the sprint latch above was
+ * already rewritten to avoid. Two devices with two different crouch semantics is
+ * the drift this whole file is arranged to prevent, so the keyboard takes the
+ * pad's shape rather than the other way round: one rule, both hands, and the
+ * controls panel can state it in four words.
+ *
+ * ControlRight joins ControlLeft for the same reason `sprint` reads both Shifts.
+ */
+const CROUCH_KEYS = ['KeyC', 'ControlLeft', 'ControlRight'];
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /**
@@ -103,6 +122,25 @@ export function createInput(canvas) {
     interact: false, grenade: false,
   };
 
+  /**
+   * CROUCH IS ONE LATCH SHARED BY BOTH DEVICES, and it is the one field in this
+   * file that is deliberately NOT a kb/pad pair.
+   *
+   * Everything else here is a held input, so a pair combined with OR is the
+   * right reading: two hands asking for the trigger is one shot. Crouch is a
+   * POSTURE toggled by a TAP, and a pair would give the player two independent
+   * postures - tap C to crouch, tap L3 expecting to stand, and stand up
+   * according to the pad while the keyboard still says crouched, so the OR
+   * keeps you down and the button reads as broken. One latch, flipped by an
+   * edge from whichever device produced it, is the only arrangement in which
+   * the second device can undo what the first one did.
+   *
+   * It survives setSuspended() for the same reason: a posture is not a held
+   * key. A player who crouches, opens the settings panel and resumes is still
+   * crouching, exactly as they are still holding the weapon they had out.
+   */
+  let crouchLatch = false;
+
   const state = {
     // Accumulated look delta, drained once per frame by the camera. The mouse
     // writes counts into these; the pad converts its rate into the same counts
@@ -139,6 +177,18 @@ export function createInput(canvas) {
      * harness has to be able to tell them apart.
      */
     lockRequests: 0,
+
+    /**
+     * The crouch posture, as an ordinary readable and writable field.
+     *
+     * Defined here rather than in the `bools` loop below because it reads from
+     * the single latch above instead of from a kb/pad pair. The SETTER is not
+     * decoration: player/controller.js clears it at the end of a slide, which
+     * is what turns "tap crouch while sprinting" into slide-and-stand rather
+     * than slide-and-crawl. See the note on the slide in that file.
+     */
+    get crouch() { return crouchLatch; },
+    set crouch(v) { crouchLatch = !!v; },
   };
 
   /**
@@ -198,6 +248,13 @@ export function createInput(canvas) {
     if (state.suspended) return;
     keys.add(e.code);
     oneShot.add(e.code);
+
+    // The crouch toggle, on the DOWN edge only. `e.repeat` has already returned
+    // above, so a held C cannot flip the posture sixty times a second - which is
+    // what a toggle bound to a held key looks like, and it looks like the camera
+    // vibrating rather than like a bug in an input file.
+    if (CROUCH_KEYS.includes(e.code)) crouchLatch = !crouchLatch;
+
     // Space scrolls the page, and the number row can trigger browser UI.
     if (['Space', 'Tab'].includes(e.code)) e.preventDefault();
     syncAxes();
@@ -322,6 +379,44 @@ export function createInput(canvas) {
 
   /** The last poll's snapshot, exposed so a harness can see what was read. */
   let snapshot = null;
+
+  /**
+   * ---------------------------------------------------------------------------
+   * IS THERE AN INTERACT PROMPT ON SCREEN, and why this file asks the SCREEN.
+   * ---------------------------------------------------------------------------
+   *
+   * Square is contextual: it interacts when the player is standing in front of
+   * something they can buy, open or use, and reloads the rest of the time. That
+   * is not a compromise forced by running out of buttons, it is what every
+   * console shooter in this genre does, and it works because the two are almost
+   * never both wanted - you are not reloading while pressed against a wall buy,
+   * and when you are, THE PROMPT IS ON THE SCREEN and the player's intent is not
+   * in doubt. The prompt is the contract, so the prompt is what gets asked.
+   *
+   * The authority on that question is ui/prompt.js's bus, which arbitrates
+   * systems/doors.js and ui/interact.js and paints one line. This file has no
+   * business importing either of those - input must not know that a shop exists,
+   * for the same reason it does not import the settings panel - so it reads the
+   * ARTEFACT instead: the `on` class the bus puts on the prompt element. That is
+   * the same single fact both systems already agree on, it is true exactly when
+   * a prompt is visible to the player, and it costs one classList read on the
+   * frames where Square is actually pressed.
+   *
+   * A DENIED prompt - the red "come back richer" - still counts as a prompt, and
+   * that is deliberate. The player is looking at a thing, they pressed the
+   * button, and the game refuses them at the thing. Falling through to a reload
+   * there would answer a question they did not ask.
+   *
+   * setPromptProbe() lets main.js hand over the authoritative predicate
+   * (`interacts.candidate || doors.candidate`) if it would rather not route this
+   * through the DOM. The default is written to be correct without that patch, so
+   * the binding is not waiting on another file to become real.
+   */
+  let promptEl;
+  let promptProbe = () => {
+    if (promptEl === undefined) promptEl = document.getElementById('prompt');
+    return !!promptEl && promptEl.classList.contains('on');
+  };
 
   /**
    * Sprint, LATCHED, and this is a real design decision rather than a shortcut.
@@ -564,6 +659,23 @@ export function createInput(canvas) {
     pad.sprint = sprintLatch;
 
     /**
+     * L3 IS CROUCH, AND IT IS ALSO SLIDE, AND THAT IS ONE BINDING NOT TWO.
+     *
+     * A slide is not its own verb here and must not become one. The pad has no
+     * free button left - Square went contextual to make room for the khopesh on
+     * Circle - and inventing a fourth binding for a movement the genre has
+     * always spelled "crouch while already running" would be spending the last
+     * button in the game on something the player already knows how to do.
+     *
+     * So this reports ONE thing: the posture flipped. player/controller.js is
+     * the only file that knows how fast the body is travelling when it flips,
+     * and it is therefore the only file that can decide whether a crouch is a
+     * crouch or a slide. Input reports intent; the body decides what to do with
+     * it. See the slide note in that file.
+     */
+    if (snap.pressed.includes('l3')) crouchLatch = !crouchLatch;
+
+    /**
      * RESOLVE THE FOUR SHOULDER INPUTS ONCE, HERE, BEFORE ANYTHING READS THEM.
      *
      * The swap moves an ACTION between two different kinds of input, so each
@@ -583,9 +695,19 @@ export function createInput(canvas) {
      * snap.pressed; on L2 there is no such list, so the latch's own rising edge
      * is tracked here. That asymmetry is the whole reason this is resolved in
      * one place instead of being scattered through the switch below.
+     *
+     * CIRCLE IS THE KHOPESH'S PRIMARY BINDING NOW, at the owner's request, and
+     * the shoulder keeps it as a second. Two buttons for one verb rather than a
+     * relocation: the shoulder bind is what the muscle memory in this build is
+     * already on, and taking it away to move a face button would cost a player
+     * something to buy the owner nothing. They are OR'd into one held value
+     * rather than edge-detected separately, so a hand resting on L1 that also
+     * presses Circle gets one swing and not two - which is the failure a second
+     * independent edge would produce, and it would produce it exactly in the
+     * panic the blade exists for.
      */
     const swap = padSettings.swapBumpers;
-    const meleeHeld = swap ? snap.ads : snap.buttons.l1;
+    const meleeHeld = (swap ? snap.ads : snap.buttons.l1) || snap.buttons.circle;
     const meleeEdge = meleeHeld && !meleeWasHeld;
     meleeWasHeld = meleeHeld;
 
@@ -597,7 +719,17 @@ export function createInput(canvas) {
     // true and throws on the release, so a one-shot binding here would give the
     // player a timer they cannot see and cannot stop.
     pad.grenade = swap ? snap.fire : snap.buttons.r1;
-    pad.interact = snap.buttons.circle;
+
+    /**
+     * The interact FIELD, kept truthful even though nothing reads it.
+     *
+     * Square's actual effect is dispatched as a key event below, the same way
+     * every other action this file does not own is - so this boolean is not
+     * load-bearing. It is set anyway, because a state field that says `false`
+     * while the player is buying a door is a lie sitting in the harness waiting
+     * for the first person who trusts it.
+     */
+    pad.interact = snap.buttons.square && promptProbe();
 
     // The khopesh, wherever it currently lives. See the resolution above.
     if (meleeEdge) tap('KeyQ');
@@ -605,8 +737,22 @@ export function createInput(canvas) {
     // --- the tapped actions -------------------------------------------------
     for (const name of snap.pressed) {
       switch (name) {
-        case 'square': tap('KeyR'); break;                 // reload
-        case 'circle': tap('KeyF'); break;                 // buy, open, use
+        /**
+         * SQUARE, AND IT ASKS THE SCREEN WHAT IT MEANS.
+         *
+         * Interact when there is a prompt up, reload when there is not. See the
+         * long note on promptProbe above for why the prompt is the condition and
+         * why an ambiguous case is not really ambiguous.
+         *
+         * KeyF and KeyR rather than calling weapons.reload() or
+         * interacts.interact(): main.js owns both bindings against raw keydown
+         * events, and the whole point of tap() is that there is exactly one
+         * binding table. In particular F's arbitration between a fixture and a
+         * door lives in main.js and is subtle - a shrine that refuses must not
+         * fall through and buy the door behind it - and a second copy of that
+         * decision here is how the two would drift.
+         */
+        case 'square': tap(promptProbe() ? 'KeyF' : 'KeyR'); break;
         case 'up': tap('KeyV'); break;                     // inspect
         case 'triangle': wheel(100); break;                // swap weapon
         case 'right': wheel(100); break;
@@ -782,6 +928,31 @@ export function createInput(canvas) {
     // ----------------------------------------------------------------------
 
     pollPad,
+
+    /**
+     * Replace the "is there an interact prompt up" predicate that Square reads.
+     *
+     * The default reads the prompt element's `on` class, which is true exactly
+     * when the player can see a prompt and needs no cooperation from any other
+     * file. main.js may hand over the authoritative form instead - the two
+     * candidate records the prompt bus is arbitrating - if it would rather this
+     * decision did not travel through the DOM. Passing anything that is not a
+     * function restores the default rather than installing a predicate that
+     * throws once a frame.
+     *
+     * @param {() => boolean} fn
+     */
+    setPromptProbe(fn) {
+      if (typeof fn !== 'function') return false;
+      promptProbe = () => {
+        // A predicate that throws must not take the reload with it. A Square
+        // that reloads is the safe half of this binding: it costs the player a
+        // wasted animation, where a Square that does nothing costs them the
+        // magazine they were trying to fill.
+        try { return !!fn(); } catch { return false; }
+      };
+      return true;
+    },
 
     /**
      * Subscribe to menu actions. Returns an unsubscribe.
