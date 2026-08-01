@@ -258,6 +258,12 @@ function boot() {
       && player.state.health > 0
       && player.state.health - amount <= 0;
 
+    // Harder and longer than a kill, because being hit is the thing the player
+    // most needs to notice and the screen wash alone is easy to miss when the
+    // horde is on top of you. Placed on the wrapper rather than inside
+    // combat.js so that the pad is not a dependency of the damage system.
+    if (amount > 0) input.pad.rumble(0.8, 0.4, 150);
+
     if (fatal && shrines.has('anubis')) {
       const survivable = Math.max(0, player.state.health - 1);
       const dealt = takeDamage(survivable, x, z);
