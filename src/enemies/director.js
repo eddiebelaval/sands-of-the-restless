@@ -33,6 +33,7 @@ import { createEnemy } from './mummy.js';
 import { VARIANTS, UNLOCK } from './variants.js';
 import { TIER, DEFAULT_TIER } from '../systems/difficulty.js';
 import { createBossPack } from './boss.js';
+import { createFlowField } from './flow.js';
 import { allPortals } from '../world/rooms.js';
 import { PLAYER_CONSTANTS } from '../player/controller.js';
 
@@ -240,6 +241,17 @@ export function createDirector({
 
   const grid = createColliderGrid();
   grid.build(world.colliders);
+
+  /**
+   * HOW THE HORDE KNOWS WHICH WAY THE PLAYER IS, AS OPPOSED TO WHERE.
+   *
+   * One distance-to-player map over the live space, read by every actor through
+   * `ctx.flow`. See enemies/flow.js for what it is and what it deliberately does
+   * not do; the director owns it because the director is the one object that
+   * already knows all four things a rebuild needs - the collider grid, the space
+   * it belongs to, where the player is, and whether there is anyone to route.
+   */
+  const flow = createFlowField();
 
   // --- the pool -------------------------------------------------------------
   const pools = {};
@@ -863,6 +875,7 @@ export function createDirector({
     bounds: null,
     walls: null,
     colliderGrid: grid,
+    flow,
     live,
     combat,
     impacts,
@@ -923,6 +936,75 @@ export function createDirector({
 
   let lastSpace = null;
 
+  /**
+   * WHEN THE FLOW FIELD IS REBUILT, AND WHY IT IS NOT EVERY FRAME.
+   *
+   * The flood is the one genuinely new per-frame cost this system could
+   * introduce, and this build already has a governor in core/governor.js that
+   * sheds ambient occlusion, shadows and pixels to hold frame rate, so handing
+   * it a fresh unconditional cost to fight would be adding the problem and the
+   * mitigation in the same change. Four rules keep it small, and each answers a
+   * different way the cost could get out of hand:
+   *
+   *   1. NOBODY TO ROUTE, NO FIELD. During a breather the horde is empty and the
+   *      field is not built at all, which is most of the seconds in a round.
+   *   2. A FLOOR ON THE INTERVAL. Never twice inside FLOW_MIN_S whatever else
+   *      happens, so no sequence of events can turn this into a per-frame cost.
+   *   3. THE PLAYER HAS TO HAVE MOVED. A stationary player has a field that is
+   *      still exactly right, and rebuilding it produces the same numbers at
+   *      full price. FLOW_MOVE is two cells: the field cannot express a target
+   *      finer than its own resolution, so moving less than that changes nothing
+   *      an actor could read.
+   *   4. A CEILING ON THE AGE, so a player circling inside one cell for twenty
+   *      seconds while a door is bought behind them does not hold a stale field
+   *      forever.
+   *
+   * And one hard override: a collider set that has CHANGED is a field that is
+   * wrong rather than merely old. A bought door is the case, and it is the one
+   * the interior's whole economy is built on - the player pays 1000 gold and the
+   * horde has to come through the hole that opens. That rebuild jumps the
+   * interval floor and lands on the frame the barrier splices its discs out.
+   */
+  const FLOW_MIN_S = 0.12;
+  const FLOW_MAX_S = 0.60;
+  const FLOW_MOVE = 1.4;
+
+  let flowDirty = true;
+  let flowAge = 0;
+  let flowX = 0, flowZ = 0;
+
+  function updateFlow(dt) {
+    flowAge += dt;
+
+    // Costs nothing when there is nothing to route. Note this also means the
+    // field is absent, not stale, on the first frame of a wave - actors fall
+    // back to the straight line for one frame and then get a real one.
+    if (!live.length) return;
+
+    const px = player.position.x;
+    const pz = player.position.z;
+
+    const moved = Math.hypot(px - flowX, pz - flowZ);
+    const want = flowDirty
+      || !flow.valid
+      || moved >= FLOW_MOVE
+      || flowAge >= FLOW_MAX_S;
+
+    if (!want) return;
+    if (!flowDirty && flowAge < FLOW_MIN_S) return;
+
+    // Feet, not eyes. The seed's height is what decides which storey the whole
+    // field describes - see the note on the seed in flow.js - and the player's
+    // position carries the camera, one eye-height above the floor they are
+    // actually standing on.
+    flow.rebuild(ctx, px, pz, player.position.y - PLAYER_CONSTANTS.EYE_HEIGHT);
+
+    flowX = px;
+    flowZ = pz;
+    flowAge = 0;
+    flowDirty = false;
+  }
+
   function retarget() {
     // The router has already rewritten world.* in place, so this only has to
     // re-point the context and rebuild what depends on the space.
@@ -946,6 +1028,18 @@ export function createDirector({
 
     points = spaces.active === 'interior' ? buildInteriorPoints() : buildExteriorPoints();
     pointSpace = spaces.active;
+
+    // The old field describes a world 110 units away. Dropped rather than
+    // rebuilt here, because retarget() runs during a transition the curtain is
+    // already covering and there is nothing alive to route: the first frame
+    // with a live actor in it will pay for the rebuild, and it will pay for one
+    // that knows where the player ended up.
+    flow.invalidate();
+    // And the cached geometry with it. The bounds change on a transition so the
+    // grid is reallocated anyway, but retarget() also runs on a barrier
+    // relaxation at boot, where the bounds are the same and the stone is not.
+    flow.dirty();
+    flowDirty = true;
   }
 
   function onSpaceChange() {
@@ -980,14 +1074,46 @@ export function createDirector({
     // refusing to spawn in a wing the player has just paid to open. Rebuilding
     // costs one hitch on the frame a door is bought, which is a frame the
     // player is already watching an animation on.
-    if (grid.sync(world.colliders) && nav) {
-      nav = buildWalkComponents(NAV_PAD);
-      navBoss = buildWalkComponents(NAV_PAD_BOSS);
+    /**
+     * A BOUGHT DOOR ALSO CHANGES WHICH WAY THE HORDE SHOULD BE WALKING.
+     *
+     * That is the half a spawn-placement field cannot answer. The fields above
+     * decide where the NEXT enemy may appear; the wave already on the floor has
+     * to find the hole that just opened, and until it does the player has paid a
+     * thousand gold for a doorway the dead ignore.
+     *
+     * Two separate things happen for the flow field and they are not the same.
+     * `dirty()` throws away its cached clearance verdicts, which are the only
+     * part of it that depends on where the stone is. `flowDirty` forces the
+     * rebuild onto THIS frame rather than up to FLOW_MAX_S later, jumping the
+     * interval floor, because the frame a barrier collapses on is a frame the
+     * player is already watching an animation on.
+     *
+     * NOT INTERIOR ONLY, and that is a live case rather than a hypothetical: the
+     * courtyard's quarry and canal mouths are bought the same way, so exterior
+     * walkability changes mid-run too. This branch reads world.colliders and has
+     * no opinion about which space it belongs to, which is exactly what makes it
+     * right for both.
+     */
+    if (grid.sync(world.colliders)) {
+      flow.dirty();
+      flowDirty = true;
+      if (nav) {
+        nav = buildWalkComponents(NAV_PAD);
+        navBoss = buildWalkComponents(NAV_PAD_BOSS);
+      }
     }
 
     ctx.dt = dt;
     ctx.elapsed = elapsed;
     ctx.playerYaw = rig.yaw;
+
+    // BEFORE the actors, so every one of them reads the same field on the same
+    // frame. Rebuilding it inside the actor loop would give the first actor a
+    // fresh field and the twenty-fourth one a field the first actor's movement
+    // had already invalidated, and the horde would fan out for no reason a
+    // player could see.
+    updateFlow(dt);
 
     // --- pacing --------------------------------------------------------------
     if (state.phase === 'breather') {
@@ -1240,7 +1366,58 @@ export function createDirector({
         colliderCell: grid.cellSize,
         collidersGridded: grid.gridded,
         collidersOversized: grid.oversized,
+        // What routing costs, from the system that pays for it. A claim about
+        // performance that cannot be read from outside the page is not a claim
+        // worth making, which is the same reason the governor is on __SANDS__.
+        flow: flow.stats(),
       };
+    },
+
+    /**
+     * The routing field itself, for the harness.
+     *
+     * Exposed so a suite can force a rebuild at a known player position and then
+     * ask the field which way it would send an actor from any point, without
+     * having to spawn one and watch it. That turns "the horde arrives" from a
+     * twenty-second simulation into an assertion about a direction, which is
+     * what makes the routing testable at the resolution of a single doorway.
+     */
+    flow,
+
+    /**
+     * The spawn points this space ACTUALLY offers, as the placement search sees
+     * them.
+     *
+     * A copy, and it is deliberately not the authored list from rooms.js. Those
+     * two differ, and the difference matters to anything asking whether the
+     * horde can get home: of the interior's thirty-one authored points the
+     * placement filter accepts twenty-four, because `isClear` rejects any that a
+     * body cannot stand clear in. A test that asserts over the authored list is
+     * asserting about places the game will never put an enemy, and it will fail
+     * on a point no player will ever see an enemy occupy.
+     */
+    spawnPoints() {
+      return points.map((p) => ({ x: p.x, z: p.z, room: p.room }));
+    },
+
+    /**
+     * Build the routing field NOW, at wherever the player is standing.
+     *
+     * The throttle in updateFlow() is right for a running game and wrong for a
+     * question: it will not build a field at all while the horde is empty, which
+     * is exactly the state a suite is in when it wants to ask whether a route
+     * from one room to another exists. This is the door for that. It is not a
+     * way round the throttle - it builds the same field from the same inputs -
+     * it only drops the reasons the running game has for waiting.
+     */
+    refreshFlow() {
+      flowDirty = false;
+      flowAge = 0;
+      flowX = player.position.x;
+      flowZ = player.position.z;
+      flow.rebuild(ctx, player.position.x, player.position.z,
+        player.position.y - PLAYER_CONSTANTS.EYE_HEIGHT);
+      return flow.stats();
     },
 
     get wave() { return state.wave; },

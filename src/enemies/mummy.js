@@ -312,6 +312,9 @@ function rigGeometry(P) {
 const _dir = new THREE.Vector3();
 const _steer = new THREE.Vector3();
 const _probe = new THREE.Vector3();
+/** Where the flow field says downhill is. A bare pair, because the field writes
+ * two components and a Vector3 would carry a y nothing reads. */
+const _flow = { x: 0, z: 0 };
 
 /**
  * THE CHAMBER FLOOR: the smallest amount of self-illumination that stops a
@@ -2157,7 +2160,66 @@ export function createEnemy(spec, index) {
     const distSq = tx * tx + tz * tz;
     const dist = Math.sqrt(distSq) || 1;
 
+    /**
+     * WHICH WAY IS THE PLAYER, AS OPPOSED TO WHERE IS THE PLAYER.
+     *
+     * The straight line to the target is the honest answer to the second
+     * question and was, for the whole life of this file, the answer given to the
+     * first. In one open courtyard those are the same question. In a room graph
+     * they stop being the same question the moment the player is through a
+     * doorway that is not straight ahead, and everything below this line -
+     * separation, avoidance, the committed detour - is LOCAL and cannot tell you
+     * about a door it is not already facing.
+     *
+     * So the heading is seeded from the flow field when the field has an answer
+     * for where this body is standing, and from the straight line when it does
+     * not. See enemies/flow.js. The field is a distance-to-player map over the
+     * live space and the direction is its downhill gradient, which in open
+     * ground IS the straight line to within a fraction of a degree, and around a
+     * corner is the way round the corner.
+     *
+     * NOTHING ELSE IN THIS FUNCTION CHANGES, and that is the point. The steering
+     * that follows was tuned against bodies pushing past each other and grinding
+     * along stone, it is good at that, and it is now being handed a heading that
+     * is worth following instead of one that walks into a wall. Long-range
+     * routing and last-metre clearance were always two jobs; only the first one
+     * was missing.
+     *
+     * THE BLEND BACK TO THE STRAIGHT LINE INSIDE FADE_M is not cosmetic. The
+     * field is rebuilt on a throttle - see updateFlow in director.js - so at any
+     * instant it points at where the player was up to two cells ago. Over twenty
+     * metres that is nothing. In melee it is the difference between a strike
+     * that lands and one that swings through the air beside them, so the last
+     * few metres are walked on the live position the way they always were.
+     */
     _dir.set(tx / dist, 0, tz / dist);
+
+    const FADE_M = 6;
+    if (ctx.flow && dist > 2.5 && ctx.flow.sample(pos.x, pos.z, st.feetY, _flow)) {
+      const k = Math.min(1, (dist - 2.5) / (FADE_M - 2.5));
+      _dir.x += (_flow.x - _dir.x) * k;
+      _dir.z += (_flow.z - _dir.z) * k;
+      const fl = Math.hypot(_dir.x, _dir.z) || 1;
+      _dir.x /= fl; _dir.z /= fl;
+    }
+
+    /**
+     * THE ROUTE, held aside before the local rules get at it.
+     *
+     * The wedge escape below asks two questions - which way to lean while
+     * detouring, and which hand the obstruction ends on - and both used the
+     * straight line to the player, on the reasoning that the steered heading is
+     * the one that is already jammed. That reasoning is still right and the line
+     * it used is no longer the best available answer: with a field in play the
+     * ROUTE is what the actor is trying to walk, and stepping square off the
+     * line to a player who is round two corners can send a detour back down the
+     * corridor it came from.
+     *
+     * Falls back to the straight line exactly where the field does, so on a map
+     * with no field - the courtyard while the horde is still queueing, or a body
+     * standing on the wrong storey - this is the code that was here before.
+     */
+    const routeX = _dir.x, routeZ = _dir.z;
 
     // Separation. Without it a horde converges to one point and reads as a
     // single blob with too many legs, and the player cannot tell how many
@@ -2186,8 +2248,8 @@ export function createEnemy(spec, index) {
     // player rather than off the steered heading: the steered heading is the
     // one that is already jammed.
     if (st.detour > 0) {
-      _dir.x += -(tz / dist) * st.detourSide * DETOUR_BIAS;
-      _dir.z += (tx / dist) * st.detourSide * DETOUR_BIAS;
+      _dir.x += -routeZ * st.detourSide * DETOUR_BIAS;
+      _dir.z += routeX * st.detourSide * DETOUR_BIAS;
     }
 
     const dl = Math.hypot(_dir.x, _dir.z) || 1;
@@ -2275,9 +2337,27 @@ export function createEnemy(spec, index) {
         if (wanted > 1e-3 && moved < wanted * 0.45) st.wedge += dt;
         else st.wedge = Math.max(0, st.wedge - dt * 2.5);
 
+        /**
+         * THE WEDGE ESCAPE IS LEFT ALONE, AND THAT WAS TESTED RATHER THAN
+         * ASSUMED.
+         *
+         * It is tempting to switch this off when the field has supplied a
+         * heading, on the argument that a detour is a guess - pickDetourSide's
+         * own comment says "Not pathfinding, and it does not need to be" - while
+         * the field has flooded the whole floor, and that DETOUR_BIAS of 1.7
+         * against the heading's 1.0 means the guess does not blend with the
+         * route, it overrules it for a committed 2.4 seconds.
+         *
+         * That was built and measured, and it changed nothing: 24 of 31 arrived
+         * either way, on the same seven failures. The detour was not what was
+         * holding those actors. So it stays, because it is a measured escape
+         * from a measured local minimum in avoid() that this change does not
+         * touch, and removing a safety net that is demonstrably not the problem
+         * buys nothing and risks a case the probe does not cover.
+         */
         if (st.wedge >= WEDGE_TRIP) {
           st.detourSide = st.forceSide
-            || pickDetourSide(pos, tx / dist, tz / dist, actor.radius * spec.scale, st.feetY, ctx);
+            || pickDetourSide(pos, routeX, routeZ, actor.radius * spec.scale, st.feetY, ctx);
           st.forceSide = 0;
           st.detour = DETOUR_S;
           st.detourFrom = dist;
