@@ -1,6 +1,6 @@
 # STATE - where this build actually is
 
-Last updated 2026-07-29. Read this before continuing; it is the handoff note,
+Last updated 2026-08-01. Read this before continuing; it is the handoff note,
 not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
@@ -111,7 +111,53 @@ Still outside the gate on purpose: `ao-ab.mjs` is a measurement tool, not an
 assertion suite. `settings.mjs` belongs to in-flight work and should be added when
 that lands - and given the one-line URL fix first.
 
+### THE GATING GAP, audited 2026-08-01 by enumeration
+
+**Thirty-one suites exist. Fifteen are in `npm test`.** The audit that produced
+that number is the one this file already prescribes - a loop over `test/*.mjs`
+rather than a count of the ones anybody remembered - and it found the defect this
+file calls the project's oldest, at seven times the size it was.
+
+These are REAL ASSERTION SUITES, written in the last day, that NOTHING RUNS:
+
+| suite | checks | what ships unguarded without it |
+|---|---|---|
+| `gamepad` | 112 | the whole controller: deadzone, curve, frame-rate independence |
+| `governor` | 24 | the per-machine quality ladder, which is the only reason this runs on a MacBook |
+| `b3ar` | 22 | the burst weapon and the exterior wall-buy |
+| `deathrespawn` | 21 | respawning at the start instead of on your own corpse |
+| `nav` | 16 | the horde routing to the player instead of into a wall |
+| `doorlook` | - | the daylight doorway |
+| `curtain-rules` | - | the transition veil |
+
+Roughly two hundred assertions covering seven features shipped in a day, none of
+which a regression would ever trip. **Wire them.** The only reason it was not
+done in the same pass is that `package.json` was contended by three live lanes at
+the moment of the audit.
+
+Correctly OUTSIDE the gate and they should stay there: `ao-ab` and `gunlab` are
+measurement instruments that print numbers rather than assert; `act1shots`,
+`deathstrip`, `gaitstrip` and `vmstrip` render frame strips whose output is a
+picture for a person to look at; `deathedge` and `deathinside` REPORT rather than
+assert - worth knowing, because `deathinside`'s own header claims it asserts.
+
+**A second finding from the same audit.** This file used to record that "all
+twelve suites now honour `argv[2] || SANDS_URL`, verified by enumeration". That
+has not been true for some time: `shot`, `act1probe`, `act1shots`,
+`curtain-rules`, `deathedge`, `deathinside`, `deathstrip`, `gunlab` and `leak`
+read `argv[2]` ONLY. Harmless while every caller passes a URL, and a trap the
+moment one does not - which is exactly how `hud.mjs` silently tested the wrong
+build for its entire existence. Recorded rather than quietly corrected, because
+the lesson is that a verified-by-enumeration claim goes stale the moment somebody
+adds a file, and this one did.
+
 ### GATE STATUS as of 2026-07-30, measured on a clean tree at 67941f9
+
+**STALE - two days and roughly twenty commits behind.** Kept because the three
+failure ANALYSES below are still the best record of those particular flakes, and
+because the load-sensitivity note on `shot` is still true and still bites. What
+suites exist and which are green has moved underneath all of it. Re-measure
+before trusting the table.
 
 `npm test` is RED, and it was red BEFORE hud and probe were wired in, so do not
 read the wiring as having made it green. Two known failures, neither of them
@@ -359,7 +405,7 @@ surface you spend the most pixels on."
 Everything after that judgement (pyramid, arms, powerups, fog) is UNJUDGED.
 Round 3 has not been run.
 
-## Blind round 4, 2026-07-28 — WE WON THE HEAD-TO-HEAD
+## Blind round 4, 2026-07-28 - WE WON THE HEAD-TO-HEAD
 
   round 1  lost 2-5   us 2.5  them 4
   round 2  won 4-3    us 3    them 4     (lost overall on weighting)
@@ -386,7 +432,7 @@ sky fixed, exterior ambient fixed, interior crush fixed, gate blowout contained,
 far-plane separation partial, door slab untouched. It also independently
 confirmed the static merge is picture-safe: "prop for prop identical."
 
-## THE HARNESS LIED. Fixed 2026-07-29 in 516937e — read this before trusting any past verification
+## THE HARNESS LIED. Fixed 2026-07-29 in 516937e - read this before trusting any past verification
 
 Seven of nine suites hardcoded port 4177 TWICE, as a default AND as a literal
 inside `page.goto(...)`. Every `node test/x.mjs <url>` silently ignored the
@@ -607,3 +653,74 @@ clear the gate; that trades the grounding for the number.
   arithmetically impossible because an earlier section had already spent the
   time, and a prompt read from 6.0m when the interaction range is 5.5m. Read the
   assertion before you change the code.
+- **THE INSTRUMENT LIED SEVEN TIMES IN ONE SESSION, AND THE CODE WAS FINE EVERY
+  TIME.** This is now the second-biggest failure class in the project after
+  written-but-never-rendered, and unlike that one it produces FALSE PASSES as
+  well as false failures, which is worse. Every instance below reported a
+  confident result that was about the harness rather than about the game:
+    1. `drawImage(renderer.domElement)` read from a plain `evaluate` returns an
+       EMPTY buffer - a WebGL canvas without `preserveDrawingBuffer` is only
+       readable inside the frame that drew it. Both rows read 0.00 and the script
+       printed a verdict on top of two zeroes.
+    2. `renderer.info` resets itself inside `render()`, so a count read after the
+       frame reports whatever the last pass did. One draw call, not 1296.
+    3. `timeout` does not exist on macOS. The loop reported exit 0 having run
+       nothing at all.
+    4. `doors.pick()` casts from the CAMERA, and the camera is driven from the
+       rig inside the frame loop - so a harness that teleports and then calls
+       `doors.update()` itself asks the question through a camera that has not
+       moved. Twelve failures against a perfectly good door.
+    5. The page's rAF loop runs BETWEEN `page.evaluate` calls, and `doors.js`
+       swaps the active space on player position - so a probe that entered the
+       interior in one evaluate and swept in the next measured the horde IN THE
+       OTHER WORLD. Actors at z -28 while the player stood at z -193.
+    6. `sprintLatch` is sticky by design and clears only at stick centre, so a
+       test case that never released the stick inherited the previous case's
+       sprint and reported the new binding as broken.
+    7. The GitHub Pages builds endpoint reported `built` for the PREVIOUS commit
+       and kept doing so. The live BYTES had already updated. Trusting the status
+       field would have meant reporting a deploy that had happened as not having.
+  The rule that caught all seven: **read the thing itself, not the thing that
+  reports on it.** Bytes over status fields, pixels over graph inspection,
+  positions over flags. And when a result arrives that would be surprising if
+  true, suspect the instrument BEFORE the code - six of these seven looked
+  exactly like a real defect.
+
+- **A TEST WRITTEN AGAINST A TREE WHERE NOTHING ELSE POLLED WAS GREEN AND WRONG.**
+  `test/gamepad.mjs` passed 105/105 by supplying the pad poll itself. The moment
+  `main.js` polled once a frame, as it always would in the shipping build, every
+  look measurement became two polls at two different deltas. The suite was
+  testing a path production does not have. When a feature needs a call from a
+  file the author does not own, the suite has to be re-verified AFTER that call
+  lands - green before the wiring means nothing.
+
+- **THE GATE I ASKED FOR COULD NOT HAVE EXISTED, AND MEASURING SAID SO.** I
+  specified a frame-rate independence check comparing the turn rate at two frame
+  pacings. Under swiftshader every frame is slower than MAX_DELTA, so the loop's
+  delta is a CONSTANT 1/20 and a tenfold change in render cost moves it by
+  nothing - measured at 1286ms and 158ms per frame, both reporting 50.000ms
+  simulated. While dt never varies, "multiply by dt" and "add a constant per
+  frame" are the same function, so the gate would have PASSED THE BUG IT WAS
+  WRITTEN TO CATCH. The replacement injects the delta and was MUTATION-TESTED
+  against a deliberately broken build: real 0% gap, mutant 20.27%, tolerance
+  2.6e-6. **If a new gate cannot be shown to fail on a broken build, it is not a
+  gate.**
+
+- **THE NIGHTLY EOD BOT SHIPPED AN ENTIRE IN-FLIGHT LANE TO PRODUCTION.** At
+  02:00 it committed the working tree - four agents' worth of half-finished work
+  plus 22 files of scratch - and the next `git push` sent it to the live site
+  because the range was never read. This file already warned about the bot. The
+  warning was not enough; the habit is. **Read `git log @{u}..HEAD` before every
+  push, and check the AUTHORS in that range, not just the count.** `.scratch/` is
+  now gitignored, which removes one whole class of what the bot can catch.
+
+- **A ONE-SIDED TEST IS A BUG THAT ONLY APPEARS AT THE OTHER END.** The collider
+  height check skipped anything the actor had climbed ON TOP OF and never
+  anything the actor stood UNDERNEATH, so a cylinder with no floor turned out to
+  have no ceiling: the Altar of Ptah at y0 6 blocked a 2.1m circle of the gallery
+  floor SIX METRES BENEATH ITSELF, for the player as well as the horde. The
+  correct pattern was already in the file - `flow.js` tests walls with
+  `head <= w.y0 || floorY >= w.y1`, both ends, eight lines above the collider
+  loop that checked one. Boxes carry a top in their record and cylinders do not,
+  so the collider path grew the cheap half and stopped. When a predicate has a
+  `>` in it, ask what the `<` case does.
