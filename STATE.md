@@ -5,56 +5,139 @@ not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
 
-## RIGHT NOW, 2026-08-01 16:57
+## RIGHT NOW, 2026-08-01 19:02
 
-Everything below this section is history. This is where the work actually is.
+Everything below "Run it" is history. This is where the work actually is.
 
-### Live and verified at c5c2771
+### Committed and local: 097a218, 1de231f, 1275873, 70e56e6
 
-Per-machine frame governor, respawn at the start, the white blow-out doorway,
-the Quarry and the Canal (buyable), the B3AR and the first exterior wall-buy,
-the rebuilt weapon audio, horde flow-field navigation, PS4 controller with
-rumble, the altar collider fix, crouch and slide, the contextual Square, reload
-animations that draw, the melee handover, and headshots lethal through wave 6.
+Nothing pushed since c5c2771. The owner holds the push gate.
 
-npm test is 23 suites, up from 15. The ~200 orphaned assertions are gated.
+- **docs/NARRATIVE.md**, the whole story A to Z, 1287 lines, five hard
+  WORLD BOUNDARY markers, every claim tagged FIXED / OPEN / PROPOSAL / REVISED.
+  WORLDS.md and WORLD-1.md are now downstream of it and were rewritten.
+- **docs/MAP-SURVEY.md**, the map measured rather than described.
+- **tools/render-doc.mjs** plus paired .html for all three docs.
 
-### The one lane in flight
+### TWO NAMES LOCKED by the owner, 2026-08-01
 
-A story agent is rewriting the design docs from the SECOND story meeting, and
-its primary deliverable changed mid-flight: docs/NARRATIVE.md, the whole story
-A to Z as continuous prose, sectioned by world. WORLDS.md and WORLD-1.md become
-downstream of it. Nothing of its work is committed.
+- **HETEPHERES** is the queen. Hetepheres I, Khufu's mother, whose Giza shaft
+  held a sealed EMPTY sarcophagus and an intact four-compartment canopic chest
+  with organic matter in all four. Her organs were there and she was not. This
+  game returns four canopic jars to a tomb and ends on THE NAME IS NOT HERE.
+  Chosen over Meresankh on sound: no consonant cluster to trip on.
+- **THE ANCIENTS** are the pre-Egyptian builders of the gate. Diegetic: nobody
+  can read their writing, so nobody knows what they called themselves. The name
+  is an admission of ignorance rather than a label.
 
-### The order the owner has asked for, and it is not the order we were working in
+Applied to the three derived docs, 16 and 19 instances. The two meeting
+transcripts are DELIBERATELY UNTOUCHED: they record what was said in the room,
+and one direct quotation inside NARRATIVE.md was restored after a blanket
+rename silently rewrote it. Quoted speech is evidence, not content.
 
-  1. NARRATIVE.md, the full story A to Z          <- in flight
-  2. sectioned by world, breaks marked
-  3. THEN a map lane, scoped from World 1's section
+### THE MAP IS FLAT, and that is the wall the story hit
 
-The map lane is deliberately NOT started. The owner wants more space and the
-descent to shape the map, and building geography before the narrative says what
-it is for is how a map ends up with nine rooms and no reason.
+All nine interior floors sit at y = 0. The only walkable surface off that plane
+inside the pyramid is the gallery second storey at y = 6, and it is UP. The
+story requires descending across three worlds. Today "deeper" is faked as 132 m
+of horizontal run along -Z.
 
-### Two decisions waiting on the owner
+Two confirmed blockers, both read in source:
 
-- WHAT HAPPENS TO MERESANKH. Meeting 2 says "not rescue the girl, we find the
-  girl", so the rescue premise WORLD-1.md was built on is gone, and the
-  archaeologist IS the evil god. Meresankh was chosen because her tomb's
-  defining feature is a serdab and rooms.js has an unused Serdab. She becomes
-  the antagonist, stays a third party, or the name moves.
-- WHETHER THE KINDLING IS REWRITTEN. Speaker 2 wants the four jars to power the
-  machine instead, to get away from the Call of Duty comparison. It is already
-  coded. And it has a second cost nobody named in the room: the Kindling notice
-  is what overwrites the archaeologist mid-sentence when she is taken, which is
-  the best beat in World 1. Change the Kindling and that beat changes.
+- `build.js heightAt` opens `let y = 0` and only ever takes a MAXIMUM, so a
+  floor below zero is not representable. A room record has no base elevation.
+- `flow.js LAYERS = 2` caps storeys per x/z, and says so in its own comment.
 
-### The open question the map lane will inherit
+Plan area is NOT the constraint: 7,352 m2 of interior floor inside a 13,728 m2
+envelope, 53.6 per cent used. The owner asked for more space; he needs a Y axis.
 
-Whether the current nine interior rooms can hold the story at all. They were
-built before any of it existed and the trainability law binds them. That is a
-finding worth having before somebody builds against it, and the story lane has
-been asked for it.
+The chosen approach is to START HIGH and step DOWN to zero rather than dig
+below it, because an unknown number of systems may assume interior y >= 0. With
+LAYERS = 2 the descent cannot stack over itself, so it must spiral outward in
+plan, which is also what real tomb architecture does.
+
+### PS1 / retro render mode, BUILT and measured
+
+`P` toggles it, in place, no reload, position kept, governor stood down. Also on
+the Video tab. Four of five effects: low internal resolution (452x270) with a
+hard nearest upscale, vertex jitter, affine diffuse mapping, 5-bit colour with a
+4x4 Bayer dither, and shadow maps off. GTAO, bloom and SMAA are out of the chain.
+
+Vertex/Lambert lighting DECLINED for a measured reason, not skipped: only
+standard and physical materials receive `scene.environment` in three 0.185.1,
+and the IBL is about 85 per cent of this scene's fill. A Lambert swap would not
+flatten the game, it would black it out. That is a lighting job.
+
+| scene | current | PS1 |
+|---|---|---|
+| exterior avenue | 3.00 ms | 0.90 ms |
+| ground close-up | 3.60 ms | 0.80 ms |
+| **interior chamber** | **9.50 ms** | **2.40 ms** |
+
+Reverses bit for bit: 0.000 mean pixel difference after a round trip. Page at
+docs/RETRO-LOOK.html. Known art loss: the brazier fire and the sun glow go with
+bloom, so it is viable as an OPTION today and not finished as THE look until the
+lighting rig is re-authored.
+
+### THE GOVERNOR'S BOTTOM TWO RUNGS DO NOT WORK
+
+Found while measuring retro mode, and it matters more than the art style.
+`EffectComposer` captures the renderer's pixel ratio once at construction and
+`composer.setPixelRatio` is called NOWHERE in src/. Measured by forcing each
+rung: at `low` the canvas is 1036x619 while the composer target is still
+1440x860. The bottom rungs shrink only the final blit; the scene is still
+rendered and post-processed at full size.
+
+Those are the rungs a struggling machine lands on. The MacBook this was all
+started for has been falling to rungs that do nothing. One line in main.js
+fixes it, deliberately deferred to a pass that can re-baseline the visual suite.
+
+### The exterior seal, diagnosed and being fixed
+
+The owner confirmed from play that he never reached the canal or the quarry.
+Both real, DIFFERENT causes, and the distinction is the whole fix:
+
+- **Quarry**: works end to end. Bought, walked in, verified. He never found it.
+  Discoverability, not a bug.
+- **Canal**: a REAL bug. The purchase succeeds and it stays sealed. Three
+  overlapping invisible colliders at x -12.3, r 2.9, h 1.35, no mesh within
+  3.2 m, forming an unbroken bar across the approach. h 1.35 clears the 1.2
+  rubble threshold by 0.15, so it is solid to player, nav AND flow at once.
+- **Stuck mummies are NOT the seal.** Measured: when the player stands in a
+  small recess the flood collapses to ONE slot of 12,875, `flow.sample()` fails
+  for every actor, and the whole horde reverts to the straight-line steer at
+  mummy.js:2222 and walks into walls. `flow.valid` stays true throughout.
+  Confidence ~70 per cent, and it matches the owner's words exactly.
+- **`reachesPlayer` is a FALSE-PASS GENERATOR.** director.js:1259 is
+  `if (island < 0) return true`, so it reports the whole map reachable whenever
+  the player stands somewhere nav calls solid. Gameplay is protected; only the
+  diagnostic lied. This is why the canal went unnoticed.
+
+### Lanes in flight, none committed
+
+1. **Descent**: base elevation through build.js / rooms.js, World 1 stepping
+   down, test/descent.mjs.
+2. **Nav fix**: the canal emitter, the field-collapse fallback, reachesPlayer.
+
+File ownership was partitioned so the lanes cannot collide.
+
+### What the test suite is worth right now: NOTHING
+
+npm test aborted on a screenshot timeout under load average 89 with 45
+concurrent headless Chrome from the parallel lanes. test/shot.mjs's own header
+documents that exact condition producing false failures. No pass and no break is
+being claimed. RE-RUN ON A QUIET MACHINE before anything goes near main.
+
+### Still the owner's calls
+
+- Whether retro mode is THE look or an option.
+- Whether the Kindling is repointed (recommendation: repoint, ~150 lines, keep
+  the mid-sentence overwrite beat, three jars run the machine and the fourth
+  opens the Serdab).
+- The Serdab is UNREACHABLE today: `jarsReturned` is declared 0 at
+  doors.js:289, read twice, written nowhere. Not a regression, an unbuilt
+  milestone (M5) whose own comment says so. It is the SAME work as the Kindling
+  repoint, not a second job.
 
 ## Run it
 
