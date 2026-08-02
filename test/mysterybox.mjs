@@ -279,11 +279,35 @@ window.__B__ = {
     return +spent.toFixed(2);
   },
 
+  /**
+   * Finish the arrival before the camera is read.
+   *
+   * teleport() puts the body at the y it is handed and lets the controller
+   * resolve the floor over the following frames - invisible while every
+   * interior floor was y = 0. World 1's Act 3 is at y = -6, and spawn C is in
+   * the Star Shaft, so a placement there starts the camera seven and a half
+   * metres over the chest and FALLING at 24 m/s/s. Measured before this
+   * existed: five checks in this file failed, all of them spawn C, none because
+   * the chest was wrong.
+   *
+   * Drives the player's own update with no input, so it is the real fall
+   * through the real resolver, finished now. It does not change where a
+   * placement lands.
+   */
+  settle(yaw) {
+    const g = window.__SANDS__;
+    for (let i = 0; i < 180; i++) {
+      g.player.update(1 / 60, { forward: 0, strafe: 0, sprint: false, jump: false }, yaw);
+      if (g.player.state.grounded) break;
+    }
+  },
+
   /** Stand a given distance out along a fixture's facing and look back at it. */
   face(x, z, rot, dist = 3.2, pitch = 0.06) {
     const g = window.__SANDS__;
     const fx = -Math.sin(rot), fz = -Math.cos(rot);
     g.player.teleport({ x: x + fx * dist, y: 0, z: z + fz * dist });
+    window.__B__.settle(rot + Math.PI);
     g.rig.reset(rot + Math.PI, pitch);
     g.rig.update(1 / 60, g.player, false);
   },
@@ -999,6 +1023,10 @@ for (const spawn of ['A', 'B', 'C']) {
     g.mysterybox.placeAt(other);
     window.__B__.pumpUntil('idle');
     g.player.teleport({ x: cam.x, y: 0, z: cam.z });
+    // Settled, so the control frame is shot from the same height as the frame
+    // it is the control FOR. An A/B whose two halves are seven metres apart in
+    // y measures the drop, not the chest.
+    window.__B__.settle(cam.yaw);
     g.rig.reset(cam.yaw, 0.10);
     await window.__B__.frames(4);
     return { movedTo: g.mysterybox.state.spawn };

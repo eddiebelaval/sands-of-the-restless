@@ -72,11 +72,41 @@ window.__H__ = {
     }
   },
 
-  /** Put the player somewhere and point them. Harness only. */
+  /**
+   * Put the player somewhere and point them. Harness only.
+   *
+   * IT SETTLES THE BODY BEFORE RETURNING, and that is not a convenience.
+   *
+   * teleport() arrives at y = 0 and the controller resolves the floor on the
+   * frames that follow - it always has, and while every interior floor WAS y = 0
+   * that resolution was a snap of at most a step and finished before anybody
+   * looked. It does not any more. World 1's Act 3 sits at y = -6, so a placement
+   * in the Canopic Crypt, the Embalming Chamber or the King's Chamber starts the
+   * player seven and a half metres in the air and FALLING, at 24 m/s/s, which
+   * takes about 0.8 s to land.
+   *
+   * Measured, before this settle existed: three call sites read a raycast prompt
+   * three real frames after placing, the camera was still seven metres over the
+   * fixture and aimed level, and four checks failed - the power gate's prompt,
+   * the Kindling, the powered gate and the arrival in the King's Chamber - none
+   * of them because anything they test was broken. The screenshot taken at the
+   * same moment was a dark ceiling and tripped the black-frame gate too.
+   *
+   * The loop drives the player's own update with no input, so it is the real
+   * fall through the real resolver, just finished now instead of over the next
+   * second of wall clock. It changes nothing about WHERE a placement lands: a
+   * body dropped from y = 0 settles on the same surface it always did, which is
+   * why the gallery's ledge tests are unaffected. 180 steps is three simulated
+   * seconds, against the 0.8 the deepest drop in the map needs.
+   */
   place(x, z, yaw) {
     const g = window.__SANDS__;
     g.player.teleport({ x, y: 0, z });
     g.rig.reset(yaw, -0.02);
+    for (let i = 0; i < 180; i++) {
+      g.player.update(1 / 60, { forward: 0, strafe: 0, sprint: false, jump: false }, yaw);
+      if (g.player.state.grounded) break;
+    }
   },
 
   pos() {

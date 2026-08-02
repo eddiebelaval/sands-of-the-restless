@@ -268,7 +268,64 @@ land in the courtyard or in the entry band, which have not moved. The few that
 land in Act 3 fall six metres, harmlessly, and are caught by the controller's
 own grounding on the way.
 
-**One thing genuinely gets worse going down, and it is currently inert.**
+**ONE THING GETS MATERIALLY WORSE GOING DOWN, IT IS NOT INERT, AND IT IS THE
+ONE OUTSTANDING DEFECT IN THIS WORK.**
+
+`world/weathering.js` darkens stone as a function of ABSOLUTE WORLD Y. Its
+fragment stage computes
+
+```glsl
+float hb = (wp.y - uGroundLevel) / uDirtHeight;
+float grime = 1.0 - smoothstep(0.0, 1.0, hb + noise);
+diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uDirt, grime * uDirtStrength * ...);
+```
+
+`uGroundLevel` is 0 and `uDirtHeight` is 3.2 for limestone. Every surface below
+the datum therefore saturates at `grime = 1` and takes the full dirt multiply.
+Act 3's floors are at -6, so **every wall, floor, ceiling and prop in the five
+Act 3 rooms is now fully grimed**, and the rooms lost roughly a third of their
+albedo.
+
+Measured, standing at each room's centre, mean luminance over the top two thirds
+of the frame, before the descent against after:
+
+| room | before | after | delta |
+|---|---|---|---|
+| chamber-of-ascent | 53.32 / 20.19 | 53.41 / 20.17 | none |
+| hall-of-offerings | 16.32 / 20.65 | 16.33 / 20.65 | none |
+| granary-vault | 18.21 / 21.02 | 18.28 / 21.01 | none |
+| great-gallery | 19.17 / 22.28 | 19.20 / 21.87 | none |
+| embalming-chamber | 16.16 / 21.78 | 14.06 / 15.74 | **-2.1 / -6.0** |
+| canopic-crypt | 23.28 / 17.26 | 21.86 / 14.21 | **-1.4 / -3.1** |
+| star-shaft | 24.70 / 49.73 | 23.83 / 44.91 | **-0.9 / -4.8** |
+| kings-chamber | 19.71 / 19.28 | 16.57 / 15.59 | **-3.1 / -3.7** |
+| serdab | 23.41 / 18.89 | 13.43 / 10.55 | **-10.0 / -8.3** |
+
+Act 2 is untouched to within noise. Every Act 3 room is darker, and the Serdab -
+the room the whole ending happens in - lost 43 per cent.
+
+**The mechanism was proven rather than inferred.** In one process, on one build,
+the whole interior group was translated +6 in y so the Serdab sat back at its old
+absolute elevation carrying every light, wall and prop with it, and the camera
+was placed at the same height above its floor. Luminance went from **13.83 to
+21.78**. Nothing about the room, its lights or the camera changed; only the
+absolute y it is drawn at. Disabling each composer pass in turn does not close
+the gap, so it is in the scene render, not in post. Height fog is genuinely inert
+indoors, `uAmount` measured 0.
+
+**IT IS NOT FIXED, and it should not be fixed by guessing.** The datum is a
+single uniform on a material registry that `buildMaterials()` caches and shares
+with the courtyard, so there is no value of `uGroundLevel` that is right for both
+a courtyard at grade and an interior spanning -6 to +6. Lowering it to -6 would
+strip the base grime off Act 2 and off the exterior, trading one regression for
+another. The correct fix is to make the weathering datum travel with the
+geometry - a per-mesh attribute carrying the room's `base`, so the grime band is
+measured from the floor of the room the stone belongs to rather than from world
+zero - and that is a change to a shared primitive with the whole map downstream
+of it. It wants its own pass and its own verification. **Until it lands, the
+descent ships with Act 3 about a third too dark.**
+
+**A second, smaller y dependence, and this one really is inert.**
 `core/fog.js` computes height fog density as `exp(-(y + 2) / 34)`, so a camera at
 -6 is about 20 percent murkier than one at 0. It cannot bite today: `fog.js:869`
 sets `uAmount` to 0 whenever the camera is inside `INTERIOR_BOUNDS`, so the fog

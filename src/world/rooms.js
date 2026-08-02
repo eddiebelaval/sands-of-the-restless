@@ -19,6 +19,31 @@
  * wall lines with their neighbours, because that is what lets the builder cut a
  * portal opening from either side and have the two halves line up.
  *
+ * ---------------------------------------------------------------------------
+ * `base` IS THE FLOOR'S ABSOLUTE ELEVATION, AND EVERYTHING ELSE IS RELATIVE TO IT
+ * ---------------------------------------------------------------------------
+ *
+ * It defaults to 0, which is where every room in this map sat until World 1
+ * needed a descent. `height` is still the CEILING MEASURED FROM THAT FLOOR, and
+ * every other y in a room record - a ramp's y0 and y1, a propSlot's y, an
+ * interactSlot's y - is measured from it too. Nothing in here is a world
+ * coordinate in Y. That is what lets a room be lowered by changing one number
+ * instead of thirty, and it is why the elevation table in docs/DESCENT.md can be
+ * read as a column of depths rather than as a diff.
+ *
+ * TWO ROOMS AT DIFFERENT ELEVATIONS MUST NOT SHARE PLAN AREA. `roomAtPoint` and
+ * the builder's floor sampler both answer from x/z alone, and the flow field
+ * carries a hard cap of two storeys per cell (`enemies/flow.js` LAYERS). Rooms
+ * are laid out edge to edge, so this holds by construction today; a room
+ * authored on top of another one breaks the sampler before it breaks the horde.
+ *
+ * A DOORWAY BETWEEN TWO ELEVATIONS SITS AT THE HIGHER FLOOR, and the builder
+ * derives that rather than reading it from here - see portalOpening in
+ * build.js. The LOWER room is then responsible for carrying the player from
+ * that threshold down to its own floor. A step bigger than STEP_UP (0.65) with
+ * nothing walkable spanning it is a hole, not a descent, so a room given a
+ * lower `base` than its neighbour is a room that also needs a ramp.
+ *
  * A propSlot may also carry an optional y (it defaults to the floor, and a slot
  * with a y is decoration only because a collider cylinder has no base height)
  * and an optional config, for the few props the systems have to tell apart or
@@ -56,6 +81,11 @@ export const ROOMS = [
     id: 'chamber-of-ascent',
     name: 'Chamber of Ascent',
     bounds: { x: 0, z: -149, w: 24, d: 18 },
+    // THE DATUM. Every other elevation in the map is measured against this one,
+    // because the sealed doorway hands the player over at a real opening whose
+    // two hand-placed fade sheets and threshold z are pinned to the courtyard
+    // grade (systems/doors.js DAYLIGHT and VOID). Room 1 cannot move.
+    base: 0,
     height: 7,
     lightingProfile: 'chamber',
 
@@ -120,6 +150,7 @@ export const ROOMS = [
     id: 'hall-of-offerings',
     name: 'Hall of Offerings',
     bounds: { x: -31, z: -149, w: 38, d: 18 },
+    base: 0,
     height: 9,
     lightingProfile: 'corridor',
 
@@ -201,6 +232,7 @@ export const ROOMS = [
     id: 'granary-vault',
     name: 'Granary Vault',
     bounds: { x: 25, z: -149, w: 26, d: 18 },
+    base: 0,
     height: 7,
     lightingProfile: 'chamber',
 
@@ -248,6 +280,10 @@ export const ROOMS = [
     id: 'great-gallery',
     name: 'Great Gallery',
     bounds: { x: 0, z: -177, w: 52, d: 38 },
+    // Act 2 is one plane, all four rooms of it, and that is forced rather than
+    // chosen: the entry band and the gallery form a cycle, and a cycle cannot
+    // change elevation once without changing it twice. See docs/DESCENT.md.
+    base: 0,
     height: 16,
     lightingProfile: 'gallery',
 
@@ -414,14 +450,65 @@ export const ROOMS = [
   },
 
   // ---------------------------------------------------------------------
-  // row C: the three gated rooms off the gallery
+  // row C: the three gated rooms off the gallery, AND THE ONE DESCENT.
+  //
+  // Everything from here to the Serdab is six metres below everything before
+  // it. The three doorways out of the gallery are the only cut in the room
+  // graph at this seam, so this is where the drop can happen and the only place
+  // it can happen without a second one somewhere else; docs/DESCENT.md carries
+  // the cycle argument and the full elevation table.
+  //
+  // Each of the three rooms carries the same descent ramp: sixteen metres of
+  // run for six of fall, entered through its own gate at the gallery's floor
+  // level and landing on its own. The ramps are authored relative to `base`, so
+  // "y1: 6" reads as "six above this room's floor", which is the same six the
+  // gallery's ledge is above the gallery's.
   // ---------------------------------------------------------------------
   {
     id: 'embalming-chamber',
     name: 'Embalming Chamber',
     bounds: { x: -29, z: -214, w: 30, d: 36 },
-    height: 8,
+    base: -6,
+
+    /**
+     * EIGHT BECAME TWELVE, AND THE FLOOR DROPPING SIX IS THE WHOLE REASON.
+     *
+     * `height` is measured from this room's own floor, so the absolute ceiling
+     * is -6 + 12 = 6: two metres LOWER than it used to be, not four higher. The
+     * room did not become grander, it became deeper, and from the doorway the
+     * lintel presses down exactly as it always did.
+     *
+     * The number is forced rather than chosen. The doorway from the gallery
+     * sits at the gallery's floor, six metres above this one, and a full-height
+     * opening needs DOOR_H plus its 0.8 of lintel above that sill. So the
+     * absolute ceiling can never come below 5.0 while that door is full height,
+     * which puts a floor under `height` of drop + 5. Twelve leaves a metre of
+     * slack; eleven would have been exact, and exact is where a rounding error
+     * turns into a doorway with no stone over it.
+     */
+    height: 12,
     lightingProfile: 'chamber',
+
+    /**
+     * THE DESCENT, west door.
+     *
+     * Sixteen of run for six of fall is a gradient of 0.375, which is gentler
+     * than the gallery's own ramps at 0.5 and well inside both limits that
+     * matter: the player's STEP_UP of 0.65 per frame, and the flow field's
+     * CLIMB of 0.65 per 0.7 m cell. A steeper ramp would still be walkable and
+     * would still route the horde; it would just stop reading as architecture.
+     *
+     * IT REACHES THE WALL LINE AT z = -196 RATHER THAN STOPPING AT THE ROOM'S
+     * INNER FACE. The doorway is a hole in a wall a metre thick, and the floor
+     * of that hole has to be something the sampler can see: stopping at -197
+     * would leave a metre of threshold where the only answer is this room's
+     * floor, six metres down, and the player would walk out of the gallery into
+     * a hole. Ending exactly on the shared wall line is the same butt-don't-
+     * overlap rule the gallery's bridge is built to.
+     */
+    ramps: [
+      { x: -20, z: -204, w: 8, d: 16, y0: 0, y1: 6 },
+    ],
 
     portals: [
       /**
@@ -465,16 +552,43 @@ export const ROOMS = [
       { x: -17, z: -228 },
     ],
 
+    // THE RAMP TOOK THE NORTH-EAST CORNER OF THIS ROOM, x -24..-16 by z
+    // -212..-196, and three slots have moved west out of it. A prop left
+    // standing under a descent is not decoration, it is a column growing
+    // through a walkway: the collider starts on the room floor and runs up
+    // through the ramp the player is on.
     propSlots: [
       { type: 'sarcophagus', x: -29, z: -207, rot: 0 },
       { type: 'offering-table', x: -29, z: -213, rot: 0 },
-      { type: 'pillar', x: -21, z: -203, rot: 0 },
+      // Was (-21, -203), which is now half way down the ramp. Moved five west
+      // rather than south, so it still frames the north end of the room and now
+      // stands beside the descent instead of in it. The pair at z -222 is
+      // untouched, so the room reads slightly asymmetric, which it already was:
+      // the sarcophagus, the Kindling and the four niches are all on the west.
+      { type: 'pillar', x: -26, z: -203, rot: 0 },
       { type: 'pillar', x: -37, z: -203, rot: 0 },
       { type: 'pillar', x: -21, z: -222, rot: 0 },
       { type: 'pillar', x: -37, z: -222, rot: 0 },
-      { type: 'urn', x: -18, z: -199.5, rot: 0.5 },
-      { type: 'urn', x: -19.6, z: -200.8, rot: 2.3 },
-      { type: 'brazier', x: -24, z: -229, rot: 0 },
+      // Both were clutter at the foot of the old level doorway. They keep that
+      // job at the foot of the ramp's west flank.
+      { type: 'urn', x: -25.5, z: -200, rot: 0.5 },
+      { type: 'urn', x: -26.9, z: -201.3, rot: 2.3 },
+      // MOVED TO LIGHT THE FOOT OF THE DESCENT, from (-24, -229), and it is
+      // doing a job rather than being redressed. This room's two lights hang on
+      // its two braziers, and with both of them jammed against the south wall
+      // the whole north half - which is now a ramp the player has to find and
+      // walk down in the dark - had no light of its own at all. First in the
+      // list because buildLights spreads its picks across the anchors in
+      // authored order.
+      //
+      // BESIDE THE LANDING AND NOT ON IT. The first pass put this at (-20, -214),
+      // dead on the ramp's axis two metres past its foot, and it corked the
+      // descent: measured, a player holding W down the west ramp stopped at
+      // z -212.78 and stayed there, because a 0.8 collider plus the player's own
+      // 0.55 is 1.35 and the landing is exactly that wide at the axis. It is the
+      // Altar-on-a-three-metre-catwalk mistake in a different room, and it is
+      // why nothing may stand in front of a descent.
+      { type: 'brazier', x: -25.5, z: -214, rot: 0 },
       { type: 'brazier', x: -34, z: -229, rot: 0 },
       { type: 'rubble', x: -16.5, z: -218, rot: 1.5 },
     ],
@@ -513,8 +627,35 @@ export const ROOMS = [
     id: 'canopic-crypt',
     name: 'Canopic Crypt',
     bounds: { x: 0, z: -214, w: 28, d: 36 },
-    height: 6,
+    base: -6,
+
+    /**
+     * SIX BECAME TWELVE, AND THIS IS THE ROOM THAT PRICED THE WHOLE DESCENT.
+     *
+     * Its absolute ceiling does not move at all: -6 + 12 is the same 6 it has
+     * always been. What changed is that its floor is now six metres under its
+     * own doorway, so the twelve is the depth of the room and not its grandeur.
+     *
+     * It is also the room that decided the drop is six and not eight or ten.
+     * The rule from the Embalming Chamber above - absolute ceiling at least
+     * sill + DOOR_H + 0.8, so height at least drop + 5 - binds hardest here,
+     * because this had the second lowest ceiling in the map and the least room
+     * to give. A ten-metre drop would have needed fifteen, which is two and a
+     * half times the room the Crypt was authored as. Six costs it double and
+     * leaves its ceiling exactly where it was, and that was the cheapest honest
+     * trade available. The full argument is in docs/DESCENT.md.
+     *
+     * The cost is real and worth naming: the Crypt was the tight, warm, low
+     * room in Act 3 and it is now twice as tall. What it keeps is the ceiling
+     * the player actually sees from the doorway.
+     */
+    height: 12,
     lightingProfile: 'chamber',
+
+    /** THE DESCENT, centre door. Same 16-for-6 as the other two. */
+    ramps: [
+      { x: 0, z: -204, w: 8, d: 16, y0: 0, y1: 6 },
+    ],
 
     portals: [
       // No price. The gate is the power switch two rooms away, which is the
@@ -529,16 +670,36 @@ export const ROOMS = [
       { x: 11, z: -229 },
     ],
 
+    // The ramp takes x -4..4 by z -212..-196, which is the middle of the
+    // room's north half and was where three slots stood.
     propSlots: [
-      { type: 'canopic-jar', x: 0, z: -205, rot: 0, config: { index: 3, son: 'duamutef' } },
+      // JAR 3 MOVED OFF THE RAMP, from (0, -205), which is now three metres up
+      // it. Six west, on the crypt floor, so it is the thing the player is
+      // looking DOWN at while they walk the descent rather than the thing they
+      // walk into at the bottom of it - it sat on the axis for one build and
+      // was one of three colliders that turned the landing into a slalom.
+      { type: 'canopic-jar', x: -6, z: -205, rot: 0, config: { index: 3, son: 'duamutef' } },
       { type: 'sarcophagus', x: -8, z: -212, rot: 0 },
       { type: 'sarcophagus', x: 8, z: -212, rot: 0 },
       { type: 'sarcophagus', x: -8, z: -221, rot: 0 },
       { type: 'sarcophagus', x: 8, z: -221, rot: 0 },
-      { type: 'pillar', x: 0, z: -216.5, rot: 0 },
+      // Pushed two and a half south off (0, -216.5). Still the room's one
+      // column and still on the axis, but seven metres clear of where the ramp
+      // puts the player down rather than four, which is the difference between
+      // a column you walk around and a column you arrive against.
+      { type: 'pillar', x: 0, z: -219, rot: 0 },
       { type: 'urn', x: 11, z: -206, rot: 1.1 },
       { type: 'urn', x: -11.4, z: -207.2, rot: 2.8 },
-      { type: 'brazier', x: 0, z: -199, rot: 0 },
+      // TWO FIRES NOW, NOT ONE, AND THAT FIXES A BUG THIS ROOM ALREADY HAD.
+      // buildLights hangs this room's two lights on its braziers and spreads
+      // the picks across whatever anchors exist; with one brazier it stacked
+      // both on the same bowl and left the far half black - the exact failure
+      // its own comment names, and the far half is now a ramp. One at the foot
+      // of the descent, one beside its head, and NEITHER OF THEM ON THE AXIS
+      // the ramp puts the player down on - see the note on the Embalming
+      // Chamber's brazier for the measurement that rule came out of.
+      { type: 'brazier', x: 6, z: -216, rot: 0 },
+      { type: 'brazier', x: -5.5, z: -198, rot: 0 },
       // Against the east wall, out of the corner the spawn points use.
       { type: 'rubble', x: 11.5, z: -216, rot: 0.7 },
     ],
@@ -556,8 +717,31 @@ export const ROOMS = [
     id: 'star-shaft',
     name: 'Star Shaft',
     bounds: { x: 27, z: -214, w: 26, d: 36 },
+    base: -6,
+
+    /**
+     * THIRTY, UNCHANGED, and this is the room that gets the most out of the
+     * descent for nothing.
+     *
+     * Its ceiling drops with its floor, to an absolute 24, and it needed no
+     * adjustment at all because thirty was already far past the sill + DOOR_H +
+     * 0.8 that binds the other two. It is still the tallest room in the map by
+     * a factor of two and a half.
+     *
+     * What it gains is the thing WORLD-1.md says it was missing. "The world
+     * already spends its one vertical gasp on a shaft that points UP and
+     * delivers nothing." The player now walks DOWN six metres to stand at the
+     * bottom of it, so the thirty units of nothing overhead are measured from a
+     * floor they had to descend to reach. The failed ascent reads as further
+     * away than it did, and no geometry in this room moved to do it.
+     */
     height: 30,
     lightingProfile: 'shaft',
+
+    /** THE DESCENT, east door. Same 16-for-6 as the other two. */
+    ramps: [
+      { x: 20, z: -204, w: 8, d: 16, y0: 0, y1: 6 },
+    ],
 
     portals: [
       { to: 'serdab', at: { x: 40, z: -213 }, width: 2.4, kind: 'puzzle', cost: 0 },
@@ -615,18 +799,32 @@ export const ROOMS = [
     ],
 
     spawnPoints: [
-      { x: 17, z: -200 },
+      // (17, -200) stood in the ramp's footprint. A spawn on a descent is not
+      // wrong so much as unreadable - the actor appears part way down a slope
+      // the player is looking up - and `groundAt` places a body on the HIGHEST
+      // surface at its x/z, so it would have arrived on the ramp and not on the
+      // floor the other three use. Moved south, off the ramp, same corner.
+      { x: 17, z: -219 },
       { x: 37, z: -200 },
       { x: 17, z: -228 },
       { x: 37, z: -228 },
     ],
 
+    // The ramp takes x 16..24 by z -212..-196.
     propSlots: [
-      { type: 'canopic-jar', x: 20, z: -204, rot: 0, config: { index: 2, son: 'hapy' } },
+      // JAR 2 MOVED OFF THE RAMP, from (20, -204). It sits under the void now,
+      // just east of the landing, which is where the room's own story wants it:
+      // the second jar is the one at the bottom of the failed ascent.
+      { type: 'canopic-jar', x: 25.5, z: -219, rot: 0, config: { index: 2, son: 'hapy' } },
       // Truncated on purpose. Columns running the full 30 units would turn the
       // shaft into four rails; broken off at 12 they leave the void above them
       // as the thing the room is actually about.
-      { type: 'pillar', x: 19, z: -206, rot: 0, config: { height: 12 } },
+      //
+      // The first of them was at (19, -206), under the ramp. It stands at the
+      // head of the descent instead, so a twelve-metre broken column is the
+      // thing the player walks past on the way down rather than the thing the
+      // ramp grew through.
+      { type: 'pillar', x: 26, z: -200, rot: 0, config: { height: 12 } },
       { type: 'pillar', x: 35, z: -206, rot: 0, config: { height: 12 } },
       { type: 'pillar', x: 19, z: -222, rot: 0, config: { height: 16 } },
       { type: 'pillar', x: 35, z: -222, rot: 0, config: { height: 16 } },
@@ -669,6 +867,13 @@ export const ROOMS = [
     id: 'kings-chamber',
     name: "King's Chamber",
     bounds: { x: 0, z: -252, w: 40, d: 40 },
+    // Level with all three rooms that open onto it, and that is not a choice.
+    // gallery -> embalming -> kings -> crypt -> gallery is a cycle, and a cycle
+    // whose elevation changes once does not close. Every room in Act 3 is on
+    // this plane for that reason; see docs/DESCENT.md.
+    base: -6,
+    // Unchanged. Its absolute ceiling comes down with its floor, to 6, and the
+    // boss arena keeps exactly the proportions it was tuned with.
     height: 12,
     lightingProfile: 'sanctum',
 
@@ -714,6 +919,24 @@ export const ROOMS = [
     id: 'serdab',
     name: 'Serdab',
     bounds: { x: 47, z: -213, w: 14, d: 14 },
+
+    /**
+     * THE BOTTOM OF THE WORLD, AND IT IS LEVEL WITH THE SHAFT IT HANGS OFF.
+     *
+     * The Serdab is the ONE room in the map whose portal is a bridge in the
+     * graph sense - cut it and the graph falls in two - so it is also the one
+     * room that could be dropped further for the price of a single ramp.
+     * Deliberately not taken. WORLD-1.md asks for ONE built descent and gives
+     * the reason: "One built descent against one built ascent is a shape. Nine
+     * floors is a number." A second drop four rooms after the first is the
+     * beginning of nine.
+     *
+     * It is the bottom because it is the last room on the bottom floor, and it
+     * keeps the lowest ceiling in the game in both readings: five above its own
+     * floor, and an absolute -1, which is lower than anything else in World 1.
+     * docs/DESCENT.md carries the costed version of the drop that was declined.
+     */
+    base: -6,
     height: 5,
     lightingProfile: 'sanctum',
 

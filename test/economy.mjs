@@ -76,17 +76,49 @@ window.__E__ = {
    * placement change in rooms.js silently turning this suite into a test of
    * seventeen photographs of a wall.
    */
+  /**
+   * Finish the arrival before anything looks at it.
+   *
+   * teleport() puts the body at the y it is handed and lets the controller
+   * resolve the floor over the frames that follow. That was invisible while
+   * every interior floor was y = 0 and the resolution was a snap of at most a
+   * step. World 1's Act 3 now sits at y = -6, so a fixture placement in the
+   * Embalming Chamber, the Canopic Crypt or the Star Shaft starts the camera
+   * seven and a half metres above the thing it is meant to be looking at and
+   * FALLING at 24 m/s/s, and every check that reads a raycast prompt two frames
+   * later reads an empty string.
+   *
+   * Measured before this existed: fifteen checks in this file failed - the LMG
+   * wall, the Kindling, four shrines, the boon cap, the tracers - and not one of
+   * them because the thing it tests was broken. Two screenshots taken in the
+   * same moment were of a ceiling and tripped the black-frame gate.
+   *
+   * It drives the player's own update with no input, so this is the real fall
+   * through the real resolver, finished now rather than over the next second of
+   * wall clock. It does not change WHERE a placement lands: a body settles on
+   * the surface it would have settled on anyway.
+   */
+  settle(yaw) {
+    const g = window.__SANDS__;
+    for (let i = 0; i < 180; i++) {
+      g.player.update(1 / 60, { forward: 0, strafe: 0, sprint: false, jump: false }, yaw);
+      if (g.player.state.grounded) break;
+    }
+  },
+
   face(x, z, rot, dist = 3.0, y = 0) {
     const g = window.__SANDS__;
     const fx = -Math.sin(rot), fz = -Math.cos(rot);
     g.player.teleport({ x: x + fx * dist, y, z: z + fz * dist });
     g.rig.reset(rot + Math.PI, -0.02);
+    window.__E__.settle(rot + Math.PI);
   },
 
   place(x, z, yaw) {
     const g = window.__SANDS__;
     g.player.teleport({ x, y: 0, z });
     g.rig.reset(yaw, -0.02);
+    window.__E__.settle(yaw);
   },
 
   hud() {

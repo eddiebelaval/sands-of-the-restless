@@ -248,11 +248,36 @@ window.__P__ = {
     }
   },
 
+  /**
+   * Finish the arrival before the camera is read.
+   *
+   * teleport() puts the body at the y it is handed and lets the controller
+   * resolve the floor over the following frames - invisible while every
+   * interior floor was y = 0. World 1's Act 3 is at y = -6, and two of the six
+   * shrines are down there (Ptah in the Canopic Crypt, Thoth in the Star
+   * Shaft), so a placement at either starts the camera seven and a half metres
+   * above the fixture and FALLING at 24 m/s/s. Measured before this existed:
+   * three checks in this file failed, all of them plinth reads, none because a
+   * plinth was wrong.
+   *
+   * Drives the player's own update with no input, so it is the real fall
+   * through the real resolver, finished now. It does not change where a
+   * placement lands.
+   */
+  settle(yaw) {
+    const g = window.__SANDS__;
+    for (let i = 0; i < 180; i++) {
+      g.player.update(1 / 60, { forward: 0, strafe: 0, sprint: false, jump: false }, yaw);
+      if (g.player.state.grounded) break;
+    }
+  },
+
   /** Stand a given distance out along a facing and look back at the point. */
   face(x, z, rot, dist = 4, pitch = 0.06) {
     const g = window.__SANDS__;
     const fx = -Math.sin(rot), fz = -Math.cos(rot);
     g.player.teleport({ x: x + fx * dist, y: 0, z: z + fz * dist });
+    window.__P__.settle(rot + Math.PI);
     g.rig.reset(rot + Math.PI, pitch);
     g.rig.update(1 / 60, g.player, false);
   },
@@ -646,14 +671,17 @@ const walkover = await page.evaluate(async () => {
 
   // Standing three metres short: near enough to see it, not near enough to have
   // it. A pickup radius that is really "anywhere in the room" is not a pickup.
-  g.player.teleport({ x: x - 3, y: 0, z });
+  // Same floor the player is already standing on. Handing y: 0 here would drop
+  // them six metres in Act 3 and spend the whole 0.2 s pump falling.
+  const feet = p.y - 1.68;
+  g.player.teleport({ x: x - 3, y: feet, z });
   window.__P__.pump(0.2);
   const atThree = g.powerups.liveDrops().length;
 
   const goldBefore = g.economy.gold;
 
   // Now walk onto it.
-  g.player.teleport({ x, y: 0, z });
+  g.player.teleport({ x, y: feet, z });
   window.__P__.pump(0.2);
 
   return {

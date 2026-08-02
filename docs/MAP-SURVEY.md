@@ -16,6 +16,16 @@ Chromium after `start()`. Flood-fill figures carry their method inline.
 
 ## 1. BLUF
 
+> **SUPERSEDED IN PART, 2026-08-01, later the same day.** Sections 1, 4 and 8's
+> first two constraints described the map as it stood before World 1's descent
+> was built. It is no longer flat: Act 3 sits at y = -6 and the interior's
+> vertical range is now -6 to +6. `heightAt` seeds from a per-room `base` and
+> `buildShell` seats floor, ceiling and doorway sill from it. The nav cap was NOT
+> raised and `layersFull` still measures zero. **`docs/DESCENT.md` carries the
+> current elevation table and the measurements behind it.** Everything else in
+> this survey - the plan areas, the connectivity graph, the nav constants, the
+> fourteen code-versus-docs discrepancies - was not touched and still holds.
+
 - **The map is flat.** Nine interior rooms, and all nine floors are at **y = 0**.
   The only walkable surface anywhere above or below that plane inside the pyramid
   is the Great Gallery's second storey at **y = 6**. Total interior vertical

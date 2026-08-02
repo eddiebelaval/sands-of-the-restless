@@ -66,6 +66,70 @@ const OPEN_SECONDS = 1.15;
 const STEP_UP = 0.65;
 
 /**
+ * A ROOM'S FLOOR ELEVATION, AND THE CEILING THAT FOLLOWS FROM IT.
+ *
+ * `base` is the absolute y of a room's floor. It defaults to 0, which is what
+ * every room in this map was before the descent existed, so a record without one
+ * builds exactly the geometry it built yesterday.
+ *
+ * `height` deliberately stays what it always was: the ceiling measured FROM THAT
+ * FLOOR, not from the world origin. Keeping it relative is what lets a room be
+ * moved down without every prop, light, ramp and doorway inside it having to be
+ * re-derived by hand, and it is why docs/DESCENT.md can state a room's shape and
+ * its depth as two independent numbers rather than as one fused one.
+ *
+ * Read through these two rather than touching `room.base` directly. A room
+ * record authored before the descent has no `base` at all, and `undefined + 6`
+ * is NaN, which is the kind of value that produces geometry nobody can see and
+ * a floor sampler that answers every question with "no".
+ */
+function baseOf(room) { return room && room.base ? room.base : 0; }
+function ceilingOf(room) { return baseOf(room) + room.height; }
+
+/**
+ * WHERE A DOORWAY'S THRESHOLD SITS, AND HOW MUCH CLEAR HEIGHT IT GETS.
+ *
+ * THE THRESHOLD IS THE HIGHER OF THE TWO FLOORS, ALWAYS, and it is DERIVED
+ * rather than authored on purpose. A portal is a hole cut in a wall that both
+ * rooms build, from opposite sides, and the two halves only line up if both
+ * sides compute the same sill from the same numbers. An authored sill is a third
+ * number that can disagree with the two it is supposed to sit between, and the
+ * disagreement is invisible in the data and obvious only to a player walking
+ * into a step they cannot climb.
+ *
+ * The LOWER room then owns the problem of getting from the sill down to its own
+ * floor. STEP_UP is 0.65, so any drop bigger than that is a hole in the floor
+ * until something walkable spans it: that is what the descent ramps in rooms.js
+ * are for, and a room given a `base` below its neighbour's and no ramp is a room
+ * the player falls into rather than walks into.
+ *
+ * Clear height runs from the sill up to the LOWER of the two ceilings, less the
+ * 0.8 of lintel every doorway in this map carries. That subtraction is the
+ * constraint that decides how deep a descent can go, and it binds on the room's
+ * CEILING rather than on its size: a room whose ceiling sits below
+ * sill + DOOR_H + 0.8 cannot hold a full-height door at that sill however large
+ * its floor is. The Canopic Crypt is the room that constraint was measured
+ * against; see docs/DESCENT.md.
+ */
+function portalOpening(p, rooms) {
+  // ENTRY arrives with from === null: it is the courtyard's doorway and there is
+  // no near room to take a floor or a ceiling from.
+  const near = p.from ? rooms.find((r) => r.id === p.from) : null;
+  const far = rooms.find((r) => r.id === p.to) || null;
+
+  let sill = -Infinity;
+  let ceil = Infinity;
+  for (const r of [near, far]) {
+    if (!r) continue;
+    sill = Math.max(sill, baseOf(r));
+    ceil = Math.min(ceil, ceilingOf(r));
+  }
+  if (!Number.isFinite(sill)) sill = 0;
+
+  return { sill, clear: Math.min(DOOR_H, ceil - sill - 0.8) };
+}
+
+/**
  * Per-profile lighting. Point lights are the whole atmosphere budget here:
  * forward rendering pays for every light on every fragment, so the count per
  * room is capped and nothing in the interior casts shadows. Where a room has
@@ -285,18 +349,53 @@ export function buildInterior(scene, rooms = ROOMS) {
    * Both the player controller and the mummies already read `c.y0` (they take
    * `c.y0 === undefined ? floorY : c.y0`), so honouring it here is wiring a
    * contract that was already written on the other side.
+   *
+   * IT DEFAULTS TO THE ROOM'S FLOOR RATHER THAN TO ZERO, which is why the
+   * function is rebuilt once per room below instead of being hoisted out of the
+   * loop. Zero stopped being "the ground" the moment a room could be authored
+   * with a `base`: a pillar in a room six metres down would otherwise declare a
+   * base of 0 and stand as a cylinder hanging in the air over its own room,
+   * blocking nothing at floor level and blocking the ceiling instead. Every
+   * caller passes four arguments, so the default is the whole of the fix.
    */
-  const addCollider = (x, z, r, h, base = 0) => colliders.push({ x, z, r, h, y0: base });
+  const makeAddCollider = (floorY) =>
+    (x, z, r, h, base = floorY) => colliders.push({ x, z, r, h, y0: base });
 
   /** { x, z, w, d, y0, y1 } axis-aligned boxes, for the player's bounds check. */
   const walls = [];
 
   /**
-   * Walkable surfaces above y=0, for the controller to sample later. A ledge is
-   * the degenerate ramp y0 === y1; a real ramp rises along its longer
-   * horizontal axis, from y0 at the low-coordinate end to y1 at the high one.
+   * Walkable surfaces other than the room floors, for the controller to sample
+   * later. A ledge is the degenerate ramp y0 === y1; a real ramp rises along its
+   * longer horizontal axis, from y0 at the low-coordinate end to y1 at the high
+   * one.
+   *
+   * THE y VALUES IN HERE ARE ABSOLUTE, and the ones authored in rooms.js are
+   * relative to their room's `base`. buildLevels is where the two meet. Storing
+   * absolutes is what lets heightAt take one flat maximum over the whole list
+   * without asking which room each span belongs to; authoring relatives is what
+   * lets the gallery keep saying its ledge is "six up" after the room it is in
+   * has moved.
    */
   const ramps = [];
+
+  /**
+   * The floor plane of each room, flattened for heightAt.
+   *
+   * Derived once rather than looked up per call because heightAt is the hottest
+   * function in the interior: the flow field alone asks it twice per neighbour
+   * per relaxation, which was measured at roughly half a million calls on a
+   * single interior rebuild. A nine-element array of plain numbers scanned with
+   * an early exit is the cheapest honest answer; walking the room records and
+   * reading `bounds.w / 2` inside that loop is not.
+   */
+  const floors = rooms.map((r) => ({
+    x0: r.bounds.x - r.bounds.w / 2,
+    x1: r.bounds.x + r.bounds.w / 2,
+    z0: r.bounds.z - r.bounds.d / 2,
+    z1: r.bounds.z + r.bounds.d / 2,
+    y: baseOf(r),
+  }));
 
   const interacts = [];
   const jars = [];
@@ -368,9 +467,17 @@ export function buildInterior(scene, rooms = ROOMS) {
   });
 
   for (const room of rooms) {
+    const base = baseOf(room);
+
     const ctx = {
       room, M, rand, group, colliders, walls, ramps,
-      interacts, jars, lights, animated, addCollider,
+      interacts, jars, lights, animated,
+      // The floor this room's contents stand on. Carried on the ctx rather than
+      // read back off `room` at each use site, so that a builder which forgets
+      // it is a builder that produces geometry at the world origin - visibly
+      // wrong - rather than one that silently reads `room.base` as undefined.
+      base,
+      addCollider: makeAddCollider(base),
       chalk, power, POWER_LIFT,
       // Filled by the brazier prop, read by the lighting pass. Collected here
       // rather than written back onto the room record: rooms.js is data the
@@ -421,9 +528,41 @@ export function buildInterior(scene, rooms = ROOMS) {
      * gallery's upper ledge from being walkable from underneath. Passing no
      * footY asks "what is the highest surface here", which is what a spawn
      * placement wants.
+     *
+     * ---------------------------------------------------------------------
+     * THE SEED IS THE ROOM'S OWN FLOOR, AND IT IS NOT SUBJECT TO `reach`
+     * ---------------------------------------------------------------------
+     *
+     * This function used to open `let y = 0` and only ever rise, which made a
+     * floor below the world origin unrepresentable and made every room in the
+     * map share one plane. It now opens at the floor of whichever room contains
+     * the point, which is the whole of the descent in one line.
+     *
+     * OUTSIDE the reach gate, deliberately, and the courtyard's own sampler
+     * (`courtyard.js`, `groundY`) has the identical shape for the identical
+     * reason. `reach` answers "could I step UP onto that", and it is the right
+     * question for a ledge or a ramp overhead. The floor of the room you are
+     * standing in is not a thing you step up onto: it is the thing you fall to.
+     * Gating it would mean a player teleported in above the floor, a grenade
+     * mid-arc, or an actor part way down a ramp would be told there is no floor
+     * here at all, and the caller's fallback for that is 0 - which is exactly
+     * the bug this change exists to remove, arriving from the other side.
+     *
+     * A point in solid rock belongs to no room and seeds at 0. That is not a
+     * claim that there is a floor there; nothing walks in solid rock, and both
+     * the wall boxes and the flood's clearance test refuse those cells before
+     * this number is ever used. It is left at 0 because that is what the
+     * function returned there yesterday, and a survey that changes an answer
+     * nobody reads is a survey that has to be re-verified for nothing.
      */
     heightAt(x, z, footY) {
       let y = 0;
+      for (const f of floors) {
+        if (x < f.x0 || x > f.x1 || z < f.z0 || z > f.z1) continue;
+        y = f.y;
+        break;
+      }
+
       const reach = footY === undefined ? Infinity : footY + STEP_UP;
 
       for (const r of ramps) {
@@ -587,6 +726,21 @@ function collectPortals(rooms) {
       });
     }
   }
+
+  /**
+   * THE OPENING IS RESOLVED ONCE, HERE, FOR THE SAME REASON `onHard` IS.
+   *
+   * Three separate places used to work out how tall a doorway is - the shell
+   * builder from its own room's height, the barrier builder from the minimum of
+   * two rooms' heights, and nothing at all for where the threshold sits, because
+   * every threshold was at zero. Once a portal can join two floors at different
+   * elevations, "how tall" and "how high off the ground" are two answers that
+   * MUST agree between the wall that has the hole in it and the door that stands
+   * in the hole. Computing them twice is how a barrier ends up hovering a metre
+   * above its own doorway on one tier and nobody notices for a week.
+   */
+  for (const p of out) Object.assign(p, portalOpening(p, rooms));
+
   return out;
 }
 
@@ -602,9 +756,15 @@ function slab(w, h, d, mat, density) {
 }
 
 function buildShell(ctx, portals) {
-  const { room, M, group } = ctx;
+  const { room, M, group, base } = ctx;
   const { x, z, w, d } = room.bounds;
   const h = room.height;
+
+  // The two absolute planes this room lives between. `height` is measured from
+  // the floor, so a room that descends keeps its proportions and takes its
+  // ceiling with it.
+  const floorY = base;
+  const ceilY = base + h;
 
   const x0 = x - w / 2, x1 = x + w / 2;
   const z0 = z - d / 2, z1 = z + d / 2;
@@ -618,13 +778,13 @@ function buildShell(ctx, portals) {
   const segs = Math.max(2, Math.round(Math.max(w, d) / 6));
   const floor = new THREE.Mesh(plane(w, d, segs, floorDensity), floorMat);
   floor.rotation.x = -Math.PI / 2;
-  floor.position.set(x, 0, z);
+  floor.position.set(x, floorY, z);
   floor.receiveShadow = true;
   group.add(floor);
 
   const ceil = new THREE.Mesh(plane(w, d, 2, DENSITY.limestone), M.limestone);
   ceil.rotation.x = Math.PI / 2;
-  ceil.position.set(x, h, z);
+  ceil.position.set(x, ceilY, z);
   ceil.receiveShadow = true;
   group.add(ceil);
 
@@ -641,8 +801,6 @@ function buildShell(ctx, portals) {
     { axis: 'z', line: z1, inner: z1 - WALL_T / 2, lo: x0, hi: x1 },
   ];
 
-  const doorH = Math.min(DOOR_H, h - 0.8);
-
   for (const side of sides) {
     // A portal belongs to this side when it sits on the wall line and inside
     // the span. The tolerance is half the wall thickness, which is the most a
@@ -651,7 +809,9 @@ function buildShell(ctx, portals) {
       .filter((p) => Math.abs((side.axis === 'x' ? p.at.x : p.at.z) - side.line) < WALL_T * 0.55)
       .map((p) => {
         const c = side.axis === 'x' ? p.at.z : p.at.x;
-        return { lo: c - p.width / 2, hi: c + p.width / 2 };
+        // sill and clear come off the flattened portal record, so both rooms
+        // sharing this doorway cut the identical hole. See portalOpening.
+        return { lo: c - p.width / 2, hi: c + p.width / 2, sill: p.sill, clear: p.clear };
       })
       .filter((g) => g.hi > side.lo && g.lo < side.hi)
       .sort((a, b) => a.lo - b.lo);
@@ -659,14 +819,41 @@ function buildShell(ctx, portals) {
     let cursor = side.lo;
 
     for (const g of gaps) {
-      if (g.lo - cursor > 0.05) emitWall(ctx, side, cursor, g.lo, 0, h);
+      if (g.lo - cursor > 0.05) emitWall(ctx, side, cursor, g.lo, floorY, ceilY);
+
+      /**
+       * THE STONE UNDER THE OPENING, which a flat map never needed.
+       *
+       * When this room's floor is below the threshold - which is what being the
+       * lower half of a descent means - the hole cut for the doorway would
+       * otherwise run from the room's own floor all the way up past the sill,
+       * and the player standing in the lower room would be looking through a
+       * four-metre-wide, six-metre-tall slot at the void outside the rooms. The
+       * far room's wall does not cover it either, because that wall starts at
+       * ITS floor, which is the sill.
+       *
+       * IT STOPS RAMP_T SHORT OF THE SILL RATHER THAN AT IT, and that is not a
+       * cosmetic gap. The descent ramp runs through this doorway, and its top
+       * surface is at the sill only exactly on the wall line: a metre into the
+       * room it has already fallen by the gradient. Stone taken all the way to
+       * the sill would therefore stand proud of the walkway the player is
+       * standing on, and `resolveWalls` would refuse to let them out of the
+       * door they just paid for. One ramp thickness is the whole of the
+       * clearance, and it is the correct amount because the slab itself is what
+       * closes the gap from above.
+       */
+      const breast = g.sill - RAMP_T;
+      if (breast - floorY > 0.05) emitWall(ctx, side, g.lo, g.hi, floorY, breast);
+
       // The stone above the opening. Without it the doorway reads as a slot cut
       // to the ceiling, which is the single clearest tell of a generated map.
-      if (h - doorH > 0.05) emitWall(ctx, side, g.lo, g.hi, doorH, h);
+      const head = g.sill + g.clear;
+      if (ceilY - head > 0.05) emitWall(ctx, side, g.lo, g.hi, head, ceilY);
+
       cursor = Math.max(cursor, g.hi);
     }
 
-    if (side.hi - cursor > 0.05) emitWall(ctx, side, cursor, side.hi, 0, h);
+    if (side.hi - cursor > 0.05) emitWall(ctx, side, cursor, side.hi, floorY, ceilY);
   }
 }
 
@@ -704,10 +891,16 @@ function emitWall(ctx, side, lo, hi, y0, y1) {
  * purpose: the controller samples one list and does not care which is which.
  */
 function buildLevels(ctx) {
-  const { room, M, group, ramps } = ctx;
+  const { room, M, group, ramps, base } = ctx;
   if (!room.ramps) return;
 
-  for (const r of room.ramps) {
+  for (const src of room.ramps) {
+    // Authored relative to the room's own floor, built and sampled absolute.
+    // The gallery's ledge is "six up" whether the gallery is at 0 or at -6, and
+    // a descent ramp is authored as the drop it is rather than as the pair of
+    // world coordinates it happens to land on this week.
+    const r = { ...src, y0: base + src.y0, y1: base + src.y1 };
+
     const alongZ = r.d >= r.w;
     const run = alongZ ? r.d : r.w;
     const rise = r.y1 - r.y0;
@@ -758,7 +951,7 @@ function buildLevels(ctx) {
 // ---------------------------------------------------------------------------
 
 function buildProps(ctx) {
-  const { room, group, colliders } = ctx;
+  const { room, group, colliders, base } = ctx;
 
   for (const slot of room.propSlots || []) {
     const before = colliders.length;
@@ -766,7 +959,12 @@ function buildProps(ctx) {
     const g = PROPS[slot.type] && PROPS[slot.type](ctx, slot);
     if (!g) continue;
 
-    g.position.set(slot.x, slot.y || 0, slot.z);
+    // A slot's y is measured from its room's floor, not from the world origin,
+    // so the room's own elevation is added here and NOT folded into slot.y. The
+    // test below turns on `slot.y` being truthy, and folding a room base into it
+    // would make every ground-level prop in a descended room look elevated and
+    // silently lose its collider.
+    g.position.set(slot.x, base + (slot.y || 0), slot.z);
     g.rotation.y = slot.rot || 0;
     g.traverse((o) => { if (o.isMesh) o.userData.prop = slot.type; });
     group.add(g);
@@ -957,7 +1155,10 @@ const PROPS = {
 
     // Recorded so the room's lights can be hung on the flame rather than in
     // mid-air. See buildLights.
-    anchors.push({ x: slot.x, y: (slot.y || 0) + 2.35, z: slot.z, phase });
+    // Absolute, because buildLights hangs a THREE.PointLight on it and lights
+    // are placed in world space. slot.y is room-relative like every other
+    // authored y, so the room's floor has to be added back.
+    anchors.push({ x: slot.x, y: ctx.base + (slot.y || 0) + 2.35, z: slot.z, phase });
 
     addCollider(slot.x, slot.z, 0.8, 2.2);
     return g;
@@ -1090,7 +1291,7 @@ const PROPS = {
 // ---------------------------------------------------------------------------
 
 function buildInteracts(ctx) {
-  const { room, group, interacts, colliders } = ctx;
+  const { room, group, interacts, colliders, base } = ctx;
 
   for (const slot of room.interactSlots || []) {
     ctx.lastVisuals = null;
@@ -1104,11 +1305,14 @@ function buildInteracts(ctx) {
     // entries are decoration and drop their colliders, an interact HAS to keep
     // its collider - it is a solid object the player walks up to - so it is
     // re-based onto the surface it stands on instead. See addCollider.
-    g.position.y = slot.y || 0;
+    g.position.y = base + (slot.y || 0);
     g.position.z = slot.z;
     g.rotation.y = slot.rot || 0;
 
-    if (slot.y) for (let i = before; i < colliders.length; i++) colliders[i].y0 = slot.y;
+    // Same room-relative rule as the props, and the same reason for not folding
+    // the base into slot.y: the truthiness test is what selects the elevated
+    // fixtures, and every fixture in a descended room would pass it.
+    if (slot.y) for (let i = before; i < colliders.length; i++) colliders[i].y0 = base + slot.y;
 
     const record = { ...slot, room: room.id, group: g, visuals: ctx.lastVisuals };
     // Tagged on every mesh, not just the group, so a raycast hit resolves to
@@ -2222,15 +2426,15 @@ function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) 
     const axis = portalAxis(p, rooms);
     if (!axis) continue;
 
-    const near = rooms.find((r) => r.id === p.from);
-    const far = rooms.find((r) => r.id === p.to);
-    const h = Math.min(
-      DOOR_H,
-      Math.min(near ? near.height : DOOR_H + 1, far ? far.height : DOOR_H + 1) - 0.8
-    );
+    // The hole this barrier stands in was cut by portalOpening and the numbers
+    // travel on the portal record, so the door and the doorway cannot disagree.
+    // A barrier sized from its own reading of the two room heights was correct
+    // only while every threshold was at zero.
+    const sill = p.sill;
+    const h = p.clear;
 
     const g = new THREE.Group();
-    g.position.set(p.at.x, 0, p.at.z);
+    g.position.set(p.at.x, sill, p.at.z);
     group.add(g);
 
     const spec = p.kind === 'debris'
@@ -2252,7 +2456,12 @@ function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) 
         z: axis === 'x' ? p.at.z + t : p.at.z,
         r,
         h,
-        y0: 0,
+        // The doorway's threshold, not the world origin. A barrier in a doorway
+        // six metres above the floor of the room it opens into would otherwise
+        // declare a base of 0 and block the room BELOW itself instead of the
+        // opening - the same failure the Altar of Ptah produced on the gallery
+        // bridge, in a doorway the player has paid a thousand gold for.
+        y0: sill,
       };
       colliders.push(c);
       mine.push(c);
@@ -2284,7 +2493,10 @@ function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) 
       axis,
       x: p.at.x,
       z: p.at.z,
-      y: h * 0.5,
+      // Mid-height of the opening, which is where a prompt or a marker wants to
+      // sit. Measured from the sill so it tracks a doorway that is not on the
+      // floor of the room it is being looked at from.
+      y: sill + h * 0.5,
       group: g,
       meshes: spec.meshes,
       opened: false,
@@ -2537,7 +2749,9 @@ function gateBarrier(g, M, axis, width, h, kind) {
 // ---------------------------------------------------------------------------
 
 function buildLights(ctx) {
-  const { room, group, lights, animated, anchors, power, POWER_LIFT } = ctx;
+  // roomBase rather than base: the flicker below already owns the name `base`
+  // for the light's unlit intensity, and both live in the same block.
+  const { room, group, lights, animated, anchors, power, POWER_LIFT, base: roomBase } = ctx;
   const P = LIGHTING[room.lightingProfile] || LIGHTING.chamber;
 
   const { x, z, w, d } = room.bounds;
@@ -2562,10 +2776,16 @@ function buildLights(ctx) {
       pos = { x: a.x, y: a.y, z: a.z };
       phase = a.phase;
     } else {
+      // The fallback height is a FRACTION OF THE ROOM, so it has to be measured
+      // from the room's own floor. Left at `room.height * P.y` a descended room
+      // hangs its only light at the elevation the room used to be at, which for
+      // the Act 3 rooms is above their new ceiling: the room goes black and
+      // nothing in the build reports it.
       const t = (i + 0.5) / count;
+      const ly = roomBase + room.height * P.y;
       pos = w >= d
-        ? { x: x - w / 2 + w * (0.2 + 0.6 * t), y: room.height * P.y, z }
-        : { x, y: room.height * P.y, z: z - d / 2 + d * (0.2 + 0.6 * t) };
+        ? { x: x - w / 2 + w * (0.2 + 0.6 * t), y: ly, z }
+        : { x, y: ly, z: z - d / 2 + d * (0.2 + 0.6 * t) };
       phase = (pos.x * 3.1 + pos.z * 1.7) % 6.283;
     }
 
