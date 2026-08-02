@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "python3 -m http.server 4177",
-    "test": "node test/shot.mjs && node test/gun.mjs && node test/interior.mjs && node test/economy.mjs && node test/enemies.mjs && node test/mysterybox.mjs && node test/grenades.mjs && node test/powerups.mjs && node test/melee.mjs && node test/hud.mjs && node test/settings.mjs && node test/probe.mjs && node test/act1probe.mjs && node test/rebind.mjs && node test/crouchslide.mjs && node test/headshot.mjs && node test/gamepad.mjs && node test/governor.mjs && node test/b3ar.mjs && node test/deathrespawn.mjs && node test/nav.mjs && node test/descent.mjs && node test/grime.mjs --gate && node test/doorlook.mjs && node test/curtain-rules.mjs",
+    "test": "node test/shot.mjs && node test/gun.mjs && node test/interior.mjs && node test/economy.mjs && node test/enemies.mjs && node test/mysterybox.mjs && node test/grenades.mjs && node test/powerups.mjs && node test/melee.mjs && node test/hud.mjs && node test/settings.mjs && node test/bindings.mjs && node test/probe.mjs && node test/act1probe.mjs && node test/rebind.mjs && node test/crouchslide.mjs && node test/headshot.mjs && node test/gamepad.mjs && node test/governor.mjs && node test/b3ar.mjs && node test/deathrespawn.mjs && node test/nav.mjs && node test/descent.mjs && node test/grime.mjs --gate && node test/doorlook.mjs && node test/curtain-rules.mjs",
     "test:shot": "node test/shot.mjs",
     "test:gun": "node test/gun.mjs",
     "test:interior": "node test/interior.mjs",
@@ -19,6 +19,7 @@
     "test:melee": "node test/melee.mjs",
     "test:hud": "node test/hud.mjs",
     "test:settings": "node test/settings.mjs",
+    "test:bindings": "node test/bindings.mjs",
     "test:probe": "node test/probe.mjs",
     "test:act1": "node test/act1probe.mjs",
     "shots:act1": "node test/act1shots.mjs",

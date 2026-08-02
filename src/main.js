@@ -14,6 +14,7 @@ import { createGovernor } from './core/governor.js';
 import { createPost } from './core/post.js';
 import { createRetro } from './core/retro.js';
 import { createInput } from './core/input.js';
+import { keymap } from './core/keymap.js';
 import { createSky } from './world/sky.js';
 import { buildCourtyard } from './world/courtyard.js';
 import { buildMaterials, applyFidelity, upgradeMaterials } from './world/materials.js';
@@ -764,7 +765,11 @@ function boot() {
     // which is a full render of the courtyard. It IS gated on the menu, for the
     // same reason every other binding in this file is - a keystroke meant for a
     // text field or a menu button is not a keystroke meant for the renderer.
-    if (e.code !== 'KeyP' || pause.paused) return;
+    // The ACTION rather than the letter. P is still the shipped default and the
+    // long note above is still why, but the player can move it, and a handler
+    // that kept comparing against 'KeyP' would leave one binding in the game
+    // that the controls page lies about.
+    if (!keymap.matches('renderMode', e.code) || pause.paused) return;
     retro.cycle();
   });
 
@@ -791,6 +796,125 @@ function boot() {
   // one writer; this is the panel finding out about a write it did not make.
   btnHigh.addEventListener('click', () => pause.refresh());
   btnLow.addEventListener('click', () => pause.refresh());
+
+  // -------------------------------------------------------------------------
+  // EVERY PLACE THE GAME PRINTS A KEY
+  // -------------------------------------------------------------------------
+  //
+  // There are three, and until the bindings became a table all three were
+  // hand-written: the title card's controls strip, the two key caps on the HUD,
+  // and the slot digit on the ammunition plate. The strip is the one with a
+  // documented history of being wrong - it claimed weapons 1 to 7 for as long as
+  // there have been eight, and it had no entry for the khopesh at all until
+  // somebody noticed - and the reason is not carelessness. A sentence typed into
+  // index.html has nothing to disagree with, so nothing can catch it.
+  //
+  // All three are painted from core/keymap.js now, and repainted on every change
+  // to it. A rebind made from the title screen's Settings button moves the strip
+  // underneath it while the panel is still open.
+
+  /**
+   * The caps for the eight weapon slots, cached.
+   *
+   * The readout block below runs sixty times a second and asks for one of these
+   * every frame. Rebuilding a label array in the frame loop to answer a question
+   * whose answer changes twice a year is the kind of allocation this project's
+   * governor exists to avoid.
+   */
+  let slotCaps = [];
+  function slotCap(n) {
+    if (!n) return '';
+    return slotCaps[n - 1] || '';
+  }
+
+  /**
+   * The title card's controls strip, AS A TABLE.
+   *
+   * Every entry names actions and the sentence a player reads; the keys come out
+   * of the binding table. `joined` concatenates the caps with nothing between
+   * them, which is what makes four movement bindings read as WASD rather than as
+   * four separate caps.
+   */
+  const STRIP = [
+    [
+      { actions: ['forward', 'left', 'back', 'right'], joined: true, what: 'move' },
+      { actions: ['sprint'], what: 'sprint' },
+      { actions: ['jump'], what: 'jump' },
+    ],
+    [
+      { actions: ['look'], what: 'look' },
+      { actions: ['fire'], what: 'fire' },
+      { actions: ['aim'], what: 'aim' },
+    ],
+    [
+      { actions: ['reload'], what: 'reload' },
+      { actions: ['cycleWeapon'], what: 'next weapon' },
+      { slots: true, what: 'weapons' },
+      { actions: ['interact'], what: 'buy' },
+    ],
+    [
+      { actions: ['melee'], what: 'khopesh' },
+      { actions: ['grenade'], what: 'hold to cook a grenade, release to throw' },
+      { actions: ['pause'], what: 'pause and settings' },
+    ],
+  ];
+
+  const stripEl = document.querySelector('[data-keys]');
+
+  /**
+   * The eight slots on one line, WITHOUT claiming a range that is not there.
+   *
+   * "1-8" is the right thing to print for the shipped scheme and is how this
+   * line has always read. It stops being true the moment a player moves one slot
+   * off the number row, so the range is printed only when the caps really are a
+   * run of single characters from the first to the last; otherwise every cap is
+   * printed. That is uglier and it is the whole point - the last version of this
+   * line was a range that had quietly stopped being true.
+   */
+  function slotsLabel() {
+    const caps = slotCaps.slice();
+    if (!caps.length) return '';
+    const run = caps.every((c, i) => c.length === 1
+      && (i === 0 || c.charCodeAt(0) === caps[i - 1].charCodeAt(0) + 1));
+    return run && caps.length > 2 ? `${caps[0]}-${caps[caps.length - 1]}` : caps.join(' ');
+  }
+
+  function paintKeyStrip() {
+    slotCaps = [];
+    for (let i = 1; i <= SLOTS.length; i++) slotCaps.push(keymap.labels(`weapon${i}`)[0] || '');
+
+    // The HUD's two authored caps. `data-key-cap` names the action; the cap says
+    // whatever that action currently answers to.
+    for (const node of document.querySelectorAll('[data-key-cap]')) {
+      node.textContent = keymap.labels(node.dataset.keyCap)[0] || '';
+    }
+
+    if (!stripEl) return;
+    stripEl.textContent = '';
+
+    for (const line of STRIP) {
+      const row = document.createElement('div');
+      let first = true;
+      for (const entry of line) {
+        if (!first) row.append(' · ');
+        first = false;
+        const b = document.createElement('b');
+        if (entry.slots) b.textContent = slotsLabel();
+        else {
+          const caps = [];
+          for (const id of entry.actions) for (const cap of keymap.labels(id)) {
+            if (!caps.includes(cap)) caps.push(cap);
+          }
+          b.textContent = caps.join(entry.joined ? '' : ' ');
+        }
+        row.append(b, ` ${entry.what}`);
+      }
+      stripEl.appendChild(row);
+    }
+  }
+
+  paintKeyStrip();
+  keymap.onChange(paintKeyStrip);
 
   // -------------------------------------------------------------------------
   // dying
@@ -900,53 +1024,51 @@ function boot() {
   // them: without this a player lying on the sand under a death card could
   // still reload, inspect, swap weapons, and - through F - buy a door and walk
   // the run's gold while the run was supposed to be stopped.
-  window.addEventListener('keydown', (e) => {
-    if (!started || pause.paused || death.halted) return;
-
-    if (e.code === 'KeyR') { weapons.reload(); return; }
-    if (e.code === 'KeyV') { viewmodel.inspect(); return; }
+  /**
+   * WHAT EACH ACTION DOES, AS A TABLE THE HANDLER READS.
+   *
+   * This used to be a ladder of `e.code === 'KeyR'` comparisons and a
+   * `Digit([1-8])` regular expression, which was five separate statements of the
+   * control scheme in the one file that could not be audited against the panel
+   * that documents it. Now the LETTER lives in core/keymap.js and this says only
+   * what the verb is, so a rebind moves the key here, on the controls page, on
+   * the title card and on the pad's synthetic events at the same instant.
+   *
+   * Each of these still deserves its own note, and they are kept beside the
+   * function that does the thing rather than beside the key that used to.
+   */
+  const ACTION_DOES = {
+    reload: () => weapons.reload(),
+    inspect: () => viewmodel.inspect(),
 
     /**
-     * Q IS THE BLADE, and the binding is chosen for one property: you can reach
-     * it without letting go of W.
+     * THE BLADE, and its default binding is chosen for one property: you can
+     * reach Q without letting go of W.
      *
      * A melee in this genre is a panic button pressed while running backwards
      * from four bodies with an empty magazine, so the only criterion that
      * matters is whether the left hand can hit it without leaving the movement
      * keys. V is the reference game's bind and is already the inspect flourish
      * here; F is the interact and would buy a door mid-swing; anything on the
-     * right of the board means letting go of the mouse.
-     *
-     * Not routed through core/input.js because none of these bindings are - see
-     * the note above this listener. `pause.paused` is checked there for all of
-     * them, which is what stops a paused player knifing through the menu.
+     * right of the board means letting go of the mouse. A player who disagrees
+     * can now move it, which is the point of the editor.
      */
-    if (e.code === 'KeyQ') { melee.swing(); return; }
+    melee: () => melee.swing(),
 
-    // F goes to whatever is under the crosshair, and the two systems that can
-    // claim it are arbitrated the SAME WAY the prompt is: a fixture wins over a
-    // door. Routing on `candidate` rather than on the return value of
+    // Interact goes to whatever is under the crosshair, and the two systems that
+    // can claim it are arbitrated the SAME WAY the prompt is: a fixture wins
+    // over a door. Routing on `candidate` rather than on the return value of
     // interacts.interact() matters - a shrine that refuses returns false, and
     // falling through on false would buy whatever door happened to be behind
     // it. The player would have been refused at one thing and charged for
     // another, in the same keypress.
-    if (e.code === 'KeyF') {
+    interact: () => {
       if (interacts.candidate) interacts.interact();
       else doors.interact();
-      return;
-    }
-
-    // Digit1..Digit8 select a weapon directly. Eight because the B3AR is the
-    // eighth entry in SLOTS - APPENDED rather than filed next to the MK9, so
-    // that the seven weapons the map has been teaching since the first room
-    // keep the keys they were learned on. The HUD prints the digit off that
-    // same array and test/hud.mjs asserts five of them by number, so inserting
-    // would have silently moved four guns under the player's fingers.
-    const n = /^Digit([1-8])$/.exec(e.code);
-    if (n) weapons.equip(SLOTS[Number(n[1]) - 1]);
+    },
 
     /**
-     * E CYCLES FORWARD, because the digits are unreachable in a fight.
+     * CYCLE FORWARD, because the digits are unreachable in a fight.
      *
      * The owner's report was that he cannot switch weapons easily. He is right,
      * and the reason is anatomy rather than logic: the eight digit keys are the
@@ -955,15 +1077,36 @@ function boot() {
      * has always cycled, but a right hand on the mouse is aiming with it.
      *
      * So this is the same `cycle()` the wheel calls, on a key the left hand can
-     * reach without moving: E sits directly above D. Forward only. A reverse
-     * bind would need a second key and this exists to REMOVE hand movement, and
-     * with at most eight weapons forward-only is never more than seven presses
-     * from anything.
+     * reach without moving: E sits directly above D by default. Forward only. A
+     * reverse bind would need a second key and this exists to REMOVE hand
+     * movement, and with at most eight weapons forward-only is never more than
+     * seven presses from anything.
      *
      * `cycle` already skips the stowed weapon and no-ops on a single gun, so
      * there is nothing to guard here that weapons.js does not guard already.
      */
-    if (e.code === 'KeyE') weapons.cycle(1);
+    cycleWeapon: () => weapons.cycle(1),
+  };
+
+  /**
+   * The eight slots, wired by INDEX rather than by digit.
+   *
+   * Eight because the B3AR is the eighth entry in SLOTS - APPENDED rather than
+   * filed next to the MK9, so that the seven weapons the map has been teaching
+   * since the first room keep the keys they were learned on. The HUD prints the
+   * digit off that same array and test/hud.mjs asserts five of them by number,
+   * so inserting would have silently moved four guns under the player's fingers.
+   * The digits themselves are now defaults in core/keymap.js and the player may
+   * move any of them; what cannot move is which gun is in which slot.
+   */
+  for (let i = 0; i < SLOTS.length; i++) {
+    ACTION_DOES[`weapon${i + 1}`] = () => weapons.equip(SLOTS[i]);
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (!started || pause.paused || death.halted) return;
+    const does = ACTION_DOES[keymap.actionFor(e.code)];
+    if (does) does();
   });
 
   /**
@@ -1040,7 +1183,12 @@ function boot() {
    * alongside the pointerlockchange the same key produced is a no-event.
    */
   window.addEventListener('keydown', (e) => {
-    if (e.code !== 'Escape' || !started) return;
+    // `pause` is a FIXED action in core/keymap.js and Escape is what it is bound
+    // to, for the reason at the top of ui/pause.js: the browser exits pointer
+    // lock on Esc before this handler is consulted, so a pause key bound
+    // anywhere else would be a scheme the browser overrules. Read through the
+    // table anyway, so that this file states no binding of its own.
+    if (!keymap.matches('pause', e.code) || !started) return;
     if (pause.paused) pause.resume();
     else pause.open();
   });
@@ -1470,11 +1618,13 @@ function boot() {
       weapon: weapons.STATS[weapons.state.current]
         ? weapons.displayName(weapons.state.current).toUpperCase()
         : '',
-      // The digit that recalls this weapon, 1-based, straight off the same
-      // SLOTS table main.js binds Digit1..Digit7 against. One source per fact:
-      // the day the order changed, the HUD would otherwise be the thing that
-      // was wrong.
-      slot: SLOTS.indexOf(weapons.state.current) + 1 || '',
+      // The KEY that recalls this weapon, off the same SLOTS table the digits
+      // are bound against and through core/keymap.js, which is what the player
+      // may have moved them to. One source per fact: the day the order changed,
+      // or the day a player put slot three on Z, the HUD would otherwise be the
+      // thing that was wrong. Read from a cache rather than recomputed here,
+      // because this line runs every frame and a rebind happens twice a year.
+      slot: slotCap(SLOTS.indexOf(weapons.state.current) + 1),
       empty: weapons.magazine === 0,
       reloading: weapons.isReloading,
       canReload: !weapons.isReloading
@@ -1521,6 +1671,12 @@ function boot() {
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     pause,
+    // The binding table, exposed for the same reason the governor is: a claim
+    // about what the keyboard is doing that cannot be read from outside the page
+    // is not a claim worth making. test/bindings.mjs reads it to compare what
+    // the table holds against what the panel drew, which are two different facts
+    // and the gap between them is this project's defining bug.
+    keymap,
     difficulty, startScreen,
     setFidelity, setPixelScale, start,
     // The frame governor, and the composer it drives. Exposed so that

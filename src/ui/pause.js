@@ -56,13 +56,21 @@
  * PERSISTENCE
  * -----------
  *
- * There is none, ON PURPOSE. STATE.md and the README both carry the project
- * constraint "No browser storage. All state in memory.", inherited from the
- * original design spec, and a settings panel is exactly the feature that would
- * quietly break it. Every value below lives for the session and resets on
- * reload. Making them persist is one localStorage read at construction and one
- * write in `apply`, and it is the owner's call and not this file's.
+ * There is none for the SETTINGS, still on purpose. STATE.md and the README both
+ * carry the project constraint "No browser storage. All state in memory.",
+ * inherited from the original design spec, and a settings panel is exactly the
+ * feature that would quietly break it. Every slider below lives for the session
+ * and resets on reload.
+ *
+ * THE KEY BINDINGS ARE THE ONE EXCEPTION, and it is the owner's call rather than
+ * this file's, made when he asked for a control centre. A rebind that does not
+ * survive a reload is a rebind the player performs again every session, which is
+ * worse than not having shipped the editor at all. So core/keymap.js persists
+ * ONE key, with a schema version and validation on the way in, and nothing else
+ * here writes to storage.
  */
+
+import { keymap } from '../core/keymap.js';
 
 /**
  * Every binding in the game, and this table is the point of the CONTROLS tab.
@@ -74,55 +82,91 @@
  * the two verbs that have a readout to sit beside; this fixes it for all of
  * them.
  *
- * Kept as data rather than as markup so the list cannot drift from the panel it
- * is drawn into, and grouped the way a player thinks about them rather than the
- * way the source is laid out.
+ * WHAT CHANGED WHEN THE LIST BECAME EDITABLE: the key caps are no longer written
+ * here. A row names ACTIONS and core/keymap.js says which keys those actions
+ * currently answer to, so a rebind moves the caps on this page in the same frame
+ * it moves the handler, and the list can no longer be right on the day it was
+ * written and wrong a month later. That was the whole failure this tab exists to
+ * close, and a hand-written cap would have reopened it one layer down.
+ *
+ * The sentence stays here, because it is a sentence about the GAME - "the fuse
+ * starts when the key goes down" is not a fact about a key code - and because it
+ * is written for the player rather than for the handler.
  */
-export const BINDINGS = [
+const KEY_ROWS = [
   {
     group: 'Movement',
     rows: [
-      { keys: ['W', 'A', 'S', 'D'], what: 'Move' },
-      { keys: ['Shift'], what: 'Sprint' },
-      { keys: ['Space'], what: 'Jump' },
+      { actions: ['forward', 'left', 'back', 'right'], what: 'Move' },
+      { actions: ['sprint'], what: 'Sprint' },
+      { actions: ['jump'], what: 'Jump' },
       // A TAP AND NOT A HOLD, and the row says so, because a player who holds C
       // and watches the camera stay down has learned the wrong thing about the
       // binding and will blame the second tap when it stands them up.
-      { keys: ['C', 'Ctrl'], what: 'Crouch - tap to go down, tap again to stand' },
+      { actions: ['crouch'], what: 'Crouch - tap to go down, tap again to stand' },
       // The slide is stated as what it is: a crouch taken at speed. It has no
       // key of its own and the row is written so nobody goes looking for one.
-      { keys: ['C', 'Ctrl'], what: 'Slide - crouch while you are already sprinting' },
-      { keys: ['Mouse'], what: 'Look' },
+      //
+      // ECHO: it restates the row above rather than owning a binding, so it is
+      // drawn with the crouch keys and is NOT an edit target. Two rows arming
+      // the same capture is a menu that looks like it has two bindings for one
+      // verb, which is the confusion the row's own sentence exists to prevent.
+      { actions: ['crouch'], echo: true, what: 'Slide - crouch while you are already sprinting' },
+      { actions: ['look'], what: 'Look' },
     ],
   },
   {
     group: 'Fighting',
     rows: [
-      { keys: ['LMB'], what: 'Fire' },
-      { keys: ['RMB'], what: 'Aim down sight' },
-      { keys: ['R'], what: 'Reload' },
+      { actions: ['fire'], what: 'Fire' },
+      { actions: ['aim'], what: 'Aim down sight' },
+      { actions: ['reload'], what: 'Reload' },
+      // THE BLADE, which was missing from this list entirely until the editor
+      // was built. It was taught by a one-time notice the first time the player
+      // ran dry and by the title card, and a player who missed both had a weapon
+      // with no entry in the one place a control scheme is looked up. Nothing
+      // caught it, because a list cannot be audited against a scheme that was
+      // only ever written down here.
+      { actions: ['melee'], what: 'Khopesh - the blade, for an empty magazine' },
       // The one the owner could not find. Stated in full, because "throw
       // grenade" would not have told him the fuse starts when the key goes DOWN.
-      { keys: ['G'], what: 'Hold to cook a grenade, release to throw' },
+      { actions: ['grenade'], what: 'Hold to cook a grenade, release to throw' },
     ],
   },
   {
     group: 'Weapons',
     rows: [
-      { keys: ['1', '-', '7'], what: 'Select a weapon by slot' },
-      { keys: ['Wheel'], what: 'Cycle weapons' },
-      { keys: ['V'], what: 'Inspect the weapon in hand' },
+      /**
+       * EIGHT ACTIONS ON ONE ROW, and that is a layout decision with a reason.
+       *
+       * Every slot has to be individually rebindable or the editor has a hole in
+       * it, and eight rows of "Weapon slot 5" would be eight rows the tab cannot
+       * afford - see the note beside the pad settings on the Game tab for what
+       * six extra rows did to this page the last time. So the caps ARE the
+       * controls: each one is its own edit target, the row is one line high, and
+       * the range a player reads is the range the game runs, which is how the
+       * old hand-written "1 to 7" survived the arrival of the eighth gun.
+       */
+      {
+        actions: ['weapon1', 'weapon2', 'weapon3', 'weapon4',
+          'weapon5', 'weapon6', 'weapon7', 'weapon8'],
+        what: 'Select a weapon by slot',
+      },
+      // The wheel is a second way in and has no binding of its own, so it is
+      // drawn as a plain cap beside the key that can be moved.
+      { actions: ['cycleWeapon'], extra: ['Wheel'], what: 'Next weapon, and the wheel does the same' },
+      { actions: ['inspect'], what: 'Inspect the weapon in hand' },
     ],
   },
   {
     group: 'The world',
     rows: [
-      { keys: ['F'], what: 'Buy, open, and use - whatever is under the crosshair' },
-      { keys: ['Esc'], what: 'Pause, and this panel' },
+      { actions: ['interact'], what: 'Buy, open, and use - whatever is under the crosshair' },
+      { actions: ['pause'], what: 'Pause, and this panel' },
       // The same control as the Video tab's Render mode row. Both are listed
       // on purpose: a player looking for a key looks here, and a player looking
       // for a setting looks there.
-      { keys: ['P'], what: 'Cycle the render mode - Modern, PS1, N64' },
+      { actions: ['renderMode'], what: 'Cycle the render mode - Modern, PS1, N64' },
     ],
   },
 ];
@@ -137,62 +181,74 @@ export const BINDINGS = [
  * game. Without this list the only way to find the khopesh on a pad is to press
  * everything during a wave, which is the same failure the grenade key had.
  *
- * Kept apart from BINDINGS rather than folded in, because the two answer
- * different questions and a player reads one or the other. Mixing them would
- * put "Square" and "Shift" in the same column and make both lists harder to
- * scan than either is alone.
+ * Kept apart from the keyboard rows rather than folded in, because the two
+ * answer different questions and a player reads one or the other. Mixing them
+ * would put "Square" and "Shift" in the same column and make both lists harder
+ * to scan than either is alone.
+ *
+ * IT IS ALSO EDITABLE NOW, and it lost its hand-written key caps in the same
+ * pass the keyboard list did, for the same reason: this page carried "L3
+ * sprints" for a build after sprint moved to R3, and a controls page that
+ * disagrees with the bindings is worse than no controls page, because the player
+ * trusts it and then blames their own hands. The buttons come from
+ * core/keymap.js and cannot be a build behind.
  *
  * The face buttons are named for the DualShock and not for the Xbox pad. The
  * standard gamepad mapping's index 0 is the bottom face button on every
  * controller ever made, so the code is portable; the LABEL has to match the
  * plastic in the owner's hands or it is telling him something untrue.
  */
-export const PAD_BINDINGS = [
+const PAD_ROWS = [
   {
     group: 'Controller - moving and looking',
     rows: [
-      { keys: ['Left stick'], what: 'Move' },
-      { keys: ['Right stick'], what: 'Look' },
-      { keys: ['R3'], what: 'Sprint - click once, it holds until you stop' },
-      { keys: ['L3'], what: 'Crouch - tap to go down, tap again to stand' },
+      { actions: ['move'], what: 'Move' },
+      { actions: ['look'], what: 'Look' },
+      { actions: ['sprint'], what: 'Sprint - click once, it holds until you stop' },
+      { actions: ['crouch'], what: 'Crouch - tap to go down, tap again to stand' },
       // Stated as one binding doing two things rather than as a second binding,
       // because that is what it is, and because a player hunting the pad for a
       // slide button will find nothing and conclude the game has no slide.
-      { keys: ['L3'], what: 'Slide - crouch while you are already sprinting' },
-      { keys: ['Cross'], what: 'Jump' },
+      { actions: ['crouch'], echo: true, what: 'Slide - crouch while you are already sprinting' },
+      { actions: ['jump'], what: 'Jump' },
     ],
   },
   {
     group: 'Controller - fighting',
     rows: [
-      { keys: ['R2'], what: 'Fire - the trigger is read as an analog pull' },
-      { keys: ['L2'], what: 'Aim down sight' },
+      { actions: ['fire'], what: 'Fire - the trigger is read as an analog pull' },
+      { actions: ['aim'], what: 'Aim down sight' },
       // SQUARE IS CONTEXTUAL and the row has to say both halves in the order
       // they resolve, because a player who reads only "Reload" will press it in
       // front of a wall buy and be surprised, and a player who reads only
       // "Interact" will hunt the pad for a reload that is under their thumb.
-      { keys: ['Square'], what: 'Interact when a prompt is up - Reload when it is not' },
-      { keys: ['R1'], what: 'Hold to cook a grenade, release to throw' },
-      { keys: ['Circle'], what: 'Khopesh' },
-      { keys: ['L1'], what: 'Khopesh, second binding' },
-      // The shoulder rows above are the DEFAULT. Swap bumpers and triggers on
-      // the Game tab and they exchange in pairs: fire to R1, aim to L1, grenade
-      // to R2, the shoulder khopesh to L2. Circle is not part of the exchange
-      // and never moves. Written here rather than redrawing the list, because a
-      // controls page that silently rearranges itself is harder to read against
-      // a pad in your hands than one that states the rule.
-      { keys: ['Swap'], what: 'Bumpers and triggers exchange - see the Game tab' },
+      { actions: ['interact'], what: 'Interact when a prompt is up - Reload when it is not' },
+      { actions: ['grenade'], what: 'Hold to cook a grenade, release to throw' },
+      // TWO CAPS, ONE ROW. Circle and a shoulder are one action with two
+      // buttons - see PAD_ACTIONS - so this is one row where it used to be two,
+      // and the second row saying "Khopesh, second binding" is gone with them.
+      { actions: ['melee'], what: 'Khopesh' },
+      // The shoulder rows above are the DEFAULT and the Game tab's Swap setting
+      // exchanges them in pairs. THE LIST NOW REDRAWS ITSELF when it does, which
+      // is the opposite of what this row used to say: the swap became a write to
+      // the same table these caps are drawn from, so stating the rule in prose
+      // would be stating it twice and the prose would be the half that goes
+      // stale. Circle is not part of the exchange and never moves.
+      { actions: [], extra: ['Swap'], echo: true, what: 'Bumpers and triggers exchange - see the Game tab' },
     ],
   },
   {
     group: 'Controller - the world and the menu',
     rows: [
-      { keys: ['Square'], what: 'Buy, open, and use - whatever is under the crosshair' },
-      { keys: ['Triangle'], what: 'Next weapon' },
-      { keys: ['D-pad'], what: 'Left and right cycle weapons, up inspects the one in hand' },
-      { keys: ['Options'], what: 'Pause, and this panel' },
-      { keys: ['Cross'], what: 'In a menu: choose. Circle goes back and resumes' },
-      { keys: ['L1', 'R1'], what: 'In a menu: previous and next tab' },
+      { actions: ['interact'], echo: true, what: 'Buy, open, and use - whatever is under the crosshair' },
+      { actions: ['nextWeapon'], what: 'Next weapon' },
+      // THE D-PAD IS THE MENU'S, AND IS NOT MOVABLE. See PAD_ACTIONS: a player
+      // who bound a weapon onto D-pad down would be rebinding the cursor that
+      // gets them out of this panel.
+      { actions: ['inspect'], what: 'D-pad left and right cycle weapons, up inspects' },
+      { actions: ['pause'], what: 'Pause, and this panel' },
+      { actions: [], extra: ['Cross'], echo: true, what: 'In a menu: choose. Circle goes back and resumes' },
+      { actions: [], extra: ['L1', 'R1'], echo: true, what: 'In a menu: previous and next tab' },
     ],
   },
 ];
@@ -398,9 +454,24 @@ function buildSpec({ rig, audio, mute, fidelity, retro, pad }) {
           // one this setting moves. Circle is the khopesh in either layout and
           // is left out rather than repeated on both lines, because a fact that
           // is true on both sides of a toggle is not what the toggle is about.
-          note: () => (pad.swapBumpers
-            ? 'Fire R1, aim L1, grenade R2, khopesh L2'
-            : 'Fire R2, aim L2, grenade R1, khopesh L1'),
+          /**
+           * PRINTED FROM THE MAP, not from the two strings this used to carry.
+           *
+           * The swap is a write to the pad's binding table now, so the buttons
+           * it produces are a fact that can be read rather than a sentence that
+           * has to be kept in step. It also means this line stays true for a
+           * player who has moved one of these rows by hand on the Controls tab,
+           * where the old pair of strings would have been confidently wrong.
+           */
+          note: () => {
+            const one = (id) => keymap.pad.labels(id).join('/');
+            // The khopesh's SHOULDER, which is the only half of it this setting
+            // moves. Circle is the khopesh in either layout and is left out
+            // rather than repeated on both sides.
+            const shoulder = keymap.pad.labels('melee').filter((c) => c !== 'Circle').join('/');
+            return `Fire ${one('fire')}, aim ${one('aim')}, grenade ${one('grenade')}`
+              + (shoulder ? `, khopesh ${shoulder}` : '');
+          },
         },
         {
           id: 'padrumble',
@@ -569,12 +640,15 @@ function buildSpec({ rig, audio, mute, fidelity, retro, pad }) {
     {
       id: 'controls',
       name: 'Controls',
-      // No rows. This tab is two read-only lists and the keyboard one has to
-      // stay at the top of it - see the note beside the pad settings on the
-      // Game tab for what happened when six controls were put above it.
+      // No settings rows. This tab is the keyboard's EDITABLE list and the pad's
+      // read-only one, and the keyboard list has to stay at the top of it - see
+      // the note beside the pad settings on the Game tab for what happened when
+      // six controls were put above it. The editor was built under that same
+      // budget: the edit affordance is the row and the caps themselves, so the
+      // list gained one line for the khopesh and not a control panel.
       rows: [],
-      bindings: BINDINGS,
-      padBindings: PAD_BINDINGS,
+      keyRows: KEY_ROWS,
+      padRows: PAD_ROWS,
     },
   ];
 }
@@ -679,6 +753,7 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
   const titleEl = root.querySelector('[data-pause-title]');
   const saidEl = root.querySelector('[data-pause-said]');
   const markEl = root.querySelector('[data-pause-mark]');
+  const fineEl = root.querySelector('.pause-foot .fine');
 
   /** Every built row, by id, so refresh() is a walk and not a search. */
   const rows = {};
@@ -745,32 +820,330 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
     return rows[row.id];
   }
 
-  /** The controls tab: a read-only list, built once, never repainted. */
-  function buildBindings(groups, parent) {
-    for (const g of groups) {
-      const block = el('div', 'bind-block', parent);
-      const h = el('div', 'bind-group', block);
-      h.textContent = g.group;
+  // -------------------------------------------------------------------------
+  // THE KEYBOARD LIST, WHICH IS ALSO THE EDITOR
+  // -------------------------------------------------------------------------
+  //
+  // WHY THE ROW IS THE CONTROL, and why there is no rebinding UI beyond it.
+  //
+  // This tab has a measured LAYOUT BUDGET. Six extra rows once pushed the key
+  // bindings past the bottom of the scrolling body and test/settings.mjs
+  // correctly reported the controls list at 1.01 to one, because it was no
+  // longer on the screen - a player opening Controls to find the grenade key
+  // would have found a stick sensitivity slider instead. Every obvious shape for
+  // an editor spends that budget: a "change" button per row is a column, a
+  // capture dialog is a second surface over the first, and a "currently binding"
+  // banner is a row that exists to say what the row underneath it is doing.
+  //
+  // So the list stays the list, and the list is clickable. A click on a row -
+  // or on one particular cap, which is how eight weapon slots fit on one line -
+  // arms the capture, and everything the editor has to say is said IN THE ROW'S
+  // OWN SENTENCE for a couple of seconds. Nothing appears, nothing moves, and
+  // the page is exactly as tall while it is being edited as it is while it is
+  // being read.
+  //
+  // The one thing that is added is a Reset control, and it sits on the FIRST
+  // GROUP HEADING rather than under the list, on the line that already exists
+  // and beside the only word on it. It is a sibling of .bind-group rather than a
+  // child, so the legibility pass in test/settings.mjs keeps measuring a
+  // heading made of text and not a heading with a button in it.
 
-      for (const r of g.rows) {
-        const line = el('div', 'bind-row', block);
-        const keys = el('span', 'bind-keys', line);
-        for (const k of r.keys) {
-          // A separator inside a range - "1 - 7" - is not a key and must not be
-          // drawn as one, or the panel claims a binding that does not exist.
-          if (k === '-') {
-            const sep = el('span', 'bind-sep', keys);
-            sep.textContent = 'to';
-            continue;
-          }
-          const cap = el('kbd', 'key-cap', keys);
-          cap.textContent = k;
+  /** Every built keyboard row, so a rebind can repaint both sides of a swap. */
+  const bindRows = [];
+
+  /**
+   * Where the editor is, or null.
+   *
+   * One capture at a time, by construction: arming a second row disarms the
+   * first. Two live captures would mean the next keystroke binding two actions
+   * to one key, which the keymap would then have to resolve as a conflict with
+   * itself.
+   */
+  let capture = null;
+
+  /** Rows currently showing a message instead of their sentence, and the timer. */
+  let messageTimer = 0;
+  let messageRow = null;
+
+  /**
+   * The table a row is drawn from and edited against.
+   *
+   * The keyboard and the pad are the same machine over two namespaces, and this
+   * is the only line that has to know which one a row belongs to. See the note
+   * on makeTable in core/keymap.js for why they are not one namespace: a button
+   * name and a key code must never be comparable, or Fire on Mouse0 and Fire on
+   * R2 would be a conflict with itself.
+   */
+  const tableFor = (device) => (device === 'pad' ? keymap.pad : keymap);
+
+  function drawCaps(built) {
+    const keysEl = built.keys;
+    const table = tableFor(built.device);
+    keysEl.textContent = '';
+    built.caps.clear();
+
+    for (const id of built.spec.actions) {
+      const fixed = table.isFixed(id);
+      // One cap per DISTINCT label. Sprint answers to both Shifts and crouch to
+      // both Control keys, and a row that drew "Shift Shift" would be reporting
+      // an implementation detail as if it were two bindings.
+      for (const cap of table.labels(id)) {
+        const node = el('kbd', 'key-cap', keysEl);
+        node.textContent = cap;
+        if (!fixed && !built.spec.echo) {
+          node.classList.add('key-edit');
+          node.dataset.bindAction = id;
+          node.setAttribute('role', 'button');
+          node.setAttribute('tabindex', '0');
+          node.title = `Change ${table.label(id)}`;
         }
-        const what = el('span', 'bind-what', line);
-        what.textContent = r.what;
+        if (!built.caps.has(id)) built.caps.set(id, node);
+      }
+    }
+
+    // Caps with no binding behind them: the wheel, which cycles weapons and
+    // cannot be moved because it is not a key.
+    for (const extra of (built.spec.extra || [])) {
+      el('kbd', 'key-cap', keysEl).textContent = extra;
+    }
+  }
+
+  /** Repaint every keyboard row from the table. Called after any change. */
+  function drawBindings() {
+    for (const built of bindRows) {
+      drawCaps(built);
+      if (built !== messageRow && built !== (capture && capture.built)) {
+        built.what.textContent = built.spec.what;
       }
     }
   }
+
+  /**
+   * Say something in the row's own sentence, then put the sentence back.
+   *
+   * The message is where the conflict is reported, and reporting it is the whole
+   * of the conflict rule that a player can see: a rebind that silently took a
+   * key off another action would leave them hunting for a binding that has
+   * moved, which is worse than the collision itself.
+   */
+  function say(built, text) {
+    if (messageTimer) clearTimeout(messageTimer);
+    if (messageRow && messageRow !== built) messageRow.what.textContent = messageRow.spec.what;
+    messageRow = built;
+    built.what.textContent = text;
+    messageTimer = setTimeout(() => {
+      messageTimer = 0;
+      if (messageRow) messageRow.what.textContent = messageRow.spec.what;
+      messageRow = null;
+    }, 2400);
+  }
+
+  /**
+   * The capture keydown, ON THE CAPTURE PHASE, and that is load-bearing.
+   *
+   * Every other binding on this page is a bubble-phase listener on `window`:
+   * main.js reads the weapon digits and the render mode there, and the Esc that
+   * would close this panel is read there too. A capture-phase listener on the
+   * same target runs BEFORE all of them, so stopping propagation here means the
+   * key the player is binding cannot also fire the thing it is currently bound
+   * to. Without it, pressing P to bind something would cycle the render mode on
+   * the way past, and pressing Esc to cancel would resume the game.
+   */
+  function onCaptureKey(e) {
+    if (!capture) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat) return;
+
+    const built = capture.built;
+    // A capture armed on a PAD row is waiting for a button, so a keystroke can
+    // only cancel it. Binding the key that was pressed would put a keyboard code
+    // in the pad's table, and the pad would be looking for a button called
+    // KeyM for the rest of the session.
+    if (built.device === 'pad' && e.code !== 'Escape') return;
+    take(built, capture.action, e.code, e.code === 'Escape');
+  }
+
+  /**
+   * ONE PLACE WHERE A CAPTURE RESOLVES, whichever device produced the input.
+   *
+   * Every branch says something, because "nothing visibly changed" is the one
+   * outcome a player cannot tell apart from a menu that has stopped working -
+   * and because a swap that was not announced is exactly the silent theft this
+   * conflict rule exists to avoid.
+   */
+  function take(built, action, code, cancelled) {
+    const table = tableFor(built.device);
+    const was = table.labels(action).join(' ');
+    disarm();
+
+    if (cancelled) {
+      say(built, 'Cancelled. Still on ' + (was || 'nothing'));
+      drawBindings();
+      return;
+    }
+
+    const res = table.bind(action, code);
+    const cap = table.capFor(code);
+    drawBindings();
+
+    if (res.result === 'swapped') say(built, `${cap} bound. ${table.label(res.with)} took ${was}`);
+    else if (res.result === 'bound') say(built, `Bound to ${cap}`);
+    else if (res.result === 'unchanged') say(built, `Already ${cap}`);
+    else if (res.result === 'refused') say(built, `${cap} is ${table.label(res.with)}, which cannot move`);
+    else say(built, `${cap} cannot be bound`);
+  }
+
+  function disarm() {
+    if (!capture) return;
+    window.removeEventListener('keydown', onCaptureKey, true);
+    if (capture.detachPad) capture.detachPad();
+    capture.built.line.classList.remove('binding');
+    capture.built.what.textContent = capture.built.spec.what;
+    capture = null;
+  }
+
+  function arm(built, action) {
+    const table = tableFor(built.device);
+    if (!action || table.isFixed(action) || built.spec.echo) {
+      if (action && table.isFixed(action)) say(built, `${table.label(action)} cannot be moved`);
+      return false;
+    }
+    disarm();
+    if (messageTimer) { clearTimeout(messageTimer); messageTimer = 0; }
+    if (messageRow) { messageRow.what.textContent = messageRow.spec.what; messageRow = null; }
+
+    capture = { built, action, detachPad: null };
+    built.line.classList.add('binding');
+
+    /**
+     * THE PAD'S CAPTURE, THROUGH THE INPUT LAYER RATHER THAN AROUND IT.
+     *
+     * core/input.js already owns the poll and already knows that a suspended
+     * game means menu mode; this asks it for the next BUTTON instead of the next
+     * menu action, for exactly as long as a row is armed. The panel does not
+     * poll the hardware and input does not know what a row is, which is the same
+     * seam the menu subscription uses.
+     *
+     * OPTIONS CANCELS, and is the pad's Escape. It is the one button a player
+     * cannot bind - it is Pause - so treating it as a binding would only ever
+     * produce a refusal, and a controller player who armed a row by accident
+     * needs a way out that does not involve finding a keyboard.
+     */
+    if (built.device === 'pad') {
+      built.what.textContent = 'Press a button. Options cancels';
+      capture.detachPad = (input && input.setPadCapture)
+        ? input.setPadCapture((button) => {
+          if (!capture) return false;
+          take(built, action, button, button === 'options');
+          return true;
+        })
+        : null;
+    } else {
+      // Short, because it replaces a sentence on a row that must not grow a
+      // second line while it is being edited.
+      built.what.textContent = 'Press a key. Esc cancels';
+    }
+
+    // The keyboard listener is armed either way: Escape cancels a pad capture
+    // too, for the player who has both devices in front of them.
+    window.addEventListener('keydown', onCaptureKey, true);
+    return true;
+  }
+
+  /**
+   * A binding list: built once, repainted on every change.
+   *
+   * ONE BUILDER FOR BOTH DEVICES. The keyboard list came first and the pad's was
+   * a second, read-only function beside it that drew a hand-written table - and
+   * that second table is where "R3 sprints" and "L3 sprints" managed to disagree
+   * for a build. Drawing both from the same code against the same kind of table
+   * is what makes that impossible rather than merely unlikely.
+   */
+  function buildBindings(groups, parent, device) {
+    let first = true;
+
+    for (const g of groups) {
+      const block = el('div', 'bind-block', parent);
+
+      const head = el('div', 'bind-head', block);
+      const h = el('div', 'bind-group', head);
+      h.textContent = g.group;
+
+      // ONE reset, on the first heading. It resets the whole scheme rather than
+      // the group it sits on, so a second copy further down would be the same
+      // button twice and an invitation to think otherwise.
+      if (first) {
+        first = false;
+        const table = tableFor(device);
+        const btn = el('button', 'bind-reset', head);
+        btn.type = 'button';
+        btn.textContent = device === 'pad' ? 'Reset buttons' : 'Reset keys';
+        btn.title = 'Back to the shipped scheme. Bindings are saved in this browser';
+        const firstOfThis = bindRows.length;
+        btn.addEventListener('click', () => {
+          disarm();
+          table.reset();
+          drawBindings();
+          const row = bindRows[firstOfThis];
+          if (row) say(row, 'Back to the shipped scheme');
+        });
+      }
+
+      for (const spec of g.rows) {
+        const line = el('div', 'bind-row', block);
+        const keys = el('span', 'bind-keys', line);
+        const what = el('span', 'bind-what', line);
+        what.textContent = spec.what;
+
+        const built = { spec, line, keys, what, device, caps: new Map() };
+        bindRows.push(built);
+        drawCaps(built);
+
+        /**
+         * The row's own edit target is its FIRST movable action, which is what a
+         * click anywhere on the line means. On the weapon row, where eight
+         * actions share a line, the caps are individually addressed below and
+         * stop the click from reaching this.
+         *
+         * A row whose actions are ALL fixed - Fire, Aim, Look, Pause - still
+         * names one, so that clicking it says why it cannot be changed. A
+         * control that ignores a click is indistinguishable from a broken one,
+         * and this list is a list a player is going to click on.
+         */
+        const table = tableFor(device);
+        const movable = spec.echo ? null : spec.actions.find((id) => !table.isFixed(id));
+        const rowAction = movable || (spec.echo ? null : spec.actions[0]) || null;
+
+        if (movable) {
+          line.classList.add('bind-edit');
+          line.setAttribute('role', 'button');
+          line.setAttribute('tabindex', '0');
+        }
+
+        line.addEventListener('click', (e) => {
+          const capEl = e.target instanceof HTMLElement
+            ? e.target.closest('[data-bind-action]') : null;
+          arm(built, capEl ? capEl.dataset.bindAction : rowAction);
+        });
+
+        // Enter and Space on a focused row, because the panel is reachable from
+        // the keyboard and a control that can only be clicked is half a control.
+        // Space is deliberately included even though it is Jump: the game is
+        // stopped, the row has focus, and a focused control answering Space is
+        // what every other button on this panel does.
+        line.addEventListener('keydown', (e) => {
+          if (capture) return;
+          if (e.code !== 'Enter' && e.code !== 'Space') return;
+          e.preventDefault();
+          const capEl = e.target instanceof HTMLElement
+            ? e.target.closest('[data-bind-action]') : null;
+          arm(built, capEl ? capEl.dataset.bindAction : rowAction);
+        });
+      }
+    }
+  }
+
 
   for (const tab of spec) {
     const b = el('button', 'pause-tab', tabsEl);
@@ -783,12 +1156,12 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
     const panel = el('div', 'pause-panel', bodyEl);
     panel.dataset.panel = tab.id;
     for (const row of tab.rows) buildRow(row, panel);
-    if (tab.bindings) buildBindings(tab.bindings, panel);
+    if (tab.keyRows) buildBindings(tab.keyRows, panel, 'key');
     // The pad's list is drawn from a second table and after the first, so the
     // keyboard scheme stays where it has always been on the page. It also keeps
     // the "find the row that documents R" style of check in test/settings.mjs
     // resolving to the keyboard row it was written about.
-    if (tab.padBindings) buildBindings(tab.padBindings, panel);
+    if (tab.padRows) buildBindings(tab.padRows, panel, 'pad');
     panels[tab.id] = panel;
   }
 
@@ -836,9 +1209,28 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
     for (const tab of spec) for (const row of tab.rows) paint(row);
   }
 
+  /**
+   * The fine print, WHICH TAB IT IS ABOUT.
+   *
+   * "Settings last for this run" is true of every slider on this panel and is
+   * now false of exactly one tab: the key bindings are the only thing in the
+   * game that is written to storage. A footer that states the general rule over
+   * the one page it does not apply to is the same species of drift as a controls
+   * list that has to be updated by hand - so it says which is which, on the line
+   * that already exists, and the tab costs no height for it.
+   */
+  const FINE = {
+    controls: 'Bindings are saved. Click one to change',
+    other: 'Settings last for this run',
+  };
+
   function show(id) {
     if (!panels[id]) return active;
+    // A capture cannot outlive the tab it was armed on. The next keystroke would
+    // otherwise bind a key on a page the player is no longer looking at.
+    disarm();
     active = id;
+    if (fineEl) fineEl.textContent = id === 'controls' ? FINE.controls : FINE.other;
     for (const k in panels) {
       panels[k].hidden = k !== id;
       tabs[k].setAttribute('aria-pressed', String(k === id));
@@ -1083,6 +1475,19 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
 
   const detachMenu = (input && input.onMenu) ? input.onMenu(padMenu) : () => {};
 
+  /**
+   * REDRAW WHEN ANYTHING CHANGES A BINDING, INCLUDING THINGS THAT ARE NOT THIS
+   * LIST.
+   *
+   * The Game tab's Swap setting moves four pad bindings, and it is a row on a
+   * different tab that knows nothing about the controls page. Before this
+   * subscription the swap was a hand-written sentence on the pad list precisely
+   * because the list did not redraw; now it does, and the sentence is gone. The
+   * console can also reset the map, and a panel that painted its caps once at
+   * construction is the stale surface this whole feature exists to abolish.
+   */
+  const detachKeymap = keymap.onChange(() => drawBindings());
+
   // -------------------------------------------------------------------------
   // opening and closing
   // -------------------------------------------------------------------------
@@ -1152,6 +1557,12 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
     audio.setMuted(true);
 
     root.hidden = false;
+    // Redraw the key caps from the table on the way in. This panel is not the
+    // only thing that can change a binding - core/keymap.js is a shared object
+    // and the console can reset it - and a page that painted its caps once at
+    // construction would be the exact stale surface this whole feature exists to
+    // stop existing.
+    drawBindings();
     // The pad cursor starts unarmed and parked on Resume every time the panel
     // opens. Carrying a selection over from the last pause would put the mark
     // on a row the player has forgotten choosing.
@@ -1169,6 +1580,11 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
   function resume() {
     if (!paused) return false;
     paused = false;
+
+    // A live capture must never survive the panel closing. Its listener is on
+    // the capture phase of `window` and would eat the first keystroke of the
+    // resumed game - and bind it.
+    disarm();
 
     root.hidden = true;
     // Hand focus back before anything else. The Resume button was focused so
@@ -1221,8 +1637,35 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
     rows,
     tabs,
     panels,
-    bindings: BINDINGS,
-    padBindings: PAD_BINDINGS,
+    keyRows: KEY_ROWS,
+    padRows: PAD_ROWS,
+
+    /**
+     * THE EDITOR, EXPOSED FOR THE HARNESS, and only as far as it has to be.
+     *
+     * `binding` reports which action is armed, so a suite can prove that a click
+     * on a row entered the capture state rather than inferring it from the text
+     * on the row. `rebindRows` is what is currently DRAWN, which is a different
+     * claim from what core/keymap.js holds - the whole class of bug this project
+     * keeps hitting is a value that changed and a surface that did not, and the
+     * only way to catch it is to read the two separately and compare them.
+     *
+     * Nothing here binds a key. test/bindings.mjs drives real clicks and real
+     * keystrokes for that, on purpose: a rebind proved by calling the binder is
+     * a rebind that proves nothing about the panel.
+     */
+    get binding() { return capture ? capture.action : null; },
+    rebindRows() {
+      return bindRows.map((b) => ({
+        what: b.what.textContent,
+        sentence: b.spec.what,
+        device: b.device,
+        actions: b.spec.actions.slice(),
+        editable: b.line.classList.contains('bind-edit'),
+        keys: [...b.keys.querySelectorAll('.key-cap')].map((k) => k.textContent),
+      }));
+    },
+    keymap,
 
     /**
      * The pad's own way in, and out, exposed for the harness.
@@ -1248,6 +1691,6 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
       };
     },
 
-    dispose() { detachMenu(); clearCursor(); },
+    dispose() { detachMenu(); detachKeymap(); clearCursor(); disarm(); },
   };
 }

@@ -1063,25 +1063,65 @@
     color: var(--gold-mid);
   }
 
-  /* ---- the controls list ---- */
+  /* ---- the controls list, WHICH IS ALSO THE KEY EDITOR ----
+
+     Read the note above buildKeyBindings in src/ui/pause.js before adding
+     anything here. This tab has a measured layout budget: six extra rows once
+     pushed the key bindings off the bottom of the scrolling body and the
+     legibility pass in test/settings.mjs correctly reported the controls list at
+     1.01 to one, because it was no longer on the screen. The editor was built
+     inside that budget - the row IS the control - and the only new furniture is
+     one Reset button on a heading that already existed.
+
+     The row padding came down from 5px to 4px in the same pass, which buys back
+     more than the khopesh row and the button cost. It is a two pixel change on a
+     five pixel gap and the list reads identically; it is written down because a
+     later pass that puts it back will not know it was spending something. */
   .bind-block { padding: 14px 0 4px; }
   .bind-block + .bind-block { border-top: 1px solid rgba(217,178,106,.10); }
+  /* The heading line, with the Reset control on the far end of it. The button is
+     a SIBLING of .bind-group rather than a child: test/settings.mjs measures the
+     heading's own text box for legibility, and a heading with a button inside it
+     would be measured as a heading and a button at once. */
+  .bind-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  }
   .bind-group {
     font-size: 9px; letter-spacing: .28em; text-transform: uppercase;
     color: var(--gold);
     margin-bottom: 10px;
   }
+  .bind-reset {
+    font-family: inherit;
+    font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--gold-mid);
+    background: rgba(18,12,6,.94);
+    border: 1px solid rgba(217,178,106,.28);
+    padding: 3px 10px; cursor: pointer;
+    flex: none;
+  }
+  .bind-reset:hover { color: var(--gold); border-color: rgba(217,178,106,.55); }
   .bind-row {
     display: flex; align-items: center; gap: 14px;
-    padding: 5px 0;
+    padding: 4px 0;
   }
+  /* A row that can be edited says so on hover rather than with a permanent
+     affordance. A column of Change buttons is the thing this tab cannot afford,
+     and a pointer over a row that lights up is the cheapest possible statement
+     that the list is a control and not a poster. */
+  .bind-row.bind-edit { cursor: pointer; }
+  .bind-row.bind-edit:hover .key-cap.key-edit,
+  .key-cap.key-edit:hover { border-color: rgba(217,178,106,.95); }
+  .bind-row.bind-edit:hover .bind-what { color: #fff; }
+  /* WAITING FOR A KEY. The caps dim while the row is armed, because what they
+     say is about to stop being true. The gold hairline that goes with this is
+     declared down in the focus block and NOT here - see the note there, it is
+     the one thing in this feature that was written, looked right, and drew
+     nothing. */
+  .bind-row.binding .key-cap { opacity: .45; }
   .bind-keys {
     display: flex; align-items: center; gap: 4px;
     flex: none; min-width: 132px;
-  }
-  .bind-sep {
-    font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--gold-mid);
   }
   .bind-what {
     font-size: 11px; letter-spacing: .1em;
@@ -1131,6 +1171,24 @@
     outline-offset: 3px;
   }
   #pause :focus:not(:focus-visible) { outline: none; }
+
+  /* THE ARMED BINDING ROW, AND IT HAS TO BE DECLARED HERE.
+
+     A row waiting for a key wears the same gold hairline, and the rule for it
+     belongs up with the rest of the controls list - it was written there first.
+     It drew nothing. A row is armed by CLICKING it, which focuses it without
+     making it :focus-visible, so the line directly above turns the outline off
+     again: `#pause :focus:not(:focus-visible)` scores an id and two classes and
+     the plain `.bind-row.binding` scores two, and even at equal weight the later
+     rule would win. Found by cropping the screenshot and looking at the row,
+     which is the only way this class of defect is ever found - every state
+     assertion passed, the class was on the element, and the player saw nothing.
+
+     So it sits after the rule that was cancelling it, at the same weight. */
+  #pause .bind-row.binding {
+    outline: 1px solid var(--gold);
+    outline-offset: 2px;
+  }
 </style>
 
 <script type="importmap">
@@ -1267,7 +1325,7 @@
        createGrenadeReadout in ui/hud.js from systems/grenades.js. -->
   <div class="readout plate" id="r-frag">
     <span class="cap">
-      <svg class="ico"><use href="#i-frag"/></svg>Frag<kbd class="key-cap">G</kbd>
+      <svg class="ico"><use href="#i-frag"/></svg>Frag<kbd class="key-cap" data-key-cap="grenade">G</kbd>
     </span>
     <span class="val" data-frag>2</span>
     <span class="pips" data-frag-pips></span>
@@ -1277,7 +1335,7 @@
     <span class="cap"><svg class="ico"><use href="#i-round"/></svg><span data-weapon>MK9</span><kbd class="key-cap" data-slot>1</kbd></span>
     <span class="val"><b data-mag>12</b><i data-reserve>96</i></span>
     <span class="wave">
-      <span class="hint"><kbd class="key-cap">R</kbd>Reload</span>
+      <span class="hint"><kbd class="key-cap" data-key-cap="reload">R</kbd>Reload</span>
       <span>Wave<u data-wave>1</u></span>
     </span>
     <!-- THE TERMS OF THE RUN. Written once by src/ui/start.js when the run
@@ -1295,7 +1353,7 @@
   <!-- Once, and then never again. See #frag-hint above: one line, one boolean,
        and it takes itself off the screen. -->
   <div class="plate" id="frag-hint" hidden>
-    <kbd class="key-cap">G</kbd>Hold to cook, release to throw
+    <kbd class="key-cap" data-key-cap="grenade">G</kbd>Hold to cook, release to throw
   </div>
 
   <div class="plate" id="boss" hidden>
@@ -1352,32 +1410,20 @@
     </button>
   </div>
 
-  <div class="keys">
-    <b>WASD</b> move &nbsp;&middot;&nbsp; <b>Shift</b> sprint &nbsp;&middot;&nbsp; <b>Space</b> jump<br>
-    <b>Mouse</b> look &nbsp;&middot;&nbsp; <b>LMB</b> fire &nbsp;&middot;&nbsp; <b>RMB</b> aim<br>
-    <!--
-      1-8, not 1-7. The B3AR was appended as the eighth SLOT and this line was
-      never updated, so the one gun sold outside the pyramid was the one the
-      controls card did not admit existed.
+  <!-- THE CONTROLS STRIP, AND IT IS EMPTY ON PURPOSE.
 
-      E is here for the same reason Q is, two lines down: the digits are the
-      only keyboard way to change weapon and 5 through 8 mean taking the hand
-      off WASD mid-fight. E sits above D and cycles forward.
-    -->
-    <b>R</b> reload &nbsp;&middot;&nbsp; <b>E</b> next weapon &nbsp;&middot;&nbsp; <b>1-8</b> weapons &nbsp;&middot;&nbsp; <b>F</b> buy<br>
-    <!--
-      Q IS HERE BECAUSE NOTHING ELSE TOLD ANYONE ABOUT IT.
+       It used to be four lines of bold letters typed in by hand, and it was
+       wrong twice that anybody noticed: it claimed weapons 1 to 7 for as long as
+       there have been eight, and it had no entry for the khopesh at all, because
+       the blade and this screen were built by two different passes in the same
+       night and neither was the other's file. Nothing caught either one. A
+       sentence in markup has nothing to disagree with.
 
-      The blade and this screen were built by two different passes in the same
-      night. The melee pass deliberately left the controls list alone - it was not
-      that pass's file - and taught the blade with a one-time notice the first time
-      the player is genuinely out of ammunition. The start screen pass wrote this
-      list without knowing a blade existed. Both were right on their own and the
-      result was a weapon with no entry in the only place a player reads the
-      controls.
-    -->
-    <b>Q</b> khopesh &nbsp;&middot;&nbsp; <b>G</b> hold to cook a grenade, release to throw &nbsp;&middot;&nbsp; <b>Esc</b> pause and settings
-  </div>
+       So it is built by src/main.js from src/core/keymap.js - the same table the
+       key handler and the CONTROLS tab read - and it is repainted whenever a
+       binding changes, including from the Settings button eight lines up. The
+       letters a player reads here are now the letters the game is running. -->
+  <div class="keys" data-keys></div>
 
   <!-- Assets stream in after the game is already playable, so this reports
        progress rather than gating entry on it. -->

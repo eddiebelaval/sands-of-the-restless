@@ -63,40 +63,53 @@ import {
   PAD_DEFAULTS, PAD_LIMITS, MENU,
 } from './gamepad.js';
 
+/**
+ * THE BINDINGS, from the one table that owns them.
+ *
+ * This file used to spell them: `keys.has('KeyW')`, a CROUCH_KEYS array, and a
+ * KEY_FOR lookup for the four codes the pad synthesises. Every one of those was
+ * a second statement of a fact stated somewhere else, which is precisely how a
+ * controls page ends up describing a scheme the game is not running. See
+ * core/keymap.js. Nothing here caches a code: a rebind takes effect on the next
+ * keystroke without this file being told.
+ */
+import { keymap, keyFor } from './keymap.js';
+
 const LOCK_TIMEOUT_MS = 400;
 
 /**
- * THE CROUCH KEYS, and they are a TAP rather than a hold.
+ * CROUCH IS A TAP RATHER THAN A HOLD, and the keys are keymap's to say.
  *
- * C and the control keys, which is the pair every shooter on this keyboard
- * layout offers, because the two hands disagree about which one is natural and
- * the argument is older than the genre. Binding both costs one array entry and
- * settles it.
+ * The default is C and the control keys, which is the pair every shooter on this
+ * keyboard layout offers, because the two hands disagree about which one is
+ * natural and the argument is older than the genre.
  *
  * A TAP because the PAD's crouch is a tap - L3 is under the thumb that steers,
- * and a held stick-click while steering is the input the sprint latch above was
+ * and a held stick-click while steering is the input the sprint latch below was
  * already rewritten to avoid. Two devices with two different crouch semantics is
  * the drift this whole file is arranged to prevent, so the keyboard takes the
  * pad's shape rather than the other way round: one rule, both hands, and the
  * controls panel can state it in four words.
- *
- * ControlRight joins ControlLeft for the same reason `sprint` reads both Shifts.
  */
-const CROUCH_KEYS = ['KeyC', 'ControlLeft', 'ControlRight'];
+const isCrouchKey = (code) => keymap.matches('crouch', code);
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /**
- * The `key` value that belongs with each `code` this file synthesises.
+ * Keys the BROWSER does something with, which have to be swallowed when the
+ * player has bound one of them to a verb.
  *
- * Both are filled in because a handler is entitled to read either, and a
- * synthetic event that carries half of a real one is a trap for whoever writes
- * the next binding rather than a shortcut for this one.
+ * Space scrolls the page and Tab walks the focus ring, which is why those two
+ * were always here. The arrows and the page keys join them the moment a rebind
+ * can put movement on them: a player who binds forward to ArrowUp and finds the
+ * settings panel scrolling underneath the game has been given a broken binding
+ * rather than a new one. Nothing else is preventDefault'ed, because swallowing
+ * keys the game does not use is how a page stops being usable with a keyboard.
  */
-const KEY_FOR = {
-  KeyR: 'r', KeyV: 'v', KeyQ: 'q', KeyF: 'f',
-  Escape: 'Escape', Enter: 'Enter',
-};
+const BROWSER_KEYS = new Set([
+  'Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'PageUp', 'PageDown', 'Home', 'End',
+]);
 
 export function createInput(canvas) {
   const keys = new Set();
@@ -253,10 +266,14 @@ export function createInput(canvas) {
     // above, so a held C cannot flip the posture sixty times a second - which is
     // what a toggle bound to a held key looks like, and it looks like the camera
     // vibrating rather than like a bug in an input file.
-    if (CROUCH_KEYS.includes(e.code)) crouchLatch = !crouchLatch;
+    if (isCrouchKey(e.code)) crouchLatch = !crouchLatch;
 
-    // Space scrolls the page, and the number row can trigger browser UI.
-    if (['Space', 'Tab'].includes(e.code)) e.preventDefault();
+    // Space scrolls the page, Tab walks the focus ring, and a rebind can put a
+    // verb on either. Tab is swallowed whether or not it is bound, exactly as it
+    // always has been; everything else only when the player has claimed it.
+    if (e.code === 'Tab' || (BROWSER_KEYS.has(e.code) && keymap.actionFor(e.code))) {
+      e.preventDefault();
+    }
     syncAxes();
   };
 
@@ -265,13 +282,27 @@ export function createInput(canvas) {
     syncAxes();
   };
 
+  /**
+   * Held, by ACTION rather than by key.
+   *
+   * An action can own more than one key - both Shifts sprint on the shipped
+   * scheme - so this is an any-of over the codes in force at the moment the
+   * question is asked. Asked fresh every time rather than cached at boot,
+   * because the whole point of the table is that a binding can move while the
+   * game is running and nothing downstream should have to be told.
+   */
+  const heldAction = (id) => {
+    for (const code of keymap.codes(id)) if (keys.has(code)) return true;
+    return false;
+  };
+
   function syncAxes() {
-    kb.forward = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-    kb.strafe  = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-    kb.sprint  = keys.has('ShiftLeft') || keys.has('ShiftRight');
-    kb.jump    = keys.has('Space');
-    kb.interact = keys.has('KeyF');
-    kb.grenade = keys.has('KeyG');
+    kb.forward = (heldAction('forward') ? 1 : 0) - (heldAction('back') ? 1 : 0);
+    kb.strafe  = (heldAction('right') ? 1 : 0) - (heldAction('left') ? 1 : 0);
+    kb.sprint  = heldAction('sprint');
+    kb.jump    = heldAction('jump');
+    kb.interact = heldAction('interact');
+    kb.grenade = heldAction('grenade');
   }
 
   // -------------------------------------------------------------------------
@@ -334,10 +365,16 @@ export function createInput(canvas) {
    * THE PLAYER'S PAD SETTINGS, live for the session.
    *
    * In memory and not persisted, for the same documented reason every other
-   * setting in this game is: STATE.md and the README both carry a standing "no
+   * SETTING in this game is: STATE.md and the README both carry a standing "no
    * browser storage" constraint. ui/pause.js reads and writes these through the
    * same declarative row spec the mouse sensitivity uses, so there is one
    * writer and the panel cannot drift from the value in force.
+   *
+   * The BINDINGS are the exception the owner asked for and they are not here -
+   * they live in core/keymap.js, which is the only thing in this game that
+   * writes to storage. That is also why `swapBumpers` is gone from this object:
+   * it was never a setting, it was four bindings wearing a boolean, and it is
+   * four rows in the pad's table now.
    */
   const padSettings = {
     sensitivity: PAD_DEFAULTS.sensitivity,
@@ -355,26 +392,36 @@ export function createInput(canvas) {
      */
     invertY: PAD_DEFAULTS.invertY,
     rumble: true,
+  };
 
-    /**
-     * SWAP THE BUMPERS WITH THE TRIGGERS. Off by default.
-     *
-     * The default puts fire and aim on the triggers, which is what a modern
-     * console shooter does and what most hands expect. It is not what every hand
-     * expects: players who came up on Bumper Jumper, or who find the DualShock's
-     * long trigger throw slow for a weapon that wants a fast trigger, put fire
-     * on R1 and live with grenades on R2.
-     *
-     * IT IS NOT A RELABELLING. The two pairs are different KINDS of input and
-     * swapping them swaps that too. The triggers are analog and run through a
-     * two-threshold hysteresis so a spring resting on one number cannot chatter;
-     * the bumpers are plain digital switches. So a swap has to move the
-     * hysteresis with the action rather than the button - fire on a bumper reads
-     * the switch, and the grenade on a trigger reads the LATCH, not the raw
-     * analog value. Getting that backwards gives you a grenade that starts
-     * cooking from the weight of a resting finger.
-     */
-    swapBumpers: false,
+  /**
+   * WHICH BUTTON, ASKED OF THE MAP, AND WHY THE TRIGGERS NEED NO SPECIAL CASE.
+   *
+   * The swap used to be resolved here, by hand, with a long note about the two
+   * pairs being different KINDS of input: the triggers are analog and run
+   * through a two-threshold hysteresis so a spring resting on one number cannot
+   * chatter, and the bumpers are plain switches. Fire on a bumper had to read
+   * the switch and a grenade on a trigger had to read the LATCH rather than the
+   * raw analog value, or the fuse started on the weight of a resting finger.
+   *
+   * That distinction has not gone away; it has moved to where it belongs.
+   * core/gamepad.js writes the hysteresis latch INTO `buttons.r2` and
+   * `buttons.l2` before the snapshot leaves it, so every button in the snapshot
+   * is a clean digital state and the edge list is computed from all of them
+   * alike. Which means a general map can be read the obvious way - is any button
+   * this action is bound to down - and there is no arrangement of bindings that
+   * needs a special case. That is the whole reason the swap could stop being a
+   * flag and become four rows in a table.
+   */
+  const padHeld = (snap, id) => {
+    for (const b of keymap.pad.codes(id)) if (snap.buttons[b]) return true;
+    return false;
+  };
+
+  /** The same question about the rising edge, for the taps. */
+  const padEdge = (snap, id) => {
+    for (const b of keymap.pad.codes(id)) if (snap.pressed.includes(b)) return true;
+    return false;
   };
 
   /** The last poll's snapshot, exposed so a harness can see what was read. */
@@ -449,6 +496,24 @@ export function createInput(canvas) {
    */
   let meleeWasHeld = false;
 
+  /**
+   * THE PANEL, WAITING FOR A BUTTON.
+   *
+   * ui/pause.js arms this while a pad row is being rebound, and it is the exact
+   * mirror of the keyboard's capture-phase keydown listener: for as long as it
+   * is set, the next button the player presses is DELIVERED TO THE PANEL AND
+   * CONSUMED rather than steering the menu. Without the consume, the button that
+   * is being bound would also move the cursor or resume the game on its way
+   * past, which is the same defect the keyboard capture stops by calling
+   * stopImmediatePropagation.
+   *
+   * It only ever runs while the game is suspended - there is no way to reach the
+   * controls page otherwise - and it is cleared the moment the capture ends, so
+   * a panel that is torn down mid-capture cannot leave the pad talking to a row
+   * that no longer exists.
+   */
+  let padCapture = null;
+
   /** Menu repeat, one per axis, so up-down and left-right time independently. */
   const repeatV = createRepeater();
   const repeatH = createRepeater();
@@ -486,14 +551,35 @@ export function createInput(canvas) {
    * a target that is not a BUTTON and proceeds.
    */
   function tap(code) {
+    if (!code) return false;
     const init = {
       code,
-      key: KEY_FOR[code] || code,
+      key: keyFor(code),
       bubbles: true,
       cancelable: true,
     };
     window.dispatchEvent(new KeyboardEvent('keydown', init));
     window.dispatchEvent(new KeyboardEvent('keyup', init));
+    return true;
+  }
+
+  /**
+   * The same thing, addressed by ACTION, which is what every call site here
+   * actually means.
+   *
+   * This is the line that keeps the pad honest across a rebind. Square used to
+   * dispatch a literal 'KeyR' for reload; on a build where the player has moved
+   * reload to M, that event would arrive at a handler that no longer answers to
+   * it and the pad's reload would silently stop working - with the keyboard
+   * still reloading fine, which is the hardest possible version of this bug to
+   * find. Resolving through the table means the pad speaks whatever the keyboard
+   * currently speaks.
+   *
+   * An UNBOUND action - which only a hand-edited saved map can produce - is a
+   * no-op rather than a dispatch of `undefined`.
+   */
+  function tapAction(id) {
+    return tap(keymap.primary(id));
   }
 
   /** The wheel, for weapon cycling, which main.js binds the same raw way. */
@@ -653,8 +739,9 @@ export function createInput(canvas) {
     pad.strafe = move.x;
     pad.forward = -move.y;         // a stick reports negative for up
 
-    // Sprint latches on the click of R3 and clears when the stick comes home.
-    if (snap.pressed.includes('r3')) sprintLatch = true;
+    // Sprint latches on the click of its button and clears when the stick comes
+    // home. R3 by default, at the owner's request; the player may move it.
+    if (padEdge(snap, 'sprint')) sprintLatch = true;
     if (move.mag === 0) sprintLatch = false;
     pad.sprint = sprintLatch;
 
@@ -673,52 +760,37 @@ export function createInput(canvas) {
      * crouch or a slide. Input reports intent; the body decides what to do with
      * it. See the slide note in that file.
      */
-    if (snap.pressed.includes('l3')) crouchLatch = !crouchLatch;
+    if (padEdge(snap, 'crouch')) crouchLatch = !crouchLatch;
 
     /**
-     * RESOLVE THE FOUR SHOULDER INPUTS ONCE, HERE, BEFORE ANYTHING READS THEM.
+     * THE KHOPESH, WHICH IS A TAP AND THEREFORE NEEDS AN EDGE OF ITS OWN.
      *
-     * The swap moves an ACTION between two different kinds of input, so each
-     * action has to take the reading that suits where it now lives:
+     * It is the one action with two buttons on it - Circle, which is its primary
+     * binding at the owner's request, and a shoulder, which is what the muscle
+     * memory in this build is already on. They are OR'd into ONE held value and
+     * edged once, rather than edge-detected separately, so a hand resting on the
+     * shoulder that also presses Circle gets one swing and not two. That is the
+     * failure two independent edges would produce, and it would produce it
+     * exactly in the panic the blade exists for.
      *
-     *   default   fire and aim on the TRIGGERS, so they take the hysteresis
-     *             latches (snap.fire / snap.ads). Grenade on R1 and khopesh on
-     *             L1 take the plain switches.
-     *
-     *   swapped   fire and aim on the BUMPERS, so they take the switches
-     *             directly - a switch needs no hysteresis, it has one built in.
-     *             Grenade moves to R2 and takes the LATCH rather than the raw
-     *             analog value, because a fuse that starts on the weight of a
-     *             resting finger is a grenade the player did not throw.
-     *
-     * The khopesh is a TAP and so needs an EDGE. On L1 the edge is already in
-     * snap.pressed; on L2 there is no such list, so the latch's own rising edge
-     * is tracked here. That asymmetry is the whole reason this is resolved in
-     * one place instead of being scattered through the switch below.
-     *
-     * CIRCLE IS THE KHOPESH'S PRIMARY BINDING NOW, at the owner's request, and
-     * the shoulder keeps it as a second. Two buttons for one verb rather than a
-     * relocation: the shoulder bind is what the muscle memory in this build is
-     * already on, and taking it away to move a face button would cost a player
-     * something to buy the owner nothing. They are OR'd into one held value
-     * rather than edge-detected separately, so a hand resting on L1 that also
-     * presses Circle gets one swing and not two - which is the failure a second
-     * independent edge would produce, and it would produce it exactly in the
-     * panic the blade exists for.
+     * The held value is tracked across frames rather than read off snap.pressed
+     * because the shoulder can be a TRIGGER after a swap. core/gamepad.js does
+     * put trigger latches in the edge list, so snap.pressed would in fact work
+     * now - this stays because it is the only reading that cannot care where the
+     * binding moves to next, which is the whole point of the table.
      */
-    const swap = padSettings.swapBumpers;
-    const meleeHeld = (swap ? snap.ads : snap.buttons.l1) || snap.buttons.circle;
+    const meleeHeld = padHeld(snap, 'melee');
     const meleeEdge = meleeHeld && !meleeWasHeld;
     meleeWasHeld = meleeHeld;
 
     // --- the held actions ---------------------------------------------------
-    pad.jump = snap.buttons.cross;
-    pad.fire = swap ? snap.buttons.r1 : snap.fire;
-    pad.ads = swap ? snap.buttons.l1 : snap.ads;
-    // HELD, exactly as KeyG is. systems/grenades.js runs the fuse while this is
-    // true and throws on the release, so a one-shot binding here would give the
-    // player a timer they cannot see and cannot stop.
-    pad.grenade = swap ? snap.fire : snap.buttons.r1;
+    pad.jump = padHeld(snap, 'jump');
+    pad.fire = padHeld(snap, 'fire');
+    pad.ads = padHeld(snap, 'aim');
+    // HELD, exactly as the grenade key is. systems/grenades.js runs the fuse
+    // while this is true and throws on the release, so a one-shot binding here
+    // would give the player a timer they cannot see and cannot stop.
+    pad.grenade = padHeld(snap, 'grenade');
 
     /**
      * The interact FIELD, kept truthful even though nothing reads it.
@@ -729,12 +801,21 @@ export function createInput(canvas) {
      * while the player is buying a door is a lie sitting in the harness waiting
      * for the first person who trusts it.
      */
-    pad.interact = snap.buttons.square && promptProbe();
+    pad.interact = padHeld(snap, 'interact') && promptProbe();
 
     // The khopesh, wherever it currently lives. See the resolution above.
-    if (meleeEdge) tap('KeyQ');
+    if (meleeEdge) tapAction('melee');
 
     // --- the tapped actions -------------------------------------------------
+    //
+    // The two that are BOUND are read as action edges, above the switch, so that
+    // a player who has moved interact onto Triangle gets the interact and not
+    // the weapon swap that used to live there. What is left in the switch is the
+    // D-pad and Options, which are deliberately not movable: they are the menu's
+    // own vocabulary. See PAD_ACTIONS in core/keymap.js.
+    if (padEdge(snap, 'interact')) tapAction(promptProbe() ? 'interact' : 'reload');
+    if (padEdge(snap, 'nextWeapon')) wheel(100);
+
     for (const name of snap.pressed) {
       switch (name) {
         /**
@@ -744,20 +825,19 @@ export function createInput(canvas) {
          * long note on promptProbe above for why the prompt is the condition and
          * why an ambiguous case is not really ambiguous.
          *
-         * KeyF and KeyR rather than calling weapons.reload() or
-         * interacts.interact(): main.js owns both bindings against raw keydown
-         * events, and the whole point of tap() is that there is exactly one
-         * binding table. In particular F's arbitration between a fixture and a
+         * The interact and reload ACTIONS rather than calls to weapons.reload()
+         * or interacts.interact(): main.js owns both bindings against raw
+         * keydown events, and the whole point of tapAction() is that there is
+         * exactly one binding table and the pad reads the player's edits to it
+         * for free. In particular F's arbitration between a fixture and a
          * door lives in main.js and is subtle - a shrine that refuses must not
          * fall through and buy the door behind it - and a second copy of that
          * decision here is how the two would drift.
          */
-        case 'square': tap(promptProbe() ? 'KeyF' : 'KeyR'); break;
-        case 'up': tap('KeyV'); break;                     // inspect
-        case 'triangle': wheel(100); break;                // swap weapon
+        case 'up': tapAction('inspect'); break;            // inspect
         case 'right': wheel(100); break;
         case 'left': wheel(-100); break;
-        case 'options': tap('Escape'); break;              // pause
+        case 'options': tapAction('pause'); break;         // pause
         default: break;
       }
     }
@@ -782,6 +862,15 @@ export function createInput(canvas) {
    */
   function menuMode(snap, t) {
     const b = snap.buttons;
+
+    // A row on the controls page is waiting for a button. The first press goes
+    // to it and nothing else happens this frame; the sticks are ignored entirely
+    // rather than bound, because a stick is not a binding and a player nudging
+    // one while reaching for a button has not chosen anything.
+    if (padCapture && snap.pressed.length) {
+      const taken = padCapture(snap.pressed[0]);
+      if (taken !== false) return snap;
+    }
 
     menuV = menuAxis(snap.raw.ly, menuV);
     menuH = menuAxis(snap.raw.lx, menuH);
@@ -955,6 +1044,23 @@ export function createInput(canvas) {
     },
 
     /**
+     * Hand the next pad BUTTON to a rebinding row instead of to the menu.
+     *
+     * Returns a disposer, exactly as onMenu does. Passing anything that is not a
+     * function clears the capture rather than installing something that throws
+     * once a frame, which on this path would be a controller that has stopped
+     * answering with no error anywhere.
+     *
+     * @param {(button: string) => boolean} fn  return false to let the press
+     *                                          fall through to the menu
+     */
+    setPadCapture(fn) {
+      if (typeof fn !== 'function') { padCapture = null; return () => {}; }
+      padCapture = fn;
+      return () => { if (padCapture === fn) padCapture = null; };
+    },
+
+    /**
      * Subscribe to menu actions. Returns an unsubscribe.
      *
      * The subscriber returns true when it has consumed the action. See
@@ -994,9 +1100,19 @@ export function createInput(canvas) {
       get invertY() { return padSettings.invertY; },
       setInvertY(on) { padSettings.invertY = !!on; return padSettings.invertY; },
 
-      get swapBumpers() { return padSettings.swapBumpers; },
+      /**
+       * THE SHOULDER SWAP, WHICH IS NOW A VIEW OF THE MAP.
+       *
+       * It reads the four bindings rather than a boolean beside them, so the
+       * setting cannot disagree with what the buttons do - which is the failure
+       * that made this whole pass worth doing. A player who rebinds fire onto R1
+       * by hand and leaves the rest alone gets Off here, correctly: the layout
+       * this toggle describes is all four moved together, and reporting On for
+       * one of them would be a control lying about a state.
+       */
+      get swapBumpers() { return keymap.pad.swapped; },
       setSwapBumpers(on) {
-        padSettings.swapBumpers = !!on;
+        keymap.pad.setSwapped(!!on);
         // Drop anything currently held on a shoulder button. Toggling this with
         // a finger down would otherwise carry that hold across to whatever the
         // button now means - most visibly as a grenade that starts cooking the
@@ -1004,7 +1120,7 @@ export function createInput(canvas) {
         // resting on.
         pad.fire = pad.ads = pad.grenade = false;
         meleeWasHeld = false;
-        return padSettings.swapBumpers;
+        return keymap.pad.swapped;
       },
 
       get rumbleEnabled() { return padSettings.rumble; },

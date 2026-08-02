@@ -100,7 +100,15 @@ Held from the original design, and checked before each milestone closes.
   exception to the no-files rule, taken to fix lighting that procedural
   materials could not.
 - No `CapsuleGeometry` (too new for older builds).
-- No browser storage. All state in memory.
+- No browser storage, with ONE amendment: **key and button bindings persist**,
+  under `sands.keys.v1`, owned solely by `src/core/keymap.js`. Everything else
+  is still in memory and still resets on reload, including every slider in the
+  settings panel. The exception was the owner's call when he asked for a control
+  centre, and the reasoning is worth keeping: a rebind that does not survive a
+  reload is a rebind the player performs again every session, which is worse
+  than not shipping the editor. The blob is schema-versioned and validated per
+  action on the way in, so a stale or hand-edited value costs one binding rather
+  than booting into a broken scheme.
 - No image, audio, or font files.
 - Frame-rate independent: every rate is per second, multiplied by a delta
   clamped to 1/20s so a backgrounded tab cannot teleport the player.
