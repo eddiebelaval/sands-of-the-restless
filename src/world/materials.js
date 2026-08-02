@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import { buildTextures } from './textures.js';
-import { weather } from './weathering.js';
+import { weather, weatherVariant, syncWeatherVariants } from './weathering.js';
 import { applyMaps } from './assets.js';
 
 let cache = null;
@@ -285,8 +285,54 @@ export function buildMaterials() {
     bleachStrength: 0.10,
   });
 
+  // Every material carries its registry key as its name. Nothing in the render
+  // path reads this; a mesh census does, and a table of unnamed materials is not
+  // evidence of anything. It is also what makes a weathering variant legible as
+  // `limestone@-6` rather than as a second anonymous instance.
+  for (const [key, mat] of Object.entries(m)) if (!mat.name) mat.name = key;
+
   cache = m;
   return cache;
+}
+
+/**
+ * The registry as seen from a floor at `base`.
+ *
+ * Every weathered stone material comes back as the instance whose grime is
+ * measured from that floor; everything else - gold, ember, the metals, the
+ * cloth - comes back as the shared object, because none of them read world Y.
+ *
+ * WHY THIS EXISTS AT ALL. `weathering.js` darkens stone toward the base of a
+ * wall using an absolute world Y, and World 1 now has rooms six metres below
+ * the datum, which saturated the grime term and took roughly a third of the
+ * albedo off all five Act 3 rooms. The long argument, including why a per-mesh
+ * attribute was rejected, is in weathering.js above `weatherVariant`.
+ *
+ * Keyed on the floor rather than on the room, so nine rooms across two
+ * elevations cost two registries and a third elevation costs a third. Cached,
+ * because being called once per room must not mean a new material per room.
+ */
+const byBase = new Map();
+
+export function materialsForBase(base = 0) {
+  const m = buildMaterials();
+  if (!base) return m;
+
+  const hit = byBase.get(base);
+  if (hit) return hit;
+
+  // Spread rather than rebuilt: everything that does not read world Y has to
+  // stay the SAME OBJECT, or the fidelity toggle and the scanned-map upgrade
+  // would each be walking a registry that half the map no longer points at.
+  const out = {
+    ...m,
+    limestone: weatherVariant(m.limestone, base),
+    carved: weatherVariant(m.carved, base),
+    granite: weatherVariant(m.granite, base),
+  };
+
+  byBase.set(base, out);
+  return out;
 }
 
 /**
@@ -355,6 +401,14 @@ export function upgradeMaterials(sets) {
   for (const mat of [m.sand, m.limestone, m.carved, m.granite]) {
     mat.userData.authoredNormalScale = mat.normalScale.x;
   }
+
+  // The per-floor weathering instances were cloned when the interior was built,
+  // which is before this resolves. Colour and normalScale are shared objects and
+  // followed the retint above on their own; the four map slots and the roughness
+  // scalar are ASSIGNED by applyMaps and do not, so they are pushed across here.
+  // Without this line the Act 3 rooms would keep the procedural textures while
+  // the rest of the map got the scans.
+  syncWeatherVariants();
 
   return m;
 }

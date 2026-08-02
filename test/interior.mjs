@@ -433,15 +433,73 @@ await page.evaluate(async () => {
 await shoot('int-05-chamber-looking-back', 'Chamber of Ascent, looking back at the entry');
 
 // ---------------------------------------------------------------------------
-// 7. buy the debris door into the Hall of Offerings
+// 7. WALK OUT OF THE ENTRY ROOM WITHOUT PAYING, through the free west doorway
 // ---------------------------------------------------------------------------
+//
+// The west portal into the Hall of Offerings used to be 750 of debris and is now
+// `kind: 'open'` at cost 0. The distinction this block exists to hold is not the
+// price: a barrier record is built for every portal whose kind is not 'open', so
+// a FREE DEBRIS DOOR would still stand in the opening and still prompt "OPEN
+// HALL OF OFFERINGS [F]", and the player would still have to reach it, stop, aim
+// at it and press a key. With a horde behind them that is a completely different
+// thing from an opening.
+//
+// So this asserts three separate facts: no barrier exists for that portal, no
+// prompt appears when the player stands in front of it, and holding W carries
+// them into the next room having spent nothing.
+
+const freeExit = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+
+  const barrier = g.interior.barriers.find(
+    (b) => b.id === 'chamber-of-ascent/hall-of-offerings') || null;
+
+  // FOUR METRES OFF THE DOORWAY, facing -X. Forward is (-sin yaw, 0, -cos yaw),
+  // so yaw PI/2 looks down -X. The distance is load-bearing for the assertion
+  // that follows: "no prompt appears" is worth nothing from across the room, and
+  // the room got twelve metres wider. This is the same stand-off the purchase
+  // block below uses on the east door, where a prompt DOES appear.
+  window.__H__.place(-14, -149, Math.PI / 2);
+  await window.__H__.frames(3);
+
+  const cand = g.doors.candidate;
+  const prompt = document.getElementById('prompt').textContent;
+
+  // Broke on purpose. If a prompt or a toll existed this is where it would bite.
+  const goldBefore = g.economy.gold;
+
+  window.__H__.walk(Math.PI / 2, 260, true);
+  await window.__H__.frames(3);
+
+  return {
+    barrier: barrier && barrier.id,
+    candidate: cand && cand.id,
+    prompt,
+    goldBefore,
+    goldAfter: g.economy.gold,
+    pos: window.__H__.pos(),
+    room: g.spaces.roomId,
+    audioSpace: g.audio.stats().space,
+  };
+});
+
+await shoot('int-07-hall-of-offerings', 'Hall of Offerings, through the free doorway');
+
+// ---------------------------------------------------------------------------
+// 7b. buy the debris door into the Granary Vault
+// ---------------------------------------------------------------------------
+//
+// The tutorial purchase moved here when the west door became free, and the
+// granary keeping its 750 is the point rather than an oversight: with the hall
+// open, this price stops being a toll on leaving the first room and becomes the
+// purchase that CLOSES the Act 2 loop, chamber to hall to gallery to granary to
+// chamber.
 
 const debris = await page.evaluate(async () => {
   const g = window.__SANDS__;
 
-  // Stand in front of the west doorway, facing -X. Forward is
-  // (-sin yaw, 0, -cos yaw), so yaw PI/2 looks down -X.
-  window.__H__.place(-8, -149, Math.PI / 2);
+  // Back in the entry room, four metres off the EAST doorway, facing +X.
+  window.__H__.place(14, -149, -Math.PI / 2);
   await window.__H__.frames(3);
 
   const cand = g.doors.candidate;
@@ -466,17 +524,17 @@ const debris = await page.evaluate(async () => {
   };
 });
 
-await shoot('int-06-debris-clearing', 'the rubble sinking out of the west doorway');
+await shoot('int-06-debris-clearing', 'the rubble sinking out of the east doorway');
 
 const throughDebris = await page.evaluate(async () => {
   const g = window.__SANDS__;
 
   let f = 0;
-  const door = g.interior.barriers.find((b) => b.to === 'hall-of-offerings');
+  const door = g.interior.barriers.find((b) => b.to === 'granary-vault');
   while (!door.opened && f < 200) { await new Promise((r) => requestAnimationFrame(r)); f++; }
 
-  // Walk west through the cleared doorway.
-  window.__H__.walk(Math.PI / 2, 260, true);
+  // Walk east through the cleared doorway.
+  window.__H__.walk(-Math.PI / 2, 260, true);
   await window.__H__.frames(3);
 
   return {
@@ -487,8 +545,6 @@ const throughDebris = await page.evaluate(async () => {
   };
 });
 
-await shoot('int-07-hall-of-offerings', 'Hall of Offerings, through the cleared debris');
-
 // ---------------------------------------------------------------------------
 // 8. the Great Gallery, through the free portal, and up the ramp
 // ---------------------------------------------------------------------------
@@ -496,9 +552,10 @@ await shoot('int-07-hall-of-offerings', 'Hall of Offerings, through the cleared 
 const gallery = await page.evaluate(async () => {
   const g = window.__SANDS__;
 
-  // The hall opens onto the gallery at (-19, -158) with no barrier at all, so
-  // this is a walk and not a purchase. yaw 0 moves toward -Z.
-  window.__H__.place(-19, -155, 0);
+  // The hall opens onto the gallery at (-22, -158) with no barrier at all, so
+  // this is a walk and not a purchase. yaw 0 moves toward -Z. The portal moved
+  // three west with the room; see the note on it in rooms.js.
+  window.__H__.place(-22, -155, 0);
   window.__H__.walk(0, 200, true);
   await window.__H__.frames(3);
 
@@ -707,6 +764,7 @@ section('refused when broke', refused);
 section('earning', earning);
 section('bought', bought);
 section('entered', entered);
+section('free west exit', freeExit);
 section('debris door', debris);
 section('through the debris', throughDebris);
 section('gallery', gallery);
@@ -733,17 +791,21 @@ const DARK = shots.filter((s) => s.meanLuma < 6 || s.percentLit < 25);
 const checks = {
   'starts on 500 gold':              opening.gold === 500 && opening.hudGold === '500',
   'interior built and hidden':       opening.interiorHidden === true,
-  // TWELVE, and the two new ones are OUTSIDE. `doors.all` is every door in the
-  // game rather than every door in the pyramid, and it now carries the Quarry
-  // and the Canal - the two bought mouths in the courtyard - alongside the
-  // sealed doorway and the nine interior barriers.
+  // ELEVEN, DOWN FROM TWELVE, and the one that went is the entry room's west
+  // doorway. `doors.all` is every door in the GAME rather than every door in the
+  // pyramid: the sealed doorway, the Quarry and the Canal outside, and the
+  // interior barriers.
   //
-  // This assertion failed when that wiring landed, which is the assertion doing
-  // its job: an exact count is the only thing that catches a door authored and
-  // never adopted, which is precisely the state both Act 1 spaces were in for
-  // two commits. It is the same shape as the fixture count in test/economy.mjs,
-  // and it failed for the same good reason.
-  'twelve doors exist':              opening.doors === 12,
+  // It dropped because that portal became `kind: 'open'` at cost 0, and a
+  // barrier record is only ever built for a doorway with something standing in
+  // it. The count going down IS the assertion that the change landed as an
+  // opening rather than as a free door.
+  //
+  // This assertion has now failed twice for good reasons - once when the two
+  // courtyard mouths were wired and once here - which is an exact count doing
+  // its job: it is the only thing that catches a door authored and never
+  // adopted. Same shape as the fixture count in test/economy.mjs.
+  'eleven doors exist':              opening.doors === 11,
   'the two hard-only walls cleared': opening.hardOnly.length === 2
                                        && opening.hardOnly.every((s) => s.endsWith(':cleared')),
   'and took their colliders':        opening.hardOnlyColliders === 0,
@@ -768,11 +830,22 @@ const checks = {
   'the sun is off inside':           entered.sunIntensity === 0,
   'reverb switched to the room':     entered.audioSpace === 'chamber',
   'interior walls are live':         entered.walls > 60,
-  'debris door is the look target':  debris.candidate === 'chamber-of-ascent/hall-of-offerings',
+  // THE FREE EXIT. Three separate facts, because "free" and "open" are not the
+  // same claim and only the second one is worth anything with a horde behind
+  // you: nothing stands in the doorway, nothing asks the player to press a key,
+  // and holding W gets them into the next room having spent nothing.
+  'the west doorway has no barrier':  freeExit.barrier === null,
+  'the west doorway offers no prompt': !freeExit.candidate && freeExit.prompt.trim() === '',
+  'walked out of the entry room free': freeExit.room === 'hall-of-offerings',
+  'and it cost nothing':             freeExit.goldAfter === freeExit.goldBefore,
+  'hall reverb is corridor':         freeExit.audioSpace === 'corridor',
+
+  // The tutorial purchase, now on the EAST doorway. The granary keeps its 750
+  // on purpose; see the portal note in rooms.js.
+  'debris door is the look target':  debris.candidate === 'chamber-of-ascent/granary-vault',
   'debris quotes 750':               /750 GOLD/.test(debris.prompt),
   'debris cost 750':                 debris.spent === 750,
-  'walked into the hall':            throughDebris.room === 'hall-of-offerings',
-  'hall reverb is corridor':         throughDebris.audioSpace === 'corridor',
+  'walked into the granary':         throughDebris.room === 'granary-vault',
   'reached the great gallery':       gallery.room === 'great-gallery',
   'gallery reverb is gallery':       gallery.audioSpace === 'gallery',
   'ramp starts near the floor':      ramp.yBefore < 2.6,

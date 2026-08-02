@@ -61,6 +61,26 @@ window.__N__ = {
   },
 
   /**
+   * The height a body PLACED at this point would end up standing at.
+   *
+   * Every route question below used to be asked with a hardcoded foot height of
+   * zero, which was correct for exactly as long as every floor in the game was
+   * at zero. World 1's descent put five rooms at y = -6, and a field asked "what
+   * does the route cost here, for feet at 0" in a room whose floor is six metres
+   * down correctly answers -1: there is no storey there at that height. That
+   * turned into a report that sixteen of the interior's twenty-four spawn points
+   * were unreachable, on a map where the horde walks every one of them - a false
+   * failure, which in a suite this size is as expensive as a false pass.
+   *
+   * Asked with no foot height, which is heightAt's "what is the highest surface
+   * here" reading and is exactly what director.placeAt uses to ground an actor.
+   * So this is the height the body being asked about would really have.
+   */
+  feetAt(x, z) {
+    return window.__SANDS__.world.heightAt(x, z, undefined);
+  },
+
+  /**
    * One actor, one fixed player, N simulated seconds. Reports what it did.
    *
    * ARRIVAL IS MEASURED AS CLOSEST APPROACH REACHING MELEE, not as the distance
@@ -153,12 +173,16 @@ results.interiorDoor = await page.evaluate(async () => {
   d.reset();
   d.placeAt('shambler', p.x, p.z);
   d.update(1 / 30, 0);
-  const before = d.flow.costAt(p.x, p.z, 0);
+  // At the spawn point's own floor. The three Act 3 gates open onto rooms six
+  // metres down, so asking at zero answers about a storey that is not there and
+  // reports the door as never opening a route. See feetAt.
+  const feet = window.__N__.feetAt(p.x, p.z);
+  const before = d.flow.costAt(p.x, p.z, feet);
 
   // Buy it. open() splices the cylinders out on the FIRST frame.
   bar.open();
   d.update(1 / 30, 1 / 30);
-  const after = d.flow.costAt(p.x, p.z, 0);
+  const after = d.flow.costAt(p.x, p.z, feet);
 
   const chased = window.__N__.chase('shambler', p.x, p.z, 0, -170, 60);
 
@@ -260,8 +284,13 @@ results.geodesic = await page.evaluate(async () => {
   const rows = [];
   for (const p of d.spawnPoints()) {
     const straight = Math.hypot(p.x - 0, p.z + 170);
-    const route = d.flow.costAt(p.x, p.z, 0);
-    rows.push({ room: p.room, straight: +straight.toFixed(1), route: +route.toFixed(1) });
+    // At the point's OWN floor, not at world zero. See feetAt.
+    const feet = window.__N__.feetAt(p.x, p.z);
+    const route = d.flow.costAt(p.x, p.z, feet);
+    rows.push({
+      room: p.room, feet: +feet.toFixed(1),
+      straight: +straight.toFixed(1), route: +route.toFixed(1),
+    });
   }
   const routed = rows.filter((x) => x.route >= 0);
   return {

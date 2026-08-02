@@ -17,7 +17,7 @@
  */
 
 import * as THREE from 'three';
-import { buildMaterials } from './materials.js';
+import { buildMaterials, materialsForBase } from './materials.js';
 import { box, plane, cylinderUV } from './uv.js';
 import { ROOMS, ENTRY } from './rooms.js';
 
@@ -470,7 +470,26 @@ export function buildInterior(scene, rooms = ROOMS) {
     const base = baseOf(room);
 
     const ctx = {
-      room, M, rand, group, colliders, walls, ramps,
+      room,
+
+      /**
+       * THE REGISTRY AS SEEN FROM THIS ROOM'S FLOOR, not the shared one.
+       *
+       * The stone materials darken toward "the base of the wall", and until the
+       * descent landed there was exactly one base in the game and it was zero.
+       * A room at -6 read as six metres of wall BELOW the datum, which saturates
+       * the grime term and multiplies the full dirt colour into every surface in
+       * the room. Measured, that was a third of Act 3's albedo and 43 per cent of
+       * the Serdab's; see docs/DESCENT.md section 6 and the argument above
+       * weatherVariant in world/weathering.js for why this is a material instance
+       * per elevation rather than a per-mesh attribute.
+       *
+       * Rooms at 0 get the identical shared objects back, so nothing about the
+       * entry band, the gallery or the courtyard changed.
+       */
+      M: materialsForBase(base),
+
+      rand, group, colliders, walls, ramps,
       interacts, jars, lights, animated,
       // The floor this room's contents stand on. Carried on the ctx rather than
       // read back off `room` at each use site, so that a builder which forgets
@@ -496,7 +515,10 @@ export function buildInterior(scene, rooms = ROOMS) {
   // After the rooms, because a barrier stands in a hole two rooms cut in their
   // own walls and needs both of them to already exist to know which way it
   // faces.
-  const barriers = buildBarriers({ M, rand, group, colliders, animated, rooms, portals });
+  // No registry handed in: a barrier picks its own by threshold elevation, the
+  // same way each room picks one by floor elevation. See the note at the call
+  // to materialsForBase inside it.
+  const barriers = buildBarriers({ rand, group, colliders, animated, rooms, portals });
 
   return {
     group,
@@ -920,6 +942,8 @@ function buildLevels(ctx) {
 
     ramps.push({ x: r.x, z: r.z, w: r.w, d: r.d, y0: r.y0, y1: r.y1, room: room.id });
 
+    if (rise !== 0) fillUndercroft(ctx, r, alongZ, run, rise);
+
     // A kerb along the open edge of a flat ledge. It is the only thing that
     // stops the upper level reading as a floating slab from below.
     //
@@ -943,6 +967,107 @@ function buildLevels(ctx) {
         group.add(kerb);
       }
     }
+  }
+}
+
+/**
+ * THE STONE UNDER THE SHALLOW END OF A RAMP.
+ *
+ * A ramp rising off a floor makes a wedge, and near its foot that wedge is a
+ * crawlspace: at the very bottom the gap between the room floor and the
+ * underside of the slab is centimetres. This fills the part of it a body cannot
+ * fit in, which is what a stone ramp in a stone building has under it anyway.
+ *
+ * IT IS BUILT BECAUSE THE HORDE WAS GETTING STUCK IN IT, and the diagnosis is
+ * worth writing down because the wrong layer was blamed twice on the way.
+ *
+ * A shambler crossing the Embalming Chamber toward the west descent walked UNDER
+ * the ramp rather than round to its foot, wedged itself where the gap runs out,
+ * and stayed there for the rest of the run: measured, it closed 7.2 m of a
+ * 50.8 m approach and then held position for fifty seconds. Per-frame, the flow
+ * field was handing it exactly (0.59, -0.81) and exactly (-0.57, +0.82) on
+ * alternate frames - two anti-parallel headings, a limit cycle, in a field whose
+ * route to the ramp foot was correct and finite the whole time. Its own wedge
+ * detector never tripped, because it was moving three centimetres a frame.
+ *
+ * Three systems disagreed about that wedge, and only one of them was right.
+ * `player/controller.js`'s headroomAt has always treated the highest surface at
+ * a point as a ceiling, so the PLAYER has never been able to walk in there.
+ * `enemies/flow.js` and `enemies/mummy.js` both tested headroom against walls
+ * and colliders only, and a ramp is neither. Rather than teach the horde a
+ * fourth version of the rule, the geometry now says what the building always
+ * meant: there is stone under the ramp.
+ *
+ * WHERE IT STOPS is the same threshold the flood uses for a body, so geometry
+ * and navigation agree by construction rather than by two tolerances that have
+ * to be kept in step. Above that height the undercroft is left open, because a
+ * space a body fits in is floor - which is exactly what the Great Gallery's
+ * upper level is built on, six metres of clear headroom over its own floor, and
+ * rooms.js calls that the thing that makes it a storey rather than a mezzanine.
+ *
+ * Stepped rather than a wedge, because `walls` is a list of axis-aligned boxes
+ * and that is the shape the player's resolver, the flow field's clearance test
+ * and the mummies' push-out all already read. Each step's top is the slab's
+ * underside at the LOW end of that step, so no step ever stands proud of the
+ * ramp it is holding up.
+ */
+
+/**
+ * How much clear air counts as somewhere a body can be, under a slab.
+ *
+ * The same 2.0 as `enemies/flow.js` BODY_H, repeated rather than imported for
+ * the same reason `player/controller.js` repeats STEP_UP: this module is the
+ * geometry and it must not start importing the horde. If one of the two moves
+ * the other has to move with it, and this comment is the note that says so.
+ */
+const UNDERCROFT_MIN = 2.0;
+
+/** How long each step of the fill is. Shorter is a closer fit and more boxes. */
+const UNDERCROFT_STEP = 1.0;
+
+function fillUndercroft(ctx, r, alongZ, run, rise) {
+  const { M, group, walls, base } = ctx;
+
+  // The floor the wedge sits on, and the end of the ramp that is nearest it.
+  // `y0` is the height at the LOW-COORDINATE end, so a ramp with a negative rise
+  // has its shallow end at the high-coordinate end and fills from there.
+  const floorY = Math.min(r.y0, r.y1);
+  if (floorY > base + 0.05) return;      // this ramp does not start on the floor
+
+  const grad = Math.abs(rise) / run;
+  const fromLow = rise > 0;              // is the shallow end at the low end
+  const lo = alongZ ? r.z - r.d / 2 : r.x - r.w / 2;
+  const hi = alongZ ? r.z + r.d / 2 : r.x + r.w / 2;
+
+  for (let d = 0; d < run; d += UNDERCROFT_STEP) {
+    // The slab's underside at the shallow end of the step, which is the least
+    // clearance this step offers. One RAMP_T below the walking surface, which is
+    // the same "one ramp thickness" the stone under a descent doorway is held to
+    // in buildShell. Stop once a body fits under the slab.
+    const topY = floorY + d * grad - RAMP_T;
+    if (topY - floorY >= UNDERCROFT_MIN) break;
+
+    const seg = Math.min(UNDERCROFT_STEP, run - d);
+    const h = topY - floorY;
+    // Nothing to fill where the slab is at or under the floor plane. That is
+    // the very bottom of the wedge, and it needs nothing: the walking surface
+    // there is inside CLIMB of the floor, so a body arriving is lifted onto the
+    // ramp by the floor sampler rather than left under it.
+    if (h <= 0.02) continue;
+
+    const a = fromLow ? lo + d : hi - d - seg;
+    const mid = a + seg / 2;
+
+    const w = alongZ ? r.w : seg;
+    const dd = alongZ ? seg : r.d;
+    const x = alongZ ? r.x : mid;
+    const z = alongZ ? mid : r.z;
+
+    const mesh = slab(w, h, dd, M.limestone, DENSITY.limestone);
+    mesh.position.set(x, floorY + h / 2, z);
+    group.add(mesh);
+
+    walls.push({ x, z, w, d: dd, y0: floorY, y1: topY });
   }
 }
 
@@ -2413,7 +2538,7 @@ export function buildWallBuyFixture(slot) {
  * courtyard object standing in the courtyard's own wall, and it is handed to
  * the same door system from the other side.
  */
-function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) {
+function buildBarriers({ rand, group, colliders, animated, rooms, portals }) {
   const out = [];
 
   for (const p of portals) {
@@ -2437,9 +2562,21 @@ function buildBarriers({ M, rand, group, colliders, animated, rooms, portals }) 
     g.position.set(p.at.x, sill, p.at.z);
     group.add(g);
 
+    /**
+     * A barrier weathers from its own THRESHOLD, which is the higher of the two
+     * floors it joins and is already carried on the portal record.
+     *
+     * The three descent gates therefore stay on the datum instance, because
+     * their sill is the gallery's floor at 0 and the stone standing in them is
+     * the gallery's stone. The two Hard-only debris doors between the King's
+     * Chamber and its neighbours sit at -6 and get the deep instance, which is
+     * the same rule the rooms either side of them are built by.
+     */
+    const BM = materialsForBase(sill);
+
     const spec = p.kind === 'debris'
-      ? debrisBarrier(g, M, rand, axis, p.width, h)
-      : gateBarrier(g, M, axis, p.width, h, p.kind);
+      ? debrisBarrier(g, BM, rand, axis, p.width, h)
+      : gateBarrier(g, BM, axis, p.width, h, p.kind);
 
     // A continuous RUN of overlapping cylinders, not one cylinder per doorway.
     // A single disc across a 5-unit opening either leaves the corners open or

@@ -268,8 +268,8 @@ land in the courtyard or in the entry band, which have not moved. The few that
 land in Act 3 fall six metres, harmlessly, and are caught by the controller's
 own grounding on the way.
 
-**ONE THING GETS MATERIALLY WORSE GOING DOWN, IT IS NOT INERT, AND IT IS THE
-ONE OUTSTANDING DEFECT IN THIS WORK.**
+**ONE THING GOT MATERIALLY WORSE GOING DOWN, IT WAS NOT INERT, AND IT IS NOW
+FIXED. The diagnosis below is kept as written; section 6a is the fix.**
 
 `world/weathering.js` darkens stone as a function of ABSOLUTE WORLD Y. Its
 fragment stage computes
@@ -313,17 +313,132 @@ absolute y it is drawn at. Disabling each composer pass in turn does not close
 the gap, so it is in the scene render, not in post. Height fog is genuinely inert
 indoors, `uAmount` measured 0.
 
-**IT IS NOT FIXED, and it should not be fixed by guessing.** The datum is a
-single uniform on a material registry that `buildMaterials()` caches and shares
-with the courtyard, so there is no value of `uGroundLevel` that is right for both
-a courtyard at grade and an interior spanning -6 to +6. Lowering it to -6 would
-strip the base grime off Act 2 and off the exterior, trading one regression for
-another. The correct fix is to make the weathering datum travel with the
-geometry - a per-mesh attribute carrying the room's `base`, so the grime band is
-measured from the floor of the room the stone belongs to rather than from world
-zero - and that is a change to a shared primitive with the whole map downstream
-of it. It wants its own pass and its own verification. **Until it lands, the
-descent ships with Act 3 about a third too dark.**
+**IT SHOULD NOT BE FIXED BY GUESSING.** The datum is a single uniform on a
+material registry that `buildMaterials()` caches and shares with the courtyard,
+so there is no value of `uGroundLevel` that is right for both a courtyard at
+grade and an interior spanning -6 to +6. Lowering it to -6 would strip the base
+grime off Act 2 and off the exterior, trading one regression for another. The
+correct fix is to make the weathering datum travel with the geometry, so the
+grime band is measured from the floor of the room the stone belongs to rather
+than from world zero.
+
+---
+
+## 6a. THE FIX: PER-BASE MATERIAL INSTANCES
+
+Landed 2026-08-01. `src/world/weathering.js` grew `weatherVariant(material, base)`
+and `syncWeatherVariants()`; `src/world/materials.js` grew `materialsForBase(base)`;
+`src/world/build.js` takes its registry per room and per barrier threshold rather
+than once for the whole interior.
+
+### Why a material instance and not a per-mesh attribute
+
+A `weatherBase` vertex attribute is the obvious answer and it was rejected on a
+count. **There is no geometry chokepoint in this codebase**: roughly 120 sites
+construct geometry directly - 69 raw constructions plus 51 `uv.js` helper calls -
+and every one of them would have to bind the attribute. The alternative, leaving
+it unbound and relying on WebGL's default generic vertex attribute of 0, is
+DRIVER-DEPENDENT. It would render correctly under swiftshader, which is what
+every harness in this repo uses, and possibly wrongly on a real GPU. A fix that
+is correct only on the machine that cannot see it failing is not a fix.
+
+**The objection to material variants was batching, and that objection was wrong
+and is retracted.** `systems/spaces.js:502-503` sets
+`courtyard.group.visible = !toInterior` and `interior.group.visible = toInterior`,
+so the two spaces never render in the same frame and an interior-only instance
+splits nothing the courtyard was sharing. The interior is not batched at all -
+`world/batch.js` is a courtyard pass - so the split is purely by distinct base.
+
+Measured on the built world, per material instance, with mesh counts:
+
+| space | instance | datum | meshes |
+|---|---|---|---|
+| courtyard | limestone / carved / granite / doorstone / sand | 0 | 99 |
+| interior | limestone | 0 | 178 |
+| interior | limestone@-6 | -6 | 152 |
+| interior | carved | 0 | 83 |
+| interior | carved@-6 | -6 | 50 |
+| interior | granite | 0 | 32 |
+| interior | granite@-6 | -6 | 51 |
+
+Three extra material instances, keyed on the room's `base`. A third elevation in
+World 2 costs one more instance and no new thinking.
+
+### What had to be wired, and what did not
+
+- **Rooms at y = 0 get the identical shared objects back.** `materialsForBase(0)`
+  returns the registry itself, so the entry band, the gallery and the whole
+  courtyard are byte-for-byte what they were.
+- **A barrier weathers from its own THRESHOLD**, which is already on the portal
+  record as `sill` and is the higher of the two floors it joins. The three
+  descent gates therefore stay on the datum instance, because the stone standing
+  in them is the gallery's stone; the two Hard-only debris doors at the King's
+  Chamber get the deep instance.
+- **The variants share `color`, `emissive` and `normalScale` OBJECTS with their
+  parent**, because `upgradeMaterials` retints in place and `applyFidelity`
+  zeroes `normalScale` in place, and both run long after the interior is built.
+- **The four texture slots and the roughness scalar are ASSIGNED rather than
+  mutated**, so they do not follow, and `syncWeatherVariants()` is called at the
+  end of `upgradeMaterials` to push them across. Without that line Act 3 would
+  keep the procedural textures while the rest of the map got the CC0 scans - a
+  difference that renders and that no test asserts.
+
+### Measured, on `test/grime.mjs`
+
+New file. It stands at each room's centre with the camera the same height above
+that room's own floor and reads the frame, and it carries its own control:
+`--defect` forces every weathering datum in the interior back to 0 in the same
+process, which is bit-for-bit the shipped defect. Same browser, same driver, same
+frame, one number different.
+
+It also hides the Mystery Box for the duration, and that is not tidiness. The
+chest has three authored spawns and is placed at ONE of them per run, and those
+three spawns are the dead centres of the Hall of Offerings, the Great Gallery and
+the Star Shaft - which is exactly where a per-room reading stands. With it in
+frame the Star Shaft read 24.28 on one run and 53.13 on the next with nothing
+changed between them. **An instrument that reports two numbers for one build is
+not measuring the build.**
+
+Both columns were taken back to back on the final tree, so the entry band's
+widening is in both of them and cancels.
+
+| room | base | datums flat (the defect) | datum travels (fixed) | delta |
+|---|---|---|---|---|
+| chamber-of-ascent | 0 | 23.27 | 23.12 | -0.2 |
+| hall-of-offerings | 0 | 21.39 | 21.03 | -0.4 |
+| granary-vault | 0 | 18.62 | 19.32 | +0.7 |
+| great-gallery | 0 | 23.68 | 23.31 | -0.4 |
+| embalming-chamber | -6 | 12.66 | **18.89** | **+6.2** |
+| canopic-crypt | -6 | 12.16 | **19.18** | **+7.0** |
+| star-shaft | -6 | 15.78 | **24.10** | **+8.3** |
+| kings-chamber | -6 | 14.09 | **19.06** | **+5.0** |
+| serdab | -6 | 7.69 | **20.02** | **+12.3** |
+| EXTERIOR (0, -60) | 0 | 69.11 | 67.07 | none, see below |
+
+Act 3's mean goes from **12.48 to 20.25** against Act 2's 21.70. Act 2 moves by
+at most 0.7 in either direction, which is its own frame-to-frame noise. **The
+Serdab, which the whole ending happens in and which lost 43 per cent, is up 160
+per cent.**
+
+**The exterior did not move.** 67.07 against 69.11 is inside its own run-to-run
+spread: eight runs measured between 66.68 and 69.20, and the variation is the
+clouds. It is the number that WOULD move if the datum had been lowered globally,
+which was the obvious wrong fix, so it is reported rather than assumed.
+
+**The datum table is the other half of the evidence.** Under `--defect` every
+instance reads `datum 0`, including the three named `@-6`, which is the control
+doing what it claims. Under the fix the same three read `datum -6` on the same
+253 meshes. The instances exist, they are worn, and they carry different numbers.
+
+**Against the recorded target.** Section 6's proof lifted the whole interior +6
+and read the Serdab at 21.78. Re-run on this instrument the same lift reads
+20.78, and the fix with nothing lifted reads 19.75. One point of the remaining
+gap is not accounted for and is stated rather than explained away; the fix is
+inside the noise band of its own control and 12.1 above the defect.
+
+`test/grime.mjs --gate` asserts the four properties that matter and passes.
+
+---
 
 **A second, smaller y dependence, and this one really is inert.**
 `core/fog.js` computes height fog density as `exp(-(y + 2) / 34)`, so a camera at
@@ -342,6 +457,85 @@ either sign, and both would have been silent:
 - `buildLights` positioned a room's fallback light at `room.height * P.y`,
   measured from zero. In a descended room that puts the room's only light above
   its own new ceiling and the room goes black with nothing reporting it.
+
+---
+
+## 6b. THE UNDERCROFT: the descent's other defect, and it was the horde's
+
+Also landed 2026-08-01, and it is the one thing in this work that was genuinely
+broken rather than merely dark.
+
+**The symptom.** `test/nav.mjs`'s revived assertion "and an actor then walks it"
+failed. A shambler placed at the Embalming Chamber's (-41, -200) spawn, with the
+gallery gate bought and the player on the gallery floor, closed **7.2 m of a
+50.8 m approach and then held position for the remaining fifty seconds**. The
+route existed the whole time: `flow.costAt` at that point read a finite 73.
+
+**The false lead, recorded because it cost real time and it is the failure mode
+this project keeps hitting.** The same suite was also reporting that sixteen of
+the interior's twenty-four spawn points had NO route at all, and that reading was
+carried as far as the owner. It was the instrument. `test/nav.mjs` passed a
+HARDCODED `footY` of 0 into `flow.costAt` for every spawn point, which was
+correct for exactly as long as every floor in the game was at zero. Asked "what
+does the route cost here, for feet at 0" about a point whose floor is at -6, the
+field correctly answers -1. A flat-map assumption inside the test, which is the
+same class of bug the descent exists to remove from the game. Fixed by asking at
+the height a body placed there would actually stand at, which is what
+`director.placeAt` uses. **Every Act 3 spawn point has always had a route.**
+
+**The real mechanism, traced per frame.** At the stall the field was handing the
+actor exactly `(0.59, -0.81)` and exactly `(-0.57, +0.82)` on alternate frames.
+Two anti-parallel headings: a limit cycle. Its own wedge detector never tripped,
+because it was moving three centimetres a frame. It was standing in the wedge
+UNDER the west descent ramp, where the gap between the Act 3 floor and the
+underside of the slab runs out - and it had walked in there because the field
+offered it that route, the crawlspace looking shorter than going round to the
+foot at z -212.
+
+**Three systems disagreed about that wedge and only one was right.**
+`player/controller.js`'s `headroomAt` has always treated the highest surface at a
+point as a ceiling, so the PLAYER has never been able to walk under a descent
+ramp. `enemies/flow.js`'s `clear()` and `enemies/mummy.js`'s `pointClear()` both
+tested headroom against wall boxes and collider cylinders only, **and a ramp is
+neither** - it is an entry in the walkable-surface list, which from underneath is
+a ceiling. So the map had one shape for the player and another for the horde.
+
+**The fix is geometry, not navigation, and that is the point.** `build.js` now
+fills the shallow end of every rising ramp's undercroft with stepped stone, up to
+the height at which a body fits under the slab. A stone ramp in a stone building
+has stone under it. Filling it means the trap is a WALL, and walls are something
+the player's resolver, the flow field's clearance test and the mummies' push-out
+all already handle correctly and identically. Nothing needed a fourth version of
+the headroom rule and no per-actor state was invented.
+
+Two supporting changes in `enemies/flow.js`, both narrow:
+
+- **`clear()` gained the missing ceiling clause**, the same one `headroomAt`
+  has had all along. Belt and braces against the geometry, and it is what makes
+  the flood and the player agree about any low spot rather than just this one.
+- **The readers' UPWARD window stopped being a tolerance.** `sample()` and
+  `costAt()` accepted any layer within `LEVEL_TOL` 1.0 above the feet; the movers
+  only ever step up `CLIMB` 0.65. That band is nowhere on flat ground and is a
+  strip across the full width of any ramp over a floor. Tightening the constant
+  to 0.65 narrowed the dead strip from 0.7 m to 0.25 m and did not remove it,
+  because the field stores each layer's height at the CELL CENTRE and the world
+  samples at the body's position, and half a cell on a 0.375 gradient is 0.13 m.
+  So the reader now asks `heightAt` for the surface the body would really be put
+  on and matches layers to that. Reader and mover agree by construction, at any
+  gradient. The DOWNWARD read stays a tolerance on purpose: down is "could I get
+  to it", which is a real option, not a claim about this frame.
+
+**What was NOT changed, deliberately.** `director.js`'s `isClear` takes no y and
+its walk-component flood is therefore two-dimensional. That is a real latent
+limit and it is written down here for World 2. It is not what was breaking
+anything: `reachesPlayer` returns true for all twenty-four interior spawn points,
+and the interior answers reachability through its room graph rather than through
+that flood. The flood is what the anti-seal spawn filter depends on, and changing
+it to chase a bug it was not causing would have been a bad trade.
+
+**Verified:** `test/nav.mjs` 19/19, including "and an actor then walks it" - the
+same chase now arrives at **30.7 s having closed 49.11 of 50.8 m**, against
+`arrivedAt: null` and 7.2 m before. `test/descent.mjs` still 34/34.
 
 ---
 

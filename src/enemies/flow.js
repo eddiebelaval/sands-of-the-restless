@@ -178,6 +178,48 @@ const DROP = 1.5;
 const LEVEL_TOL = 1.0;
 
 /**
+ * THE UPWARD READ IS NOT A TOLERANCE. IT IS A QUESTION FOR THE FLOOR SAMPLER.
+ *
+ * A reader may never be offered a layer ABOVE the surface the world would
+ * actually put its body on, and the only thing that knows where that is, is the
+ * same `heightAt` the player controller and the mummies already call. So both
+ * readers below resolve the actor's real surface first and match layers to THAT,
+ * rather than windowing on the raw feet height. This constant is only the
+ * fallback for a context that hands the field no sampler.
+ *
+ * THE BUG THIS CLOSES, measured on the west descent ramp rather than reasoned
+ * about. A shambler placed at the Embalming Chamber's (-41, -200) spawn walked
+ * correctly toward the descent, arrived under the ramp, and stopped dead for the
+ * remaining fifty seconds, closing 7.2 m of a 50.8 m approach. Two adjacent
+ * cells were pointing at each other: the one nearer the ramp foot read the RAMP
+ * layer, whose route home is north and up, and the one behind it read the FLOOR
+ * layer, whose route home is south to the foot and then up. Both answers are
+ * correct for the layer they came from, and the actor - on the floor, under the
+ * ramp - could act on only one of them.
+ *
+ * The reason a threshold cannot fix this was also measured. The first cut of
+ * this simply tightened the window from LEVEL_TOL 1.0 to CLIMB 0.65, on the
+ * argument that the reader should not be offered what the mover cannot climb.
+ * That narrowed the dead strip from about 0.7 m to about 0.25 m and did not
+ * remove it, because the two sides still do not agree exactly: the field stores
+ * each layer's height at the CELL CENTRE and the world samples at the body's
+ * own position, and on a 0.375 gradient half a cell is 0.13 m of height. Any
+ * constant leaves a sliver where one says climbable and the other says no, and a
+ * ramp running over a floor sweeps the gap continuously through every constant
+ * you could pick. Asking the sampler removes the disagreement instead of moving
+ * it, at every gradient, permanently.
+ *
+ * The DOWNWARD read stays a tolerance, and deliberately - see READ_DOWN. Down is
+ * not symmetrical with up: a body can leave a layer below it whenever it likes
+ * by walking off the side, so reading down is a real option rather than a claim
+ * about what the sampler would do this frame.
+ *
+ * THIS DOES NOT FIX THE READ_DOWN STRIP documented below. That is the same shape
+ * of failure in the other direction and still wants its own pass.
+ */
+const READ_UP = CLIMB;
+
+/**
  * How far BELOW an actor's feet a layer may be and still be worth reading.
  *
  * Reading is not symmetrical, because bodies are not. A shambler standing part
@@ -300,6 +342,19 @@ export function createFlowField() {
    */
   let geometryDirty = true;
 
+  /**
+   * The live space's floor sampler, kept from the last rebuild.
+   *
+   * The flood has always had it on `ctx`; the READERS did not, and that is the
+   * whole of why they had to guess at what a body could stand on with a
+   * constant. Held rather than passed because sample() is called by every actor
+   * every frame through a signature that has no room for it, and because a
+   * reader asking a DIFFERENT sampler than the flood used would be a subtler
+   * version of the same bug. It is replaced on every rebuild, which is also when
+   * the space can change, so it can never be the previous world's.
+   */
+  let sampleFloor = null;
+
   // The bucket ring. Plain arrays of slot indices, truncated rather than
   // reallocated between rebuilds: a rebuild that allocates is a rebuild that
   // hands the collector work several times a second.
@@ -372,6 +427,48 @@ export function createFlowField() {
       const want = c.r + PAD;
       if (dx * dx + dz * dz < want * want) return false;
     }
+
+    /**
+     * AND UNDER A WALKABLE SLAB, WHICH IS THE THIRD THING THAT CAN BE OVERHEAD
+     * AND WAS THE ONLY ONE THIS TEST DID NOT KNOW ABOUT.
+     *
+     * The two loops above cover the wall boxes and the collider cylinders. They
+     * do not cover a RAMP or a LEDGE, because neither is a wall or a cylinder:
+     * they are entries in the room's walkable-surface list, and from underneath
+     * they are ceilings. `player/controller.js`'s headroomAt has had this exact
+     * clause the whole time - it takes the highest surface at the point, and
+     * treats it as a ceiling whenever it is more than a step above the feet -
+     * so until now the map had one shape for the player and another for the
+     * horde, which is the failure the comment above this one exists to name.
+     *
+     * WHAT IT COST, measured. Each descent ramp is 8 m wide and drops 6 m over
+     * 16 m of run, so the wedge under its lower end is a crawlspace: at the
+     * foot the gap between the Act 3 floor and the underside of the slab is
+     * centimetres. The flood happily carved that crawlspace open, so the field
+     * offered the horde a route through it, and a shambler crossing the
+     * Embalming Chamber walked under the ramp instead of round to its foot,
+     * pressed itself into the wedge at (-19.2, -210.1) and stayed there for the
+     * rest of the run. The route it needed - out from under, south to the foot
+     * at z -212, then north up the slope - was in the field the whole time and
+     * cost 50; the crawlspace looked shorter and was not a place a body fits.
+     *
+     * The highest surface is used as the ceiling rather than the slab's
+     * underside, which over-charges by one RAMP_T. That is deliberate and it is
+     * the same approximation the player controller makes, and the two agreeing
+     * is worth more here than either being exact: the alternative is a strip
+     * 0.7 m deep where the horde believes it fits and the player does not.
+     *
+     * The gallery is unaffected, and that is the check that says this is a
+     * headroom rule and not a "ramps block" rule: its upper level is six metres
+     * over its own floor, so the floor under it keeps four metres of clearance
+     * and stays open, which rooms.js calls the thing that makes it a genuine
+     * second storey rather than a mezzanine.
+     */
+    if (ctx.heightAt) {
+      const top = ctx.heightAt(x, z);
+      if (top > floorY + CLIMB && top - floorY < BODY_H) return false;
+    }
+
     return true;
   }
 
@@ -430,6 +527,11 @@ export function createFlowField() {
    */
   function rebuild(ctx, px, pz, pFeetY) {
     if (!resize(ctx)) { stat.valid = false; return false; }
+
+    // The readers need the same sampler the flood is about to use. Taken before
+    // the early returns below, so a rebuild that bails still leaves the readers
+    // pointed at the live space rather than at the one before it.
+    sampleFloor = ctx.heightAt || null;
 
     const t0 = performance.now();
 
@@ -800,6 +902,23 @@ export function createFlowField() {
    * gradient leans off walls for free and the actor arrives at a doorway already
    * lined up with it.
    */
+  /**
+   * The highest layer height a body standing at (x, z) with feet at feetY is
+   * allowed to read, and the one number both readers below agree on.
+   *
+   * It is the surface the WORLD would put that body on, plus SURFACE_TOL to
+   * absorb the difference between a layer height stored at the cell centre and a
+   * surface sampled at the body's own position. See READ_UP for the measurement
+   * that says a constant cannot do this job.
+   *
+   * Falls back to the feet plus the climb limit when no sampler is held, which
+   * is the old behaviour and is what a context without `heightAt` gets.
+   */
+  function readCeiling(x, z, feetY) {
+    if (!sampleFloor) return feetY + READ_UP;
+    return sampleFloor(x, z, feetY) + SURFACE_TOL;
+  }
+
   function sample(x, z, feetY, out) {
     stat.reads++;
     if (!stat.valid) { stat.misses++; return false; }
@@ -818,6 +937,8 @@ export function createFlowField() {
      * LOWEST distance rather than the nearest cell so that an actor in a
      * doorway is pulled through it rather than back out of it.
      */
+    const ceiling = readCeiling(x, z, feetY);
+
     let best = -1;
     let bestD = INF;
     for (let r = 0; r <= 2; r++) {
@@ -836,11 +957,11 @@ export function createFlowField() {
           for (let s = 0; s < LAYERS; s++) {
             const k = kb + s;
             if (dist[k] >= INF) continue;
-            // Asymmetric on purpose. See READ_DOWN: a body can drop onto a layer
-            // it cannot climb back to, and the layer under its feet is often
-            // the one holding the short way home.
-            const dh = floor[k] - feetY;
-            if (dh > LEVEL_TOL || -dh > READ_DOWN) continue;
+            // Asymmetric on purpose, and the two sides are different KINDS of
+            // question. Up is "would the floor sampler put my body there", which
+            // only the sampler can answer; down is "could I get down to it",
+            // which is a tolerance. See READ_UP and READ_DOWN.
+            if (floor[k] > ceiling || feetY - floor[k] > READ_DOWN) continue;
             if (dist[k] < bestD) { bestD = dist[k]; best = k; }
           }
         }
@@ -955,6 +1076,11 @@ export function createFlowField() {
     if (!stat.valid) return -1;
     const i0 = Math.round((x - minX) / STEP);
     const j0 = Math.round((z - minZ) / STEP);
+    // Identical rule to sample()'s, deliberately: this function exists so a
+    // suite can assert the route an actor would be given without spawning one,
+    // and a cost read through a wider window than the actor's would answer about
+    // a route the actor is never offered.
+    const ceiling = feetY === undefined ? Infinity : readCeiling(x, z, feetY);
     let bestD = INF;
     for (let r = 0; r <= 2; r++) {
       for (let dj = -r; dj <= r; dj++) {
@@ -966,10 +1092,8 @@ export function createFlowField() {
           for (let s = 0; s < LAYERS; s++) {
             const k = kb + s;
             if (dist[k] >= INF) continue;
-            if (feetY !== undefined) {
-              const dh = floor[k] - feetY;
-              if (dh > LEVEL_TOL || -dh > READ_DOWN) continue;
-            }
+            if (feetY !== undefined
+              && (floor[k] > ceiling || feetY - floor[k] > READ_DOWN)) continue;
             if (dist[k] < bestD) bestD = dist[k];
           }
         }

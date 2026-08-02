@@ -240,21 +240,43 @@ const opening = await page.evaluate(async () => {
 // 1. the first wall buy: the prompt appears, and it quotes a price
 // ---------------------------------------------------------------------------
 
-const WALLBUYS = {
-  smg:     { x: -4,   z: -156.6, rot: Math.PI,      cost: 1000 },
-  shotgun: { x: -40,  z: -156.6, rot: Math.PI,      cost: 1200 },
-  carbine: { x: -9,   z: -159.4, rot: 0,            cost: 1500 },
-  lmg:     { x: 15.4, z: -214,   rot: -Math.PI / 2, cost: 1600 },
-};
-
-const SHRINES = {
-  anubis:  { x: 10.1, z: -143,   rot: Math.PI / 2 },
-  shu:     { x: -24,  z: -141.9, rot: 0 },
-  set:     { x: 36.4, z: -149,   rot: Math.PI / 2 },
-  sekhmet: { x: 9,    z: -159.9, rot: 0 },
-  ptah:    { x: -12,  z: -224,   rot: -Math.PI / 2 },
-  thoth:   { x: 38.1, z: -226,   rot: Math.PI / 2 },
-};
+/**
+ * WHERE THE FIXTURES ARE, READ OFF THE BUILT WORLD RATHER THAN COPIED FROM IT.
+ *
+ * These were two hand-copied tables of coordinates that duplicated rooms.js, and
+ * they duplicated it silently. When the Chamber of Ascent was widened and the
+ * Hall of Offerings and Granary Vault slid six metres either way, every
+ * wall-mounted fixture in the entry band moved with its wall and this suite went
+ * on standing where they used to be. Eleven checks failed at once and not one of
+ * them named the cause: they read as "the shotgun wall does not quote 1200" and
+ * "a lit shrine quotes no price", which is exactly what standing in an empty
+ * patch of floor looks like from inside an assertion.
+ *
+ * `g.interacts.records` is the list the game itself raycasts, so a fixture that
+ * has MOVED is now one this finds in its new place, and a fixture that has been
+ * DELETED is a missing key rather than a wrong number. The exact fixture counts
+ * asserted at the bottom of this file are what guard that second case.
+ */
+const { WALLBUYS, SHRINES } = await page.evaluate(() => {
+  const g = window.__SANDS__;
+  const out = { WALLBUYS: {}, SHRINES: {} };
+  for (const r of g.interacts.records) {
+    // INTERIOR ONLY. The B3AR is a wall buy standing in the COURTYARD, a
+    // hundred and ten units away in a cell this suite is not in, and it is in
+    // the same record list because buying inside and buying outside are
+    // deliberately one code path. Walking the whole list would teleport the
+    // player to its courtyard coordinates while the interior is the live space,
+    // which photographs as a black frame - measured, luma 1.53 - and reports as
+    // "no black frames" failing rather than as a harness standing in the void.
+    if (r.room === 'courtyard') continue;
+    if (r.type === 'wallbuy') {
+      out.WALLBUYS[r.config.weapon] = { x: r.x, z: r.z, rot: r.rot || 0, cost: r.config.cost };
+    } else if (r.type === 'shrine') {
+      out.SHRINES[r.config.boon] = { x: r.x, z: r.z, rot: r.rot || 0 };
+    }
+  }
+  return out;
+});
 
 const atWall = await page.evaluate(async (w) => {
   const g = window.__SANDS__;

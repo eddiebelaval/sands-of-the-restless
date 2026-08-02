@@ -80,7 +80,40 @@ export const ROOMS = [
   {
     id: 'chamber-of-ascent',
     name: 'Chamber of Ascent',
-    bounds: { x: 0, z: -149, w: 24, d: 18 },
+
+    /**
+     * THIRTY-SIX WIDE, UP FROM TWENTY-FOUR, AND IT GREW ON X BECAUSE IT CANNOT
+     * GROW ON Z.
+     *
+     * The owner said twice that the first interior room is too small: "its harad
+     * to run from enemies in sucha small space espeacially in later waves. this
+     * needs more balance." At 24 x 18 it was 352 m2 of net floor, the second
+     * smallest room in the map, carrying three spawn points and nine props. It
+     * is now 36 x 18, which is 544 net, up 55 per cent.
+     *
+     * NEITHER Z EDGE CAN MOVE. z = -140 is the threshold the sealed doorway
+     * hands the player over at, and systems/doors.js pins that seam with
+     * hand-placed absolute geometry argued from the courtyard grade - DAYLIGHT
+     * at y 2.10 / z -141.06 and VOID at y 4.4. z = -158 is the shared wall line
+     * with the Great Gallery. So the depth is fixed at 18 and the whole of the
+     * gain is on X.
+     *
+     * IT IS STILL CENTRED ON X = 0, which is the axis the entrance, the gallery
+     * and the whole interior are laid out on, so the two neighbours shift six
+     * each rather than the room growing off one side. Occupied span across row A
+     * goes from 88 to 100.
+     *
+     * THIRTY-SIX AND NOT MORE, and the limit is the room's aspect rather than
+     * the envelope. Its south wall has to stay inside the gallery's north wall
+     * line, which spans x -26..26, so 52 is the geometric ceiling. But at 36 the
+     * net floor is 34 x 16, which is already 2.1 to 1; at 44 it is 2.6 to 1 and
+     * the room stops being a chamber and becomes a corridor, which is WORSE to
+     * kite in than a small square. The rest of the answer to "not enough room to
+     * run" is the free doorway below, which hands the player the Hall and the
+     * Gallery from the first frame - about 2,700 m2 at wave one against 352.
+     */
+    bounds: { x: 0, z: -149, w: 36, d: 18 },
+
     // THE DATUM. Every other elevation in the map is measured against this one,
     // because the sealed doorway hands the player over at a real opening whose
     // two hand-placed fade sheets and threshold z are pinned to the courtyard
@@ -90,31 +123,122 @@ export const ROOMS = [
     lightingProfile: 'chamber',
 
     portals: [
-      // Both cost the same on purpose: the split is about which half of the
-      // map you open first, not which is cheaper.
-      { to: 'hall-of-offerings', at: { x: -12, z: -149 }, width: 4.0, kind: 'debris', cost: 750 },
-      { to: 'granary-vault', at: { x: 12, z: -149 }, width: 4.0, kind: 'debris', cost: 750 },
+      /**
+       * ONE EXIT IS FREE, AND IT IS THIS ONE.
+       *
+       * It used to be 750 of debris, the same as the granary, on the argument
+       * that "the split is about which half of the map you open first, not which
+       * is cheaper". That argument is about the SECOND door. The first one was
+       * pricing the player's legs: until it was bought there was one room, and
+       * a wave-survival game whose first room has no exit is a room you die in
+       * rather than a room you fight in.
+       *
+       * THE HALL RATHER THAN THE GRANARY, for three reasons that are all about
+       * space. The Hall is 576 m2 net against the Granary's 384. It carries two
+       * parallel rows of five colonnades, which is the best kiting geometry in
+       * the interior: a train pulled round a colonnade strings out instead of
+       * bunching. And BOTH neighbours already open onto the Great Gallery at
+       * cost 0, so freeing this one hands the player the gallery's 1,800 m2 as
+       * well. Space at wave one goes from 352 m2 to about 2,700.
+       *
+       * 'open' AND NOT 'debris' AT COST ZERO, and the difference is the whole
+       * point of the change. A barrier record is built for every portal whose
+       * kind is not 'open', and systems/doors.js then prompts "OPEN CHAMBER OF
+       * ASCENT [F]" on a zero-cost one. That is a free DOOR: the player still
+       * has to reach it, stop, look at it and press a key. With a horde behind
+       * them that is not the same thing as an opening at all. Both neighbours
+       * already use 'open' at cost 0 for their gallery portals, so this is the
+       * shipped idiom rather than a new case.
+       *
+       * THE GRANARY KEEPS ITS 750, and that is the half of this that is easy to
+       * get wrong. With the hall free, the granary's price stops being a toll on
+       * leaving the first room and becomes the purchase that CLOSES THE LOOP:
+       * chamber to hall to gallery to granary to chamber. The Act 2 train costs
+       * 750 to close instead of 1500, and it is still something the player buys
+       * rather than something they are given.
+       */
+      { to: 'hall-of-offerings', at: { x: -18, z: -149 }, width: 4.0, kind: 'open', cost: 0 },
+      { to: 'granary-vault', at: { x: 18, z: -149 }, width: 4.0, kind: 'debris', cost: 750 },
     ],
 
+    // Spread to the new width. All three stay in the southern half, away from
+    // the entry threshold, which is what stops the horde appearing in the
+    // player's face on the frame they walk in.
     spawnPoints: [
-      { x: -9, z: -155 },
-      { x: 9, z: -155 },
+      { x: -15, z: -154 },
+      { x: 15, z: -154 },
       { x: 0, z: -156 },
     ],
 
+    /**
+     * REDISTRIBUTED, NOT JUST INHERITED. Every slot here is an absolute world
+     * coordinate, so widening the room on its own would have left all nine props
+     * clustered down the middle with six metres of bare floor at each new edge.
+     */
     propSlots: [
-      { type: 'pillar', x: -7, z: -145, rot: 0 },
-      { type: 'pillar', x: 7, z: -145, rot: 0 },
-      { type: 'pillar', x: -7, z: -153, rot: 0 },
-      { type: 'pillar', x: 7, z: -153, rot: 0 },
-      { type: 'brazier', x: -4, z: -142.5, rot: 0 },
-      { type: 'brazier', x: 4, z: -142.5, rot: 0 },
-      { type: 'stela', x: 10.5, z: -156, rot: -Math.PI / 2 },
-      // Well clear of both debris doorways. Rubble parked in a portal is the
-      // one prop that would still be blocking it after the player has paid to
-      // clear it, since the doorway barrier is its own object.
-      { type: 'rubble', x: -10, z: -143, rot: 0.6 },
-      { type: 'rubble', x: 5, z: -156, rot: 2.1 },
+      // THE PILLAR RING, pushed out from x +/-7 to +/-11 and pulled in from
+      // z +/-4 to +/-3 of the room's centre line.
+      //
+      // Both moves are about the lane a player runs when they kite. At the old
+      // spacing the gap between a pillar and the side wall was 4.0 gross, which
+      // after the pillar's 1.15 collider and the player's own 0.55 is 2.3 m of
+      // actual walkable lane - narrow enough that a body coming the other way
+      // corks it. It is now 4.3. The north and south lanes were 2.3 for the same
+      // arithmetic and are now 3.3, so the whole perimeter circuit is walkable
+      // at its narrowest point rather than only on three sides.
+      //
+      // The ring is 22 x 6, which also leaves the middle of the room open: a
+      // player can cut across between the pillar pairs instead of only running
+      // round them, and a circuit with a shortcut in it is a choice.
+      { type: 'pillar', x: -11, z: -146, rot: 0 },
+      { type: 'pillar', x: 11, z: -146, rot: 0 },
+      { type: 'pillar', x: -11, z: -152, rot: 0 },
+      { type: 'pillar', x: 11, z: -152, rot: 0 },
+      // THE FIRES CARRY THE ROOM'S TWO LIGHTS AND HAVE TO BE WHERE THE LIGHT IS
+      // WANTED. buildLights gives a 'chamber' profile at most two point lights
+      // and hangs them on the braziers, spread across the anchors in authored
+      // order. At the old (+/-4, -142.5) both lights sat against the north wall
+      // within eight metres of each other, which lit a 24-wide room and would
+      // have left the east and west thirds of a 36-wide one dark. At +/-6 on the
+      // centre line they sit near the centroid of each half.
+      //
+      // OFF THE EAST-WEST AXIS, AND THAT COST A PLAYED RUN TO FIND.
+      //
+      // The first cut of this put them at (-6, -149) and (6, -149), on the
+      // centre line, on the argument that the middle of the room is wide open
+      // and a player has seven metres of floor to walk round them in. A player
+      // does. A STRAIGHT LINE DOES NOT, and z = -149 is not just any line: it is
+      // the axis both side doorways sit on, so it is the line the player walks
+      // when they run from one to the other. Measured, on an empty map, holding
+      // W west from the room's centre: 4.8 m of ground in 200 frames, 94 per
+      // cent of them corked, stopped dead at x -4.78 - which is exactly the
+      // brazier's 0.8 collider plus the player's own 0.55.
+      //
+      // This is the Embalming Chamber's brazier lesson arriving in the room the
+      // rule was written for, and it is in DESCENT.md in capitals: NOTHING MAY
+      // STAND ON THE AXIS THE PLAYER IS PUT DOWN ON.
+      //
+      // On the pillar rows instead, and diagonally, which also lights better: at
+      // (-6, -146) and (6, -152) the two point lights buildLights hangs on them
+      // sit in opposite quadrants and cover all four corners inside the
+      // profile's 24 m range. Both are clear of the axis band z -147..-151, of
+      // the north lane at z -143.5, of the south lane at z -155, and of the
+      // pillars by three metres.
+      { type: 'brazier', x: -6, z: -146, rot: 0 },
+      { type: 'brazier', x: 6, z: -152, rot: 0 },
+      // MOVED TO THE WEST WALL AND IT NOW FACES THE RIGHT WAY. It stood at
+      // x 10.5 with rot -PI/2, which is +X, half a metre from the east wall and
+      // pointing INTO it - the mirror of what every other stela in the map does
+      // (see the King's Chamber pair, west wall facing +X, east wall facing -X).
+      // On the west wall the same rot reads into the room, and it gives the
+      // south-west quarter something to be, which the widening otherwise
+      // emptied.
+      { type: 'stela', x: -16.5, z: -156, rot: -Math.PI / 2 },
+      // Well clear of both doorways. Rubble parked in a portal is the one prop
+      // that would still be blocking it after the player has paid to clear it,
+      // since the doorway barrier is its own object.
+      { type: 'rubble', x: -15.5, z: -143, rot: 0.6 },
+      { type: 'rubble', x: 12, z: -156, rot: 2.1 },
     ],
 
     interactSlots: [
@@ -138,9 +262,12 @@ export const ROOMS = [
       // dark rather than that they are poor, and now knows there is a switch
       // somewhere. That is the power gate explaining itself an hour before the
       // player can reach it.
+      // Moved out with the east wall, keeping its 0.9 m stand-off from the
+      // wall's inner face. A wall-mounted fixture left at its old x would be
+      // a shrine floating six metres inside the room.
       {
         type: 'shrine',
-        x: 10.1, z: -143, rot: Math.PI / 2,
+        x: 16.1, z: -143, rot: Math.PI / 2,
         config: { boon: 'anubis' },
       },
     ],
@@ -149,44 +276,92 @@ export const ROOMS = [
   {
     id: 'hall-of-offerings',
     name: 'Hall of Offerings',
-    bounds: { x: -31, z: -149, w: 38, d: 18 },
+
+    /**
+     * SHIFTED SIX WEST, SAME SIZE. Its east wall is the Chamber of Ascent's west
+     * wall, and that wall moved from x -12 to x -18 when the entry room grew, so
+     * this room moves with it rather than being eaten by it. 38 x 18 and 576 m2
+     * net, unchanged; every spawn, prop and fixture below moved by exactly -6
+     * with the shell so the room is the same room in a new place.
+     */
+    bounds: { x: -37, z: -149, w: 38, d: 18 },
     base: 0,
     height: 9,
     lightingProfile: 'corridor',
 
     portals: [
-      { to: 'great-gallery', at: { x: -19, z: -158 }, width: 4.5, kind: 'open', cost: 0 },
+      /**
+       * MOVED THREE WEST, NOT SIX, AND THAT IS THE ONE NUMBER IN THIS SHIFT THAT
+       * IS NOT A TRANSLATION.
+       *
+       * This opening is cut from BOTH sides: it sits on z = -158, which is this
+       * room's south wall and the Great Gallery's north wall, and the gallery
+       * is not moving. Its north wall spans x -26..26. Carried the full six to
+       * x -25 the 4.5-wide opening would run from -27.25, past the gallery's own
+       * west corner, and buildShell would leave that corner of the gallery open
+       * to the rock. Left at -19 it would run to -16.75, past THIS room's new
+       * east wall at -18, and open this room's corner instead.
+       *
+       * -22 is the only place both piers survive: 1.75 m of gallery wall west of
+       * the opening and 1.75 m of hall wall east of it. That is the same order of
+       * margin the Act 3 loop doorways carry at x -17.
+       */
+      { to: 'great-gallery', at: { x: -22, z: -158 }, width: 4.5, kind: 'open', cost: 0 },
     ],
 
     spawnPoints: [
-      { x: -46, z: -144 },
-      { x: -46, z: -154 },
-      { x: -34, z: -155 },
-      { x: -22, z: -144 },
+      { x: -52, z: -144 },
+      { x: -52, z: -154 },
+      { x: -40, z: -155 },
+      { x: -28, z: -144 },
     ],
 
     propSlots: [
       // Two rows of columns down the long axis. The hall is the one room whose
       // read is entirely rhythm, so the spacing is even and the count is odd.
-      { type: 'colonnade', x: -45, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -38.5, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -32, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -25.5, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -19, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -45, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -38.5, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -32, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -25.5, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -19, z: -152.5, rot: 0 },
+      { type: 'colonnade', x: -51, z: -145.5, rot: 0 },
+      { type: 'colonnade', x: -44.5, z: -145.5, rot: 0 },
+      { type: 'colonnade', x: -38, z: -145.5, rot: 0 },
+      { type: 'colonnade', x: -31.5, z: -145.5, rot: 0 },
+      { type: 'colonnade', x: -25, z: -145.5, rot: 0 },
+      { type: 'colonnade', x: -51, z: -152.5, rot: 0 },
+      { type: 'colonnade', x: -44.5, z: -152.5, rot: 0 },
+      { type: 'colonnade', x: -38, z: -152.5, rot: 0 },
+      { type: 'colonnade', x: -31.5, z: -152.5, rot: 0 },
+      { type: 'colonnade', x: -25, z: -152.5, rot: 0 },
 
-      { type: 'offering-table', x: -42, z: -149, rot: 0 },
-      { type: 'offering-table', x: -28, z: -149, rot: 0 },
-      { type: 'urn', x: -44.5, z: -156, rot: 0.4 },
-      { type: 'urn', x: -43, z: -155.2, rot: 1.9 },
-      { type: 'urn', x: -21, z: -142.8, rot: 2.7 },
-      { type: 'brazier', x: -47, z: -149, rot: 0 },
-      { type: 'brazier', x: -35, z: -142.6, rot: 0 },
-      { type: 'rubble', x: -15.5, z: -155, rot: 1.1 },
+      { type: 'offering-table', x: -48, z: -149, rot: 0 },
+      { type: 'offering-table', x: -34, z: -149, rot: 0 },
+      { type: 'urn', x: -50.5, z: -156, rot: 0.4 },
+      { type: 'urn', x: -49, z: -155.2, rot: 1.9 },
+      { type: 'urn', x: -27, z: -142.8, rot: 2.7 },
+      { type: 'brazier', x: -53, z: -149, rot: 0 },
+      { type: 'brazier', x: -41, z: -142.6, rot: 0 },
+      // NOT TRANSLATED WITH THE ROOM, BECAUSE THE DOORWAY IT SITS BESIDE WAS NOT
+      // TRANSLATED EITHER. It was at (-15.5, -155) with the gallery portal at
+      // x -19, which put it clear to the east of a 4.5-wide opening. The room
+      // moved six west and the portal only three, so carrying it the full six to
+      // -21.5 parked a two-metre rubble pile dead centre in front of the
+      // doorway. Measured: a player holding W south down x = -22 from z -152
+      // never reached the gallery at all - it slid along the pile and came to
+      // rest at (-31.23, -156.58), nine metres off the line it started on, with
+      // no corked frame anywhere to say why.
+      //
+      // NOR IN THE SOUTH CORRIDOR, WHICH WAS THE SECOND PLACE IT WENT.
+      //
+      // At (-35, -155.5) it was clear of both doorways and it plugged something
+      // else. The strip between the southern colonnade row at z -152.5 and the
+      // south wall is 2.6 m of clear floor, reached through the 2.7 m gaps
+      // between columns, and a rubble pile carved at the flood's 0.55 pad fills
+      // it wall to column. Measured: the Hall's own spawn point at (-40, -155)
+      // went from a finite route to `route: -1` - a place the director will put
+      // an enemy that then cannot reach the player, which is the exact failure
+      // test/nav.mjs exists to catch, and it caught it.
+      //
+      // The north-east corner has no colonnade, no doorway and no corridor to
+      // plug. Its own clearances: 2.1 m from the free west doorway's opening,
+      // 4.3 m from the nearest column, 0.6 m off the east wall face.
+      { type: 'rubble', x: -21.5, z: -143, rot: 1.1 },
     ],
 
     interactSlots: [
@@ -212,17 +387,17 @@ export const ROOMS = [
       // reach, which is what stops the box being a vending machine to camp.
       {
         type: 'box',
-        x: -31, z: -149, rot: Math.PI / 2,
+        x: -37, z: -149, rot: Math.PI / 2,
         config: { spawn: 'A', cost: 950 },
       },
       {
         type: 'wallbuy',
-        x: -40, z: -156.6, rot: Math.PI,
+        x: -46, z: -156.6, rot: Math.PI,
         config: { weapon: 'shotgun', cost: 1200 },
       },
       {
         type: 'shrine',
-        x: -24, z: -141.9, rot: 0,
+        x: -30, z: -141.9, rot: 0,
         config: { boon: 'shu' },
       },
     ],
@@ -231,19 +406,29 @@ export const ROOMS = [
   {
     id: 'granary-vault',
     name: 'Granary Vault',
-    bounds: { x: 25, z: -149, w: 26, d: 18 },
+
+    /**
+     * SHIFTED SIX EAST, SAME SIZE, and the mirror of the Hall's move. Its west
+     * wall is the Chamber of Ascent's east wall and that wall went from x 12 to
+     * x 18. 26 x 18 and 384 m2 net, unchanged.
+     */
+    bounds: { x: 31, z: -149, w: 26, d: 18 },
     base: 0,
     height: 7,
     lightingProfile: 'chamber',
 
     portals: [
-      { to: 'great-gallery', at: { x: 19, z: -158 }, width: 4.5, kind: 'open', cost: 0 },
+      // Three east, not six, for the reason spelled out on the Hall's twin of
+      // this portal: the opening is cut from the gallery's north wall as well as
+      // from this room's south wall, and the gallery has not moved. 22 leaves
+      // 1.75 m of pier on each side.
+      { to: 'great-gallery', at: { x: 22, z: -158 }, width: 4.5, kind: 'open', cost: 0 },
     ],
 
     spawnPoints: [
-      { x: 35, z: -144 },
-      { x: 36, z: -151 },
-      { x: 15, z: -144 },
+      { x: 41, z: -144 },
+      { x: 42, z: -151 },
+      { x: 21, z: -144 },
     ],
 
     propSlots: [
@@ -252,21 +437,21 @@ export const ROOMS = [
       // four-jar chain began behind a thousand-gold door; it now starts in the
       // first minute of the run, and the player crosses the threshold already
       // holding a piece of the thing they are there to finish.
-      { type: 'urn', x: 15.5, z: -145, rot: 0.2 },
-      { type: 'urn', x: 17.2, z: -144.2, rot: 1.4 },
-      { type: 'urn', x: 16.4, z: -153.6, rot: 2.6 },
-      { type: 'urn', x: 34, z: -155.5, rot: 0.9 },
-      { type: 'urn', x: 35.6, z: -154.2, rot: 2.2 },
-      { type: 'pillar', x: 21, z: -145.5, rot: 0 },
-      { type: 'pillar', x: 29, z: -145.5, rot: 0 },
-      { type: 'brazier', x: 25, z: -143, rot: 0 },
-      { type: 'rubble', x: 30.5, z: -153, rot: 1.7 },
+      { type: 'urn', x: 21.5, z: -145, rot: 0.2 },
+      { type: 'urn', x: 23.2, z: -144.2, rot: 1.4 },
+      { type: 'urn', x: 22.4, z: -153.6, rot: 2.6 },
+      { type: 'urn', x: 40, z: -155.5, rot: 0.9 },
+      { type: 'urn', x: 41.6, z: -154.2, rot: 2.2 },
+      { type: 'pillar', x: 27, z: -145.5, rot: 0 },
+      { type: 'pillar', x: 35, z: -145.5, rot: 0 },
+      { type: 'brazier', x: 31, z: -143, rot: 0 },
+      { type: 'rubble', x: 36.5, z: -153, rot: 1.7 },
     ],
 
     interactSlots: [
       {
         type: 'shrine',
-        x: 36.4, z: -149, rot: Math.PI / 2,
+        x: 42.4, z: -149, rot: Math.PI / 2,
         config: { boon: 'set' },
       },
     ],
@@ -968,8 +1153,19 @@ export const ROOMS = [
   },
 ];
 
-/** The footprint every room fits inside. Used for sanity checks and minimaps. */
-export const INTERIOR_BOUNDS = { minX: -50, maxX: 54, minZ: -272, maxZ: -140 };
+/**
+ * The footprint every room fits inside. Used for sanity checks and minimaps.
+ *
+ * minX went from -50 to -56 when the entry room was widened and the Hall of
+ * Offerings moved west to make room. It is a bounding box rather than a budget -
+ * the interior is carved out of solid rock and there is nothing on the other
+ * side of it - but three things read it and all three want it right: the
+ * player's own clamp in systems/spaces.js, the minimap's fit, and the flow
+ * field's grid, which is sized from it and would otherwise stop nine columns
+ * short of the Hall's west wall and refuse to route the horde in the last six
+ * metres of it. maxX stays 54, which is still the Serdab.
+ */
+export const INTERIOR_BOUNDS = { minX: -56, maxX: 54, minZ: -272, maxZ: -140 };
 
 const BY_ID = new Map(ROOMS.map((r) => [r.id, r]));
 

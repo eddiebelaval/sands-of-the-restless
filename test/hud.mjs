@@ -871,29 +871,46 @@ await page.evaluate(() => {
   check(step.cost === 1000, 'objective d: quotes the wall price', String(step.cost));
 }
 
-// e. armed. Next is the debris, because the route to the Kindling runs through
-//    it - nothing in the tracker knows the word "debris" until the graph says so.
+/**
+ * e. armed. NEXT IS THE GALLERY GATE, AND IT USED TO BE THE DEBRIS.
+ *
+ * This step used to assert `CLEAR THE DEBRIS TO ...` at 750, and the change is
+ * the objective director agreeing with a design decision it was never told
+ * about. The entry room's west doorway is now `kind: 'open'` at cost 0, so the
+ * route from the Chamber of Ascent through the Hall of Offerings to the Great
+ * Gallery is free from the first frame. The tracker points at the next SHUT
+ * thing on the route to the Kindling, and with that stretch open the next shut
+ * thing really is the Embalming Chamber's gate.
+ *
+ * The Granary's 750 has not moved and has not stopped mattering. It is simply
+ * no longer ON the route: it closes the Act 2 loop, chamber to hall to gallery
+ * to granary to chamber, which is a thing the player buys for the run rather
+ * than a thing the objective can tell them to do next. That the tracker worked
+ * this out from the graph alone, with no edit, is the tracker being right.
+ */
 {
   const { step } = await stage('smg in hand', () => {
     const g = window.__SANDS__;
     g.weapons.grant('smg');
     g.weapons.equip('smg');
   });
-  check(step.text.startsWith('CLEAR THE DEBRIS TO '), 'objective e: the debris', step.text);
-  check(/HALL OF OFFERINGS|GRANARY VAULT/.test(step.text),
-    'objective e: names a room the debris actually opens', step.text);
-  check(step.cost === 750, 'objective e: the authored debris price', String(step.cost));
+  check(step.text === 'OPEN THE WAY TO EMBALMING CHAMBER',
+    'objective e: the gallery gate, the route being free to it now', step.text);
+  check(step.cost === 1000, 'objective e: the authored gate price', String(step.cost));
 }
 
-// f. one half of the map open. The next shut thing on the route is the gate.
+// f. the granary debris is OFF the route and buying it must not change the
+//    objective. This is the other half of the claim above: if clearing a door
+//    that only closes a loop moved the tracker, the tracker would be following
+//    doors rather than the route.
 {
-  const { step } = await stage('hall debris cleared', () => {
+  const { step } = await stage('granary debris cleared', () => {
     const g = window.__SANDS__;
-    const d = g.doors.all.find((x) => x.id === 'chamber-of-ascent/hall-of-offerings');
+    const d = g.doors.all.find((x) => x.id === 'chamber-of-ascent/granary-vault');
     d.open();
   });
   check(step.text === 'OPEN THE WAY TO EMBALMING CHAMBER',
-    'objective f: the gallery gate', step.text);
+    'objective f: unmoved by a door that only closes a loop', step.text);
   check(step.cost === 1000, 'objective f: the authored gate price', String(step.cost));
 }
 
