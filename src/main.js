@@ -944,6 +944,26 @@ function boot() {
     // would have silently moved four guns under the player's fingers.
     const n = /^Digit([1-8])$/.exec(e.code);
     if (n) weapons.equip(SLOTS[Number(n[1]) - 1]);
+
+    /**
+     * E CYCLES FORWARD, because the digits are unreachable in a fight.
+     *
+     * The owner's report was that he cannot switch weapons easily. He is right,
+     * and the reason is anatomy rather than logic: the eight digit keys are the
+     * only way to change gun from the keyboard, and reaching 5 through 8 means
+     * taking the hand off WASD in the middle of being chased. The scroll wheel
+     * has always cycled, but a right hand on the mouse is aiming with it.
+     *
+     * So this is the same `cycle()` the wheel calls, on a key the left hand can
+     * reach without moving: E sits directly above D. Forward only. A reverse
+     * bind would need a second key and this exists to REMOVE hand movement, and
+     * with at most eight weapons forward-only is never more than seven presses
+     * from anything.
+     *
+     * `cycle` already skips the stowed weapon and no-ops on a single gun, so
+     * there is nothing to guard here that weapons.js does not guard already.
+     */
+    if (e.code === 'KeyE') weapons.cycle(1);
   });
 
   /**
