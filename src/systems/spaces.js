@@ -416,11 +416,49 @@ export function createSpaces({ scene, courtyard, sky }) {
     applyRoomAudio(room);
   }
 
+  /**
+   * BOTH MAPS COVER EVERY PROFILE rooms.js USES TODAY, and the `||` is what will
+   * hide it the day one of them does not.
+   *
+   * A room's `lightingProfile` is authored in rooms.js and translated here into
+   * a reverb space and an ambience bed. The five profiles in use are corridor,
+   * chamber, gallery, shaft and sanctum, and both maps carry all five. So these
+   * fallbacks never fire in the shipping map and are pure insurance.
+   *
+   * The trouble is what insurance costs when the map grows. World 2 and World 3
+   * will add profiles; an unmapped one would take chamber's reverb and chamber's
+   * bed in a room designed for neither, and nothing anywhere would say so. That
+   * is exactly how the courtyard played sealed-room ambience for weeks, see the
+   * post-mortem at main.js:859 and the note on startAmbience in core/audio.js.
+   *
+   * So the fallback stays, because wrong tone beats silence when a player is
+   * walking through a door, and the SUBSTITUTION is reported. It is quiet while
+   * the maps are complete, which is today, and it is loud the moment a profile
+   * is added without an entry, which is the only time anyone needs telling.
+   */
+  const reportedMissing = new Set();
+
   function applyRoomAudio(room) {
     if (!audio || !room) return;
     const profile = room.lightingProfile;
-    audio.setSpace(SPACE_FOR[profile] || 'chamber');
-    audio.startAmbience(AMBIENCE_FOR[profile] || 'chamber');
+
+    const space = SPACE_FOR[profile];
+    const ambience = AMBIENCE_FOR[profile];
+
+    // Once per profile per session. This runs on every portal crossing and a
+    // warning per doorway would train everyone to ignore the console, which is
+    // the same disease as a suite that is always red.
+    if ((!space || !ambience) && !reportedMissing.has(profile)) {
+      reportedMissing.add(profile);
+      console.warn(
+        `[spaces] lightingProfile "${profile}" has no ${!space ? 'SPACE_FOR' : ''}` +
+        `${!space && !ambience ? ' and no ' : ''}${!ambience ? 'AMBIENCE_FOR' : ''} entry. ` +
+        'Falling back to chamber, which is almost certainly wrong for this room.'
+      );
+    }
+
+    audio.setSpace(space || 'chamber');
+    audio.startAmbience(ambience || 'chamber');
   }
 
   // ---------------------------------------------------------------------------

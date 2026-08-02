@@ -1261,11 +1261,31 @@ export function createAudio(options = {}) {
    * to call before resume(), in which case it takes effect when the context
    * comes up.
    */
+  /**
+   * THE RETURN VALUE USED TO BE A LITERAL `true`, and it cost us the desert.
+   *
+   * `main.js` called this with 'exterior', which is a valid SPACE name and not a
+   * valid AMBIENCE name. The two namespaces are near-miss neighbours. This
+   * function quietly substituted 'chamber' and reported success, so the open
+   * courtyard played sealed-room ambience from the day it was wired until
+   * somebody happened to listen. The post-mortem is at main.js:859.
+   *
+   * The call site was fixed then; this default was not, which left the thing
+   * that hid the bug in place to hide the next one. It now answers the question
+   * it is actually asked: false means the profile was not recognised. The
+   * fallback to 'chamber' STAYS, because silence is a worse failure than the
+   * wrong room tone and this is called on every portal crossing. What changes is
+   * that the substitution is now reportable rather than invisible.
+   *
+   * `setSpace` twelve hundred lines up has always done this correctly:
+   * `if (!SPACES[name]) return false`.
+   */
   function startAmbience(profile) {
-    ambienceProfile = AMBIENCE[profile] ? profile : 'chamber';
+    const known = !!AMBIENCE[profile];
+    ambienceProfile = known ? profile : 'chamber';
     ensure();
     if (bed) applyAmbience();
-    return true;
+    return known;
   }
 
   function stopAmbience() {
