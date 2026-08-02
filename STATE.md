@@ -5,139 +5,142 @@ not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
 
-## RIGHT NOW, 2026-08-01 19:02
+## RIGHT NOW, 2026-08-01 21:08
 
 Everything below "Run it" is history. This is where the work actually is.
 
-### Committed and local: 097a218, 1de231f, 1275873, 70e56e6
+### Pushed and live: 306bab2
 
-Nothing pushed since c5c2771. The owner holds the push gate.
+The story A to Z (`docs/NARRATIVE.md`), the map survey, both locked names, the
+doc renderer and its paired HTML. Docs only; the playable build on Pages is
+unchanged from this morning.
 
-- **docs/NARRATIVE.md**, the whole story A to Z, 1287 lines, five hard
-  WORLD BOUNDARY markers, every claim tagged FIXED / OPEN / PROPOSAL / REVISED.
-  WORLDS.md and WORLD-1.md are now downstream of it and were rewritten.
-- **docs/MAP-SURVEY.md**, the map measured rather than described.
-- **tools/render-doc.mjs** plus paired .html for all three docs.
+### Committed, NOT pushed, in order
 
-### TWO NAMES LOCKED by the owner, 2026-08-01
+  4052419  PS1 render mode
+  0428ca5  the fail-open audit
+  5cf247d  N64 mode
+  71cbbac  npm test could never pass, three dead ports
+  0e6c0af  canal, quarry window, floating props, reachesPlayer
+  b12e350  THE DESCENT
+  daeec2b  N64 at 540 lines
 
-- **HETEPHERES** is the queen. Hetepheres I, Khufu's mother, whose Giza shaft
-  held a sealed EMPTY sarcophagus and an intact four-compartment canopic chest
-  with organic matter in all four. Her organs were there and she was not. This
-  game returns four canopic jars to a tomb and ends on THE NAME IS NOT HERE.
-  Chosen over Meresankh on sound: no consonant cluster to trip on.
-- **THE ANCIENTS** are the pre-Egyptian builders of the gate. Diegetic: nobody
-  can read their writing, so nobody knows what they called themselves. The name
-  is an admission of ignorance rather than a label.
+### THE DESCENT WORKS. The floor can go below zero.
 
-Applied to the three derived docs, 16 and 19 instances. The two meeting
-transcripts are DELIBERATELY UNTOUCHED: they record what was said in the room,
-and one direct quotation inside NARRATIVE.md was restored after a blanket
-rename silently rewrote it. Quoted speech is evidence, not content.
+Rooms carry `base`. Act 1 and 2 at y 0; Embalming, Crypt, Star Shaft, King's
+Chamber and Serdab at y -6, reached by three ramps at the Act 2/3 break, 16 m
+run for 6 m fall. `test/descent.mjs` verified IN THIS TREE, not taken on report:
+all checks pass, including a real-keydown walk from feet 0.00 to -5.96 and the
+climb back out, horde routing both ways, and `layersFull` 0 against flow.js's
+two-layer cap.
 
-### THE MAP IS FLAT, and that is the wall the story hit
+THE DROP IS 6 BECAUSE THE CANOPIC CRYPT'S CEILING PRICED IT. A sill at the
+higher floor needs `height >= drop + 5`. One room's headroom set the depth of
+the whole descent. World 2 will violate this if nobody remembers it.
 
-All nine interior floors sit at y = 0. The only walkable surface off that plane
-inside the pyramid is the gallery second storey at y = 6, and it is UP. The
-story requires descending across three worlds. Today "deeper" is faked as 132 m
-of horizontal run along -Z.
+### KNOWN REGRESSION, committed knowingly: Act 3 ships a third too dark
 
-Two confirmed blockers, both read in source:
+`weathering.js:127` measures grime from ABSOLUTE world y against a datum of 0,
+so every room below it saturates at full grime. Serdab loses 43 per cent.
+Proven, not inferred: lifting the interior group +6 at runtime with identical
+lights takes it 13.83 to 21.78. That 21.78 is the target.
 
-- `build.js heightAt` opens `let y = 0` and only ever takes a MAXIMUM, so a
-  floor below zero is not representable. A room record has no base elevation.
-- `flow.js LAYERS = 2` caps storeys per x/z, and says so in its own comment.
+FIX DECIDED after an argued reversal, and the reasoning matters more than the
+answer: per-base MATERIAL INSTANCES, not a per-mesh attribute. The attribute
+needs binding at ~120 sites (no geometry chokepoint) or relies on WebGL's
+unbound-attribute default, which renders correctly under swiftshader (what every
+harness here uses) and possibly wrong on a real GPU. The batching objection to
+material variants was MINE and was WRONG: `spaces.js:502-503` makes interior and
+exterior mutually exclusive, so interior instances split no batch. ~4 draw calls
+against 1372.
 
-Plan area is NOT the constraint: 7,352 m2 of interior floor inside a 13,728 m2
-envelope, 53.6 per cent used. The owner asked for more space; he needs a Y axis.
+### Three render modes. P cycles Modern, PS1, N64.
 
-The chosen approach is to START HIGH and step DOWN to zero rather than dig
-below it, because an unknown number of systems may assume interior y >= 0. With
-LAYERS = 2 the descent cannot stack over itself, so it must spiral outward in
-plan, which is also what real tomb architecture does.
+Presets are data over one implementation; jitter and affine are UNIFORMS, so
+`programs 62 -> 84 -> 84 -> 84` and a preset switch recompiles nothing.
 
-### PS1 / retro render mode, BUILT and measured
+  pose        current    PS1     N64
+  exterior     3.40 ms   0.80    1.70
+  ground       3.70 ms   0.80    1.20
+  interior    10.10 ms   2.30    4.40
 
-`P` toggles it, in place, no reload, position kept, governor stood down. Also on
-the Video tab. Four of five effects: low internal resolution (452x270) with a
-hard nearest upscale, vertex jitter, affine diffuse mapping, 5-bit colour with a
-4x4 Bayer dither, and shadow maps off. GTAO, bloom and SMAA are out of the chain.
+Quiet-machine numbers. PS1 452x270 nearest; N64 904x540 linear. N64 was first
+built at 270 to share PS1's buffer so the frame-time delta would be the mode's
+own cost. The owner played it and said "why is it so blurry": correct for
+MEASURING, wrong for PLAYING, because a 3.2x smooth blow-up reads as out of
+focus. The blur is the FILTER's job, not an absence of pixels.
 
-Vertex/Lambert lighting DECLINED for a measured reason, not skipped: only
-standard and physical materials receive `scene.environment` in three 0.185.1,
-and the IBL is about 85 per cent of this scene's fill. A Lambert swap would not
-flatten the game, it would black it out. That is a lighting job.
-
-| scene | current | PS1 |
-|---|---|---|
-| exterior avenue | 3.00 ms | 0.90 ms |
-| ground close-up | 3.60 ms | 0.80 ms |
-| **interior chamber** | **9.50 ms** | **2.40 ms** |
-
-Reverses bit for bit: 0.000 mean pixel difference after a round trip. Page at
-docs/RETRO-LOOK.html. Known art loss: the brazier fire and the sun glow go with
-bloom, so it is viable as an OPTION today and not finished as THE look until the
-lighting rig is re-authored.
+N64 is the MIDDLE option, not the rescue. PS1 is the rescue at 4.4x interior.
+Known art loss in both: the brazier fire and sun glow go with bloom.
 
 ### THE GOVERNOR'S BOTTOM TWO RUNGS DO NOT WORK
 
-Found while measuring retro mode, and it matters more than the art style.
-`EffectComposer` captures the renderer's pixel ratio once at construction and
-`composer.setPixelRatio` is called NOWHERE in src/. Measured by forcing each
-rung: at `low` the canvas is 1036x619 while the composer target is still
-1440x860. The bottom rungs shrink only the final blit; the scene is still
-rendered and post-processed at full size.
+`EffectComposer` freezes its pixel ratio at construction and
+`composer.setPixelRatio` is called nowhere in src/. Measured by forcing rungs:
+at `low` the canvas is 1036x619 while the composer target is still 1440x860. The
+bottom rungs shrink only the final blit. THE MACBOOK THIS STARTED FOR HAS BEEN
+FALLING TO RUNGS THAT DO NOTHING. One line in main.js; deferred because it
+changes the resolution every screenshot test renders at.
 
-Those are the rungs a struggling machine lands on. The MacBook this was all
-started for has been falling to rungs that do nothing. One line in main.js
-fixes it, deliberately deferred to a pass that can re-baseline the visual suite.
+### Four bugs the owner found by PLAYING, all fixed in 0e6c0af
 
-### The exterior seal, diagnosed and being fixed
+The harness found none of them.
 
-The owner confirmed from play that he never reached the canal or the quarry.
-Both real, DIFFERENT causes, and the distinction is the whole fix:
+- CANAL: emitter was NOT the dressing scatter. `addWallRun` at courtyard.js:541,
+  the west terrace, laid as one slab over three wall openings because it was
+  built before the bay tables that say where the wall opens. Now walks in.
+- QUARRY WINDOW: the quarry breach, one-way by design and broken. The sill
+  step's flat top was never registered as a deck though its own comment says it
+  must be standable. Walks through x 24 to x -0.39; still unclimbable from the
+  avenue, so one-way survives.
+- FLOATING PANELS: 50 to 70 PER CENT of all wall furniture, not one instance.
+  Cause was chapel bays, where the wall steps 7 m back. `placeWall` now requires
+  masonry behind the mount, measured as chord length; a containment test still
+  passed the broken panel.
+- `reachesPlayer`: over a 1320-point lattice with the player inside the pyramid,
+  it reported 1320 of 1320 reachable INCLUDING five points inside sixty metres
+  of solid limestone.
 
-- **Quarry**: works end to end. Bought, walked in, verified. He never found it.
-  Discoverability, not a bug.
-- **Canal**: a REAL bug. The purchase succeeds and it stays sealed. Three
-  overlapping invisible colliders at x -12.3, r 2.9, h 1.35, no mesh within
-  3.2 m, forming an unbroken bar across the approach. h 1.35 clears the 1.2
-  rubble threshold by 0.15, so it is solid to player, nav AND flow at once.
-- **Stuck mummies are NOT the seal.** Measured: when the player stands in a
-  small recess the flood collapses to ONE slot of 12,875, `flow.sample()` fails
-  for every actor, and the whole horde reverts to the straight-line steer at
-  mummy.js:2222 and walks into walls. `flow.valid` stays true throughout.
-  Confidence ~70 per cent, and it matches the owner's words exactly.
-- **`reachesPlayer` is a FALSE-PASS GENERATOR.** director.js:1259 is
-  `if (island < 0) return true`, so it reports the whole map reachable whenever
-  the player stands somewhere nav calls solid. Gameplay is protected; only the
-  diagnostic lied. This is why the canal went unnoticed.
+The stuck-mummy fix is small and honest: the obvious anchor fix was built,
+measured at arrivals 22/24 to 0/24, and DELETED, with the failure recorded in
+code so nobody rebuilds it. Shipped route memory instead: stalls 5.2 to 4.2 per
+cent over six seeds.
 
-### Lanes in flight, none committed
+### The fail-open audit: 21 instances, 6 inside the tests
 
-1. **Descent**: base elevation through build.js / rooms.js, World 1 stepping
-   down, test/descent.mjs.
-2. **Nav fix**: the canal emitter, the field-collapse fallback, reachesPlayer.
+`docs/FAIL-OPEN-AUDIT.md`. A check that cannot answer returns the value meaning
+"no problem". Worst live one is `director.js:654`: `reach.size &&`
+short-circuits the anti-seal spawn filter, so when the director does not know
+the player's room EVERY point is accepted, the wave never ends, and the stall
+watchdog cannot fire because the actors are alive, just sealed in.
 
-File ownership was partitioned so the lanes cannot collide.
+`test/nav.mjs` declared the same object key twice, so one assertion had never
+run. Renamed and it passes. NONE of the 21 are fixed.
 
-### What the test suite is worth right now: NOTHING
+### What the instruments cost tonight
 
-npm test aborted on a screenshot timeout under load average 89 with 45
-concurrent headless Chrome from the parallel lanes. test/shot.mjs's own header
-documents that exact condition producing false failures. No pass and no break is
-being claimed. RE-RUN ON A QUIET MACHINE before anything goes near main.
+The harness lied five times: reachesPlayer, the wall-height lookup, an FPS
+counter I read off the HUD and repeated, the colour-ladder statistic measuring
+after the blur instead of before, and three suites pointed at dead ports so
+`npm test` could never pass. Rule that keeps proving itself: read the thing, not
+the thing that reports on it. A red result here means look closer; a green one
+still means green, since a reaped browser cannot manufacture a pass.
 
-### Still the owner's calls
+`test/grenades.mjs` is RED ON A PRISTINE HEAD TREE at 13.95, worse than the
+working tree's 14.79. Already failing, already drifting. Do not chase it and do
+not move the threshold.
 
-- Whether retro mode is THE look or an option.
-- Whether the Kindling is repointed (recommendation: repoint, ~150 lines, keep
-  the mid-sentence overwrite beat, three jars run the machine and the fourth
-  opens the Serdab).
-- The Serdab is UNREACHABLE today: `jarsReturned` is declared 0 at
-  doors.js:289, read twice, written nowhere. Not a regression, an unbuilt
-  milestone (M5) whose own comment says so. It is the SAME work as the Kindling
-  repoint, not a second job.
+### In flight
+
+One lane: the weathering fix, then widening `chamber-of-ascent` from 352 to
+about 544 m2, then making the hall-of-offerings exit FREE (owner's ruling). The
+Act 2 loop currently costs 1500 gold to close; freeing it should land at 750.
+
+### Why the push is being held
+
+`main` has the story and docs, which are finished. The local code is good but
+carries one known visual regression (Act 3 dark) and the widening/free-exit
+work is unstarted. Pushing now ships a darker Act 3 to save a few hours.
 
 ## Run it
 
