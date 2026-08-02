@@ -500,9 +500,56 @@ export function createDirector({
   const reach = new Set();
   const frontier = [];
 
+  /**
+   * WHETHER `reach` IS AN ANSWER OR AN ABSENCE, which an empty Set cannot say.
+   *
+   * `reach.size === 0` happens for exactly one reason: `computeReach` was handed
+   * a falsy room id and returned before seeding, because a valid id always adds
+   * itself. So the empty set means "I do not know where the player is", never
+   * "the player can reach nowhere".
+   *
+   * The spawn filter below used to test the SIZE of the set, which made the
+   * unknown case skip the filter and accept every candidate. That was NOT
+   * careless: this
+   * function's whole design is penalties rather than vetoes, because a veto that
+   * rejects the entire sample leaves the wave with nowhere to stand. Accepting
+   * everything was the deliberate lesser evil.
+   *
+   * What was missing is that it happened in SILENCE. `spaces.roomId` stays null
+   * for a whole interior visit if `roomAt` never resolves, and the header on
+   * computeReach names the outcome precisely: a wave that never arrives and
+   * never ends, which the player cannot tell from a bug. The stall watchdog does
+   * not catch it either, since it needs no living actors and the actors are
+   * alive, just sealed in.
+   *
+   * So the state is now recorded rather than inferred from a size, counted for
+   * stats() the way flowCollapsed is, and said out loud once. Behaviour is
+   * deliberately unchanged: the nav island term further down is an INDEPENDENT
+   * reachability signal that still applies, so an unknown room degrades the
+   * filter rather than removing it.
+   */
+  let reachKnown = false;
+  let reachUnknownCount = 0;
+  let reachUnknownSaid = false;
+
   function computeReach(fromId) {
     reach.clear();
-    if (!fromId) return;
+    reachKnown = !!fromId;
+
+    if (!fromId) {
+      reachUnknownCount++;
+      if (!reachUnknownSaid) {
+        reachUnknownSaid = true;
+        console.warn(
+          '[director] spawning inside the interior with no known room for the ' +
+          'player, so the door-graph reachability filter cannot run. Enemies may ' +
+          'be placed behind unbought barriers. The nav island term still applies. ' +
+          'Root cause is usually spaces.roomId left null by an interior entry ' +
+          'with no `at` argument.'
+        );
+      }
+      return;
+    }
 
     frontier.length = 0;
     frontier.push(fromId);
@@ -651,7 +698,12 @@ export function createDirector({
 
     for (let i = 0; i < tries; i++) {
       const p = points[(Math.random() * points.length) | 0];
-      if (interior && p.room && reach.size && !reach.has(p.room)) continue;
+      // `reachKnown` rather than `reach.size`, so the condition says what it
+      // means. Same behaviour, and now an unknown room is a recorded state with
+      // a warning behind it instead of a silently skipped filter. See the note
+      // on computeReach. A point carrying no `room` still skips, which is the
+      // exterior's normal case, not a gap.
+      if (interior && p.room && reachKnown && !reach.has(p.room)) continue;
 
       const dx = p.x - player.position.x;
       const dz = p.z - player.position.z;
@@ -1459,6 +1511,13 @@ export function createDirector({
         // while the player stands in a pocket and recovers when he steps out
         // leaves no trace at all in a sample taken afterwards.
         flowCollapsed,
+
+        // Spawns attempted inside the interior with no known player room, so
+        // the door-graph filter could not run. Non-zero means enemies may have
+        // been placed behind barriers the player has not bought, which is the
+        // wave that never ends. Counted for the same reason as flowCollapsed:
+        // once while crossing a threshold is noise, a steady climb is the bug.
+        reachUnknown: reachUnknownCount,
       };
     },
 
