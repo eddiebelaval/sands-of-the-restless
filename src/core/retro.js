@@ -108,20 +108,39 @@ const PRESETS = {
   /**
    * 1996, and almost every field is the opposite of the row above.
    *
-   * THE RESOLUTION IS THE SAME AS PS1, AND THAT IS A DECISION RATHER THAN A
-   * DEFAULT. Both machines ran 320x240, so pixel count is not what separates
-   * them on a screen - the filtering is. Four candidates were rendered at the
-   * wall pose and looked at: 384 lines reads as a modern game at low
-   * resolution, 320 is too clean, and 240 and 270 both read as the console.
+   * THE RESOLUTION IS TWICE PS1'S, AND THE FIRST ATTEMPT GOT THIS BADLY WRONG.
    *
-   * 270 wins over the more authentic 240 for a reason that is about the
-   * COMPARISON rather than about either mode. At an identical buffer the two
-   * presets differ by exactly one thing the eye can see - hard pixels against a
-   * smear - so the pair is a single-variable experiment, the mean-run statistic
-   * in .scratch/retro/verify-pixels.mjs becomes an exact discriminator, and the
-   * frame-time gap between them is the mode's own cost rather than a resolution
-   * change wearing a mode's name. 240 would have made N64 render FEWER pixels
-   * than PS1 and confounded every number on the page.
+   * It shipped at 270 lines - the same buffer as PS1 - for a reason that was
+   * about MEASURING rather than about playing: at an identical buffer the two
+   * presets differ by exactly one visible thing, so the frame-time gap between
+   * them was the mode's own cost rather than a resolution change wearing a
+   * mode's name, and the mean-run statistic became an exact discriminator.
+   *
+   * The owner played it and said: "why is it so blurry?" He was right, and the
+   * mistake is worth naming precisely because it is easy to make again. At 270
+   * lines into a 1440-wide window, bilinear performs a 3.2x magnification, so
+   * every source pixel becomes a 3x3 smear. That is not softness, it is out of
+   * focus. The real machine put the same filtering on a CRT at close to its
+   * output resolution; a modern panel magnifying 3.2x is a different operation
+   * wearing the same name.
+   *
+   * THE BLUR IS SUPPOSED TO COME FROM THE FILTER, NOT FROM AN ABSENCE OF
+   * PIXELS, and the two had been conflated.
+   *
+   * Re-tuned by looking, at the wall pose, against one test: can the masonry
+   * courses and the carved bands be READ at mid distance while the edges stay
+   * soft. 270 fails it outright - the carvings are mush. 480 passes but the
+   * bands are indistinct. 640 passes easily and by then the magnification is
+   * 1.34x, at which point it stops reading as a console and starts reading as a
+   * slightly soft modern frame. 540 lines is 904x540, a 1.59x magnification:
+   * the courses are comfortably legible, the carved figures resolve, and the
+   * texel boundaries still visibly smear.
+   *
+   * The cost of being right is that N64 now renders 2.7x the pixels PS1 does,
+   * so the frame-time gap between the two presets is a resolution difference
+   * PLUS a filter difference and no longer isolates either. That is a real loss
+   * of measurement precision and it is the correct trade: the owner is playing
+   * the mode, not measuring it. docs/RETRO-LOOK.html says so beside the table.
    *
    * THE FOG IS THE OTHER SIGNATURE and it is doing two things at once. The
    * extinction is nearly doubled AND the near ramp is pulled in to a bit over
@@ -132,7 +151,7 @@ const PRESETS = {
   n64: {
     id: 'n64',
     name: 'N64',
-    height: 270,
+    height: 540,
     filter: 'linear',
     jitter: 0.0,
     affine: 0.0,
@@ -148,26 +167,33 @@ const PRESETS = {
      * rather than an obvious no. It was answered with two measurements instead
      * of a preference.
      *
-     * WHAT IT COSTS: 0.6 ms, from 3.90 to 4.50 at the avenue pose, which is
-     * about fifteen per cent of the N64 frame. On a mode whose entire reason to
-     * exist is a machine that cannot run the shipping look, fifteen per cent is
-     * not small change.
+     * IT WAS MEASURED TWICE, because the reason for the first answer stopped
+     * applying when the resolution changed. At 270 lines the argument was that
+     * SMAA ran before a 3.2x magnification, so every edge it softened was
+     * averaged away by the blow-up. At 540 the magnification is 1.59x and that
+     * argument genuinely weakens, so carrying the old conclusion forward would
+     * have been laziness dressed as consistency.
      *
-     * WHAT IT BUYS: 2.085 mean absolute difference inside the 1:1 wall crop,
-     * the frame where it should show most. Small, and small for a structural
-     * reason rather than a tuning one: SMAA runs at 452x270, BEFORE the
-     * upscale, so every edge it softens is then averaged with its neighbours by
-     * the bilinear blow-up. It is anti-aliasing edges that are about to be
-     * smeared anyway.
+     * WHAT IT COSTS at 540, on a quiet machine: 0.10 ms, 1.50 to 1.60 at the
+     * avenue pose. Cheap - cheaper than the 0.6 ms measured at 270, which was a
+     * loaded machine rather than a real difference.
      *
-     * So the blur already gets there, and this would be paying fifteen per cent
-     * to soften something twice. The instruments are .scratch/retro/isolate.mjs
-     * for the cost and .scratch/retro/tune-aa.mjs for the picture; both keep
-     * working if anyone wants to re-open the decision.
+     * WHAT IT BUYS at 540: 1.329 mean absolute difference inside the 1:1 wall
+     * crop, the frame where it should show most. That is LESS than the 2.085 it
+     * bought at 270, and the direction is the point: at a higher internal
+     * resolution there are fewer aliased edges per screen pixel to begin with,
+     * so there is less for an anti-aliaser to find. Put the two crops side by
+     * side and they are indistinguishable.
+     *
+     * So the answer is unchanged and the reason for it is not. It is no longer
+     * a cost argument at all - a tenth of a millisecond is affordable - it is
+     * that the pass has nothing visible left to do. The instruments are
+     * .scratch/retro/isolate.mjs for the cost and .scratch/retro/tune-aa.mjs
+     * for the picture; both keep working if anyone wants to re-open it again.
      */
     smaa: false,
 
-    notice: 'N64 mode - 270 lines, bilinear blur, no wobble, flat textures, heavy fog',
+    notice: 'N64 mode - 540 lines, bilinear blur, no wobble, flat textures, heavy fog',
   },
 };
 

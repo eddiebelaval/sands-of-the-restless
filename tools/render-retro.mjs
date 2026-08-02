@@ -353,13 +353,26 @@ ${table(
     ['Upscale filter', 'nearest, hard pixels', '<strong>bilinear, soft and blurry</strong>'],
     ['Colour', `${ps1.levels} levels, dither at ${ps1.dither}`, `${n64.levels} levels, dither at ${n64.dither}`],
     ['Fog', 'period correct', `${n64.fog}x heavier, the signature draw-distance hider`],
-    ['Internal resolution', `${ps1.width}x${ps1.height}`, `${n64.width}x${n64.height}`],
+    ['Internal resolution', `${ps1.width}x${ps1.height}`, `<strong>${n64.width}x${n64.height}</strong>, ${((n64.width * n64.height) / (ps1.width * ps1.height)).toFixed(1)}x the pixels`],
+    ['Upscale factor into a 1440 window', `${(1440 / ps1.width).toFixed(2)}x`, `${(1440 / n64.width).toFixed(2)}x`],
   ],
 )}
 
 <p>So the N64 preset is mostly the PS1 preset with the deliberate artefacts
 switched off, plus one thing added: a smooth upscale. The blur is the signature.
 If it comes out sharp, it is wrong.</p>
+
+<p>But the blur has to come from the FILTER rather than from an absence of
+pixels, and the first version of this mode got that wrong. It ran at PS1's
+${ps1.height} lines, where a smooth upscale into a 1440-wide window magnifies
+${(1440 / ps1.width).toFixed(2)}x and turns every source pixel into a 3x3 smear.
+The verdict from the person playing it was one line: why is it so blurry. He was
+right - that is out of focus, not softness. A real N64 applied the same
+filtering on a CRT at close to its own output resolution, which is a different
+operation from magnifying three times on a modern panel. N64 now renders
+${n64.height} lines, a ${(1440 / n64.width).toFixed(2)}x magnification, chosen by
+looking at four candidates against one test: can the masonry courses and the
+carved bands be read at mid distance while the edges stay soft.</p>
 
 <h2>The three</h2>
 
@@ -391,41 +404,22 @@ ${details.join('\n')}
 median rather than mean. The adaptive governor is stood down for all three, or
 it would be changing the settings underneath the measurement.</p>
 
-<p><strong>Two caveats, because the numbers are worth less without them.</strong>
-The absolute times in the "current" rows are inflated: this machine was running
-seventeen to forty-five other headless browsers throughout, at load averages
-between 20 and 77. The same harness on a quiet machine measured the same three
-poses at 3.00, 3.60 and 9.50 ms. The RATIOS survive that - roughly three
-quarters of the frame, in both conditions - and every row of a pose is taken
-seconds apart in one session, so the comparison within a pose is sound even
-where the absolute is not.</p>
+<p><strong>THE TWO RETRO MODES NO LONGER RENDER THE SAME NUMBER OF PIXELS, and
+that changes what the gap between them means.</strong> N64 runs at
+${n64.width}x${n64.height} against PS1's ${ps1.width}x${ps1.height}, which is
+${((n64.width * n64.height) / (ps1.width * ps1.height)).toFixed(1)}x the pixels.
+So the frame-time difference between the PS1 and N64 rows below is a RESOLUTION
+difference plus a filter difference, and it no longer isolates either one. Only
+the comparison against the current look is clean.</p>
 
-<p>And the PS1 against N64 difference sits at the noise floor at two of the
-three poses, which is the honest answer rather than a disappointing one. The
-two modes render the SAME buffer through the SAME pass list and differ only by
-uniform values; the upscale filter that separates them is the compositor's work,
-not the renderer's, so it does not appear in a requestAnimationFrame delta at
-all. Across three runs the delta at the avenue was +0.00, +0.00 and +0.10 ms,
-and at the interior +0.40, -0.20 and +0.00.</p>
-
-<p>The ground close-up is the exception and it is interesting. There N64 is
-stable at 3.00 ms across all three runs while PS1 measures 2.90, 1.60 and 1.20 -
-so the gap reads as +0.10, +1.40 and +1.80. That pose is the one where the
-renderer has almost nothing to do (67 draw calls against 915 in the shipping
-look), and the most likely reading is that once the frame gets that cheap the
-COMPOSITOR becomes the limit, and a smooth upscale costs it more than a hard
-one - a real cost the player pays, just not one a frame timer inside the page
-can see directly. Stated as the leading hypothesis rather than as fact: the
-competing explanation is that the PS1 rows at that pose carry a 230 ms stall in
-their worst-frame column and are simply noisy, and nothing here separates the
-two. What can be said with confidence is that wherever the renderer is the
-bottleneck - which is every case this mode exists for - N64 is free.</p>
-
-${table(
-  ['Pose', 'Mode', 'Median ms', 'fps', 'p95 ms', 'Draw calls', 'Triangles', 'Buffer', ''],
-  perfRows,
-  ['', '', 'r', 'r', 'r', 'r', 'r', 'r', ''],
-)}
+<p>That is a deliberate trade and it was made after the owner played the mode.
+The first version pinned N64 to PS1's buffer precisely so the pair would differ
+by one variable, which was the right call for measuring and the wrong one for
+playing: at 270 lines into a 1440-wide window, bilinear magnifies 3.2x and every
+source pixel becomes a 3x3 smear. That is out of focus rather than soft. The
+blur is meant to come from the filter, not from an absence of pixels. At 540 the
+magnification is ${(1440 / n64.width).toFixed(2)}x, the masonry courses and
+carved bands are legible again, and the texel boundaries still visibly smear.</p>
 
 <h2>Where the saving comes from</h2>
 
@@ -489,8 +483,9 @@ numerically rather than by eye.</p>
 identical pixels. A ${ps1.width}-wide buffer upscaled to 1440 with hard edges
 gives runs of about ${(1440 / ps1.width).toFixed(2)}. A smooth upscale gives runs
 near 1, because every intermediate pixel is a fresh interpolation. That single
-number is the PS1 against N64 discriminator: near-identical buffers, opposite
-filters.</li>
+number is the PS1 against N64 discriminator, and it survives the two modes no
+longer sharing a buffer: it measures what the FILTER did, not how many pixels
+went in.</li>
 <li><strong>On its ladder</strong> is the share of pixels whose three channels
 all land on one of the values that mode's quantiser can emit. Each mode is scored
 against its OWN level count, taken from what the page reports rather than from a
