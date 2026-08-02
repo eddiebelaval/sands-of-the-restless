@@ -241,6 +241,29 @@ died in, and making him kill his friend.**
 Deeper stone, ceilings under six, no room that gives the eye distance, and the
 gods down here as carvings older than the gods. No shrine will forgive a death.
 
+> **GEOMETRY CONFLICT, found 2026-08-01 by `docs/FLAT-MAP-AUDIT.md`, and it has
+> to be resolved before World 2 is built rather than during.** "Ceilings under
+> six" and "the world goes deeper" cannot both be true as written. The builder
+> requires `height >= drop + 5.0` to cut a full-height door at the top of a
+> descent, so a six-metre drop needs an eleven-metre ceiling. Ceilings under six
+> cap the drop at under ONE metre, which is not a descent.
+>
+> World 1 hit this already and paid for it: its drop is exactly 6 because the
+> Canopic Crypt's ceiling priced it, not because 6 was chosen.
+>
+> Worse, the builder does not refuse the violation, it absorbs it by shrinking
+> the doorway clearance past zero. So a World 2 authored to this spec would
+> build, would look approximately right, and would have doorways the player
+> cannot walk through. That is this project's defining failure class, something
+> written that never rendered, waiting at the top of the next world.
+>
+> Three ways out, and it is a story decision as much as a geometry one:
+> the descent between World 2's rooms happens in SHAFTS or stairs that are their
+> own spaces rather than in doorways, which keeps the low ceilings; or World 2
+> descends in many small steps instead of few large ones; or the ceilings rise
+> at the descent points only, which costs the claustrophobia the world is for.
+> The first preserves the fiction best and is the one to beat.
+
 **Its design principle, which meeting 2 promoted from decoration to load-bearing:
 World 2's iconography is World 1's, wrong.** The same forms, cut by someone who
 had never seen the animals, in a place older than the people who named them. The
