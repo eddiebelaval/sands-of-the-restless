@@ -55,7 +55,12 @@
 import { chromium } from 'playwright';
 import { resolveChrome, GL_ARGS } from './chrome.mjs';
 
-const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:5317/index.html';
+// 4177 is the port `npm start` serves and the port every other suite defaults
+// to. This one defaulted to 5317, which nothing in the repo ever serves, so
+// `npm test` - which invokes it bare - could only ever fail here on a connection
+// refused. A suite that cannot pass in its own runner stops being read, and a
+// suite nobody reads is where a real regression goes to hide.
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 
 const browser = await chromium.launch({ executablePath: resolveChrome(), args: GL_ARGS });
 const page = await browser.newPage({ viewport: { width: 640, height: 400 } });

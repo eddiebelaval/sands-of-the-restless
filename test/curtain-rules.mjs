@@ -16,7 +16,11 @@
 import { chromium } from 'playwright';
 import { resolveChrome } from './chrome.mjs';
 
-const BASE = process.argv[2] || 'http://127.0.0.1:4581/index.html';
+// Two defects in one line, and the second is why `npm test` has never passed in
+// one invocation: 4581 is served by nothing (4177 is what `npm start` serves and
+// what every other suite defaults to), and this was the only suite in the
+// directory with no SANDS_URL escape, so it could not even be pointed elsewhere.
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 
 const browser = await chromium.launch({
   executablePath: resolveChrome(),

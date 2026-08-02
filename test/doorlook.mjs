@@ -21,7 +21,9 @@ import { chromium } from 'playwright';
 import { resolveChrome, GL_ARGS } from './chrome.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
-const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4611/index.html';
+// See the note in crouchslide.mjs: 4177 is what `npm start` serves and what the
+// rest of the suite defaults to. 4611 was served by nothing.
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 const TAG = process.argv[3] || 'doorlook';
 
 const OUT = new URL('../shots/', import.meta.url).pathname;
