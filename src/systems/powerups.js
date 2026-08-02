@@ -797,8 +797,25 @@ export function createPowerups({
   // the drop
   // ---------------------------------------------------------------------------
 
-  function floorAt(x, z) {
-    return world && world.heightAt ? world.heightAt(x, z, 0) : 0;
+  /**
+   * FEET IS A REQUIRED ARGUMENT NOW, and it used to be a hardcoded 0.
+   *
+   * `world.heightAt(x, z, footY)` returns the highest walkable surface at or
+   * below `footY + STEP_UP`, which is how it tells the gallery bridge from the
+   * floor underneath it. Passing 0 asked "what is the floor here for something
+   * standing at world zero" no matter where the thing actually was.
+   *
+   * That was harmless while every floor in the game sat at y = 0. It stopped
+   * being harmless the night the descent landed: five rooms are at -6 now, so a
+   * power-up dropped by a body killed in the King's Chamber was seated on the
+   * storey ABOVE it and could not be walked into. The same was already true of
+   * the gallery's second level before the descent existed.
+   *
+   * `systems/grenades.js:696` is the same function with the correct signature,
+   * so this was a divergence between two siblings rather than a convention.
+   */
+  function floorAt(x, z, feet) {
+    return world && world.heightAt ? world.heightAt(x, z, feet) : 0;
   }
 
   function takeSlot() {
@@ -812,13 +829,20 @@ export function createPowerups({
     return oldest;
   }
 
-  /** Write one drop into the world. Numbers only. */
-  function place(kind, x, z) {
+  /**
+   * Write one drop into the world. Numbers only.
+   *
+   * `feet` is the y the drop is being made AT, normally the dead body's own
+   * position.y, and it decides which storey the drop lands on. Defaulting it to
+   * the player's current height is the right fallback rather than 0: every
+   * caller that has no body to point at is dropping something near the player.
+   */
+  function place(kind, x, z, feet) {
     const spec = POWERUPS[kind];
     if (!spec) return null;
 
     const d = takeSlot();
-    const y = floorAt(x, z);
+    const y = floorAt(x, z, feet === undefined ? player.position.y : feet);
 
     d.live = true;
     d.kind = kind;
@@ -955,7 +979,7 @@ export function createPowerups({
    * metronome: at eight kills low it is a coin flip, at fourteen it is certain,
    * and the player never learns which kill it will be.
    */
-  function supplyFloor(x, z) {
+  function supplyFloor(x, z, feet) {
     if (!state.lowNow) return null;
     if (state.supplyThisWave >= SUPPLY.perWave) return null;
 
@@ -970,7 +994,7 @@ export function createPowerups({
     state.supplyRolls++;
     if (rng() >= pressure) return null;
 
-    const d = place('hapi', x, z);
+    const d = place('hapi', x, z, feet);
     if (!d) return null;
 
     state.supplied++;
@@ -999,7 +1023,7 @@ export function createPowerups({
     if (forced) {
       const kind = typeof forced === 'string' ? forced : pickKind();
       forced = null;
-      return place(kind, p.x, p.z);
+      return place(kind, p.x, p.z, p.y);
     }
 
     syncWave();
@@ -1009,10 +1033,10 @@ export function createPowerups({
     // the floor's budget.
     if (state.droppedThisWave < SUPPLY.dropsPerWave) {
       state.rolls++;
-      if (rng() < SUPPLY.dropChance) return place(pickKind(), p.x, p.z);
+      if (rng() < SUPPLY.dropChance) return place(pickKind(), p.x, p.z, p.y);
     }
 
-    return supplyFloor(p.x, p.z);
+    return supplyFloor(p.x, p.z, p.y);
   }
 
   // ---------------------------------------------------------------------------
@@ -1158,7 +1182,7 @@ export function createPowerups({
 
     // The moment. Wash, ring, light, and a camera that was hit.
     shockT = 0;
-    shock.position.set(player.position.x, floorAt(player.position.x, player.position.z) + 0.12, player.position.z);
+    shock.position.set(player.position.x, floorAt(player.position.x, player.position.z, player.position.y) + 0.12, player.position.z);
     shockLight.position.set(player.position.x, player.position.y + 1.4, player.position.z);
     shock.visible = true;
     wash.visible = true;
@@ -1455,7 +1479,7 @@ export function createPowerups({
      * rolled drop, because an escape hatch that does not is a way to test a
      * game nobody plays.
      */
-    placeAt(kind, x, z) { return place(kind, x, z); },
+    placeAt(kind, x, z, feet) { return place(kind, x, z, feet); },
 
     /** Force the roll to fire on the next kill. Harness only. */
     forceNextDrop(kind = null) {
