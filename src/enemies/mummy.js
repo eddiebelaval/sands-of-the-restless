@@ -564,6 +564,23 @@ export const DETOUR_BIAS = 1.7;   // sideways weight while detouring, vs 1.0 for
 const DETOUR_PROBE = 3.0;         // metres between probes along the tangent
 const DETOUR_REACH = 5;           // how many probes, so 15 m of wall
 
+/**
+ * HOW LONG A ROUTE IS WORTH REMEMBERING ONCE THE FIELD STOPS ANSWERING.
+ *
+ * Two thirds of a second, which is FLOW_MAX_S in director.js plus a frame or
+ * two. That is not a coincidence and it is the whole argument for the number:
+ * the longest a healthy field ever goes without a rebuild is FLOW_MAX_S, so a
+ * heading older than that is older than any heading this actor would have been
+ * handed on a working map. Held longer it stops being "the route I was walking"
+ * and becomes a guess about a player who has since moved; held shorter it does
+ * not cover the gap between one failed sample and the next good one.
+ *
+ * It FADES rather than expires. A heading that snaps back to the straight line
+ * on one frame turns the whole horde at once, and the horde turning together is
+ * the most legible artefact this system can produce.
+ */
+const ROUTE_HOLD_S = 0.66;
+
 /** Is a disc of this radius free of the world at this point? */
 function pointClear(x, z, pad, feetY, ctx) {
   if (ctx.walls) {
@@ -1851,6 +1868,14 @@ export function createEnemy(spec, index) {
     detourSide: 1,
     detourFrom: 0,
     forceSide: 0,
+
+    // The last heading the flow field gave this body, and how long ago. See the
+    // route block in update() for why a body keeps one. `routeAge` starts
+    // expired so an actor that has never had a route cannot blend toward the
+    // zero vector on its first frame.
+    routeX: 0,
+    routeZ: 0,
+    routeAge: ROUTE_HOLD_S,
   };
   actor.st = st;
 
@@ -1905,6 +1930,8 @@ export function createEnemy(spec, index) {
     st.footIn = 0;
     st.wedge = st.detour = st.detourFrom = st.forceSide = 0;
     st.detourSide = 1;
+    st.routeX = st.routeZ = 0;
+    st.routeAge = ROUTE_HOLD_S;
 
     st.feetY = groundAt(ctx, x, z, undefined);
     rig.group.position.set(x, st.feetY, z);
@@ -2221,11 +2248,83 @@ export function createEnemy(spec, index) {
      */
     _dir.set(tx / dist, 0, tz / dist);
 
+    /**
+     * AND WHAT TO DO WHEN THE FIELD HAS NO ANSWER, WHICH IS NOT A CORNER CASE.
+     *
+     * The line above is the fallback, and until this change it was the ONLY
+     * fallback: sample() returns false and the body walks the bearing to the
+     * player, through whatever is in the way. That is the right answer for one
+     * actor standing somewhere odd. It is the wrong answer for the case that
+     * actually shows up, which is EVERY actor failing at once because the field
+     * itself died, and it is the reported symptom - mummies coming at the player
+     * in a straight line, through walls, and grinding on the far side of them.
+     *
+     * Measured on this build with the player standing in the west bay-1 chapel
+     * recess: 16,648 of 16,648 sample() calls failed for seventy seconds, every
+     * live actor fell through to this line, and the worst of them spent 79 per
+     * cent of its life pushing into stone.
+     *
+     * The flood is flow.js's to fix and the note for whoever fixes it is in
+     * director.js. What is answerable HERE is what a body does with no route,
+     * and there are two things worth keeping that it already had.
+     *
+     * FIRST, THE ROUTE IT WAS WALKING. A heading computed against real geometry
+     * half a second ago is a better description of "which way is the player"
+     * than a bearing that is known to point into a wall, and it costs two floats
+     * per actor. Held for ROUTE_HOLD_S and faded out over it, so a body carries
+     * on round the corner it was already rounding instead of turning square into
+     * the wall the moment the field blinks.
+     *
+     * AND THAT IS ALL, WHICH IS A RESULT RATHER THAN A SHRUG.
+     *
+     * Three other answers were considered and one of them was built and
+     * measured before it was thrown away, so they are recorded here with what
+     * they cost.
+     *
+     * WALKING TO WHERE THE FIELD LAST WORKED was built. The director kept the
+     * last player position it could root a flood at and published it, and a body
+     * with no route steered at that instead of at the player. It is a worse bug
+     * than the one it fixes. The anchor is wherever the player was when the
+     * field last flooded, which after a teleport - a respawn, a space change, a
+     * harness placement - is anywhere on the map, and the entire horde then
+     * walks to a spot the player left and mills there. Measured, on the one
+     * seed of six where the field actually collapsed: 22 of 24 actors reached
+     * the player without it, 0 of 24 with it. Do not rebuild it without a
+     * distance gate, and note that a distance gate makes it equal to the
+     * straight line, which is to say worth nothing.
+     *
+     * IDLING is worse than it sounds. This is a round-based game, a horde that
+     * stops is a round that does not end, and a player reads a standing mummy
+     * as a broken one rather than as a considered one.
+     *
+     * WALL-FOLLOWING is already here and better tuned than a second copy would
+     * be: avoid() plus the committed detour below is exactly a local wall
+     * escape, and it runs on top of whatever heading this block produces, so
+     * improving the heading improves it too.
+     */
     const FADE_M = 6;
-    if (ctx.flow && dist > 2.5 && ctx.flow.sample(pos.x, pos.z, st.feetY, _flow)) {
-      const k = Math.min(1, (dist - 2.5) / (FADE_M - 2.5));
-      _dir.x += (_flow.x - _dir.x) * k;
-      _dir.z += (_flow.z - _dir.z) * k;
+    const far = dist > 2.5;
+    const routed = far && !!ctx.flow && ctx.flow.sample(pos.x, pos.z, st.feetY, _flow);
+
+    if (routed) {
+      st.routeX = _flow.x;
+      st.routeZ = _flow.z;
+      st.routeAge = 0;
+    } else {
+      st.routeAge += dt;
+    }
+
+    // How much of the heading the route is allowed to take: none in melee, all
+    // of it past FADE_M, and - when the route is remembered rather than sampled
+    // - decaying to none across ROUTE_HOLD_S.
+    let k = far ? Math.min(1, (dist - 2.5) / (FADE_M - 2.5)) : 0;
+    if (!routed) k *= Math.max(0, 1 - st.routeAge / ROUTE_HOLD_S);
+
+    if (k > 0) {
+      const rx = routed ? _flow.x : st.routeX;
+      const rz = routed ? _flow.z : st.routeZ;
+      _dir.x += (rx - _dir.x) * k;
+      _dir.z += (rz - _dir.z) * k;
       const fl = Math.hypot(_dir.x, _dir.z) || 1;
       _dir.x /= fl; _dir.z /= fl;
     }

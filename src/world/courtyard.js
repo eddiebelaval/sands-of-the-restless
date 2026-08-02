@@ -230,9 +230,23 @@ export function buildCourtyard(scene) {
    * Spacing is derived from the radius for the same reason the wall run derives
    * its own: whoever retunes the radius later must not be able to un-seal the
    * mass by doing it.
+   *
+   * IT SEALS `w + FILL_R` BY `d + FILL_R`, not `w` by `d`. The outermost disc
+   * centres sit half a radius inside the footprint they are given and each disc
+   * then reaches a full radius past its own centre, so the sealed area
+   * overhangs the numbers passed in by FILL_R/2 on every side. That is the
+   * right default for a rough mass sitting in sand, where a hand's width of
+   * generous collision reads as the mass being solid. It is the WRONG default
+   * where the stone has a face the player is meant to walk right up to and past
+   * - a stylobate beside a doorway, a pier framing a gap - and there the caller
+   * passes dimensions already reduced by FILL_R so that the discs' outer edges
+   * land ON the faces. The west terrace does exactly that, and had to: an
+   * overhang there is invisible collision standing in a mouth the player paid
+   * for.
    */
+  const FILL_R = 1.35;
   const fillMass = (cx, cz, w, d, h, y0) => {
-    const r = 1.35;
+    const r = FILL_R;
     const step = r * 1.35;
     const nx = Math.max(1, Math.ceil((w - r) / step));
     const nz = Math.max(1, Math.ceil((d - r) / step));
@@ -496,6 +510,77 @@ export function buildCourtyard(scene) {
     return g;
   };
 
+  // -------------------------------------------------------------------------
+  // WHERE THE AVENUE WALLS OPEN
+  // -------------------------------------------------------------------------
+  //
+  // Declared HERE, above the first thing that gets laid on the avenue floor,
+  // and that placement is the fix for a shipped bug rather than tidiness.
+  //
+  // These three tables used to live beside the bay loop that consumes them,
+  // three hundred lines below, which meant nothing built before the bay loop
+  // could know where the walls open. The west terrace is built before the bay
+  // loop. It was laid as one unbroken 27.5-metre stylobate hard against the
+  // west wall, and the west wall has three holes in it inside that span: the
+  // canal's bought gate at bay 5 and the chapel recesses at bays 4 and 6. A
+  // player who paid 500 for the canal gate walked west, hit 1.35 metres of
+  // invisible stylobate two and a half metres short of the hole he had just
+  // bought, and never reached the canal. The purchase succeeded end to end -
+  // gold taken, blockers spliced out, `opened` true - and the space stayed
+  // sealed, because nothing in the build ever asked whether the thing standing
+  // in front of the door was ours.
+  //
+  // So the tables come first and the terrace reads them. Anything else laid
+  // against a wall in this file can now do the same, and the rule it has to
+  // honour is the one the terrace broke: A WALL THAT OPENS HAS TO BE
+  // REACHABLE FROM THE FLOOR IN FRONT OF IT.
+
+  const bays = Math.round((AVENUE.zNear - AVENUE.zFar) / BAY);
+
+  /** The centre z of a bay, which is where any opening in it is centred. */
+  const bayZ = (b) => AVENUE.zNear - b * BAY - BAY / 2;
+
+  // Which bays open into a side chapel rather than solid wall. Recesses stop
+  // the avenue reading as a corridor of two flat slabs.
+  //
+  // Different sets per side. When both walls opened at the same z the recesses
+  // cancelled out: the frame stayed symmetric and the alcoves only widened the
+  // corridor rather than reading as rooms off it. Staggered, each recess is
+  // read against solid wall opposite, which is what gives it depth.
+  const CHAPEL_BAYS = {
+    '-1': new Set([1, 4, 6]),
+    '1': new Set([2, 3, 7]),
+  };
+
+  /**
+   * THE ACT 1 CIRCUIT: where the avenue opens onto the two new spaces.
+   *
+   * MAP.md ratifies Avenue -> Quarry -> Canal -> Avenue as one circuit of
+   * roughly 150 metres, each space opened by a purchase of about 500. Two
+   * spaces on opposite flanks of a corridor need four holes in that corridor,
+   * and four holes is two prices unless one of them is one-way. So each space
+   * gets exactly one BOUGHT mouth and one free BREACH, and the breach is a hole
+   * high in the wall with the spoil banked against it on the outside only:
+   * walk up the talus from inside the space and step down into the avenue, and
+   * from the avenue side it is a sill you cannot climb. One price per space,
+   * one direction round the circuit, and the direction is legible from the
+   * geometry rather than from a sign.
+   *
+   *   quarry  in  east bay 1  (z =  22.5)   out  east bay 5  (z = -13.5)
+   *   canal   in  west bay 5  (z = -13.5)   out  west bay 2  (z =  13.5)
+   *
+   * The two z = -13.5 mouths face each other across the avenue on purpose. The
+   * chapels were deliberately staggered so that no recess is ever read against
+   * another recess, and this is the opposite case rather than a violation of
+   * it: a crossroads wants to be symmetric, because the whole value of it is
+   * that from the middle of the avenue you can see both ways out at once.
+   *
+   * Neither of these bays is a chapel bay and neither is one of the two breached
+   * east bays, so nothing here competes with geometry that was already authored.
+   */
+  const GATE_BAYS = new Map([['1:1', 'quarry'], ['-1:5', 'canal']]);
+  const BREACH_BAYS = new Map([['1:5', 'quarry'], ['-1:2', 'canal']]);
+
   // --- west terrace ---------------------------------------------------------
   // A raised stylobate under the west colonnade only. One side of the avenue is
   // now a metre and a third higher than the other, which is the single loudest
@@ -508,49 +593,158 @@ export function buildCourtyard(scene) {
   // far end where the avenue's far end actually is.
   const TERRACE = { xIn: -9.4, xOut: -15.2, zNear: -1.5, zFar: -29, h: 1.35 };
   const tW = TERRACE.xIn - TERRACE.xOut;
-  const tL = TERRACE.zNear - TERRACE.zFar;
   const tX = (TERRACE.xIn + TERRACE.xOut) / 2;
-  const tZ = (TERRACE.zNear + TERRACE.zFar) / 2;
 
-  // Two courses rather than one slab, the upper inset, so the terrace edge is a
-  // real step profile instead of a painted line.
-  const terraceBase = stone(tW, 0.62, tL, M.limestone, DENSITY.limestone,
-    { eroded: 0.05, chamfer: 0.1 });
-  terraceBase.position.set(tX, 0.20, tZ);
-  group.add(terraceBase);
+  /**
+   * The colonnade's rhythm, declared here rather than inside the loop that
+   * lays it, because the stylobate UNDER the colonnade has to know where the
+   * columns land before it can decide where it may be cut. The east row is
+   * offset by a third of a bay: two facing rows on the same z are what makes an
+   * avenue read as a mirror.
+   */
+  const COL_Z0 = { '-1': -4, '1': -6.4 };
+  const COL_STEP = 7;
+  const COL_BASE = 3.3;              // the square plinth each column stands on
 
-  // The upper course now TOPS OUT at TERRACE.h and laps down into the base.
-  //
-  // Two separate errors, both of which the flat noon key hid and the new key
-  // does not. It used to be 0.78 tall centred at 0.92, so its top surface was
-  // at 1.31 while the west colonnade is seated on TERRACE.h = 1.35: every
-  // column on the terrace stood on four centimetres of nothing, and with a real
-  // sun that gap is a strip of daylight under a 3.3-metre plinth. Its underside
-  // was at 0.53 against a base course topping out at 0.51, so the two courses of
-  // the stylobate did not touch each other either.
-  //
-  // Sized from TERRACE.h down rather than from an authored centre, so the
-  // surface the colonnade stands on and the number the colonnade is seated at
-  // are the same number and cannot drift apart again.
-  const terraceTopH = TERRACE.h - 0.4;
-  const terraceTop = stone(tW - 0.9, terraceTopH, tL - 0.6, M.limestone, DENSITY.limestone,
-    { eroded: 0.05, chamfer: 0.1 });
-  terraceTop.position.set(tX + 0.2, TERRACE.h - terraceTopH / 2, tZ);
-  group.add(terraceTop);
+  /**
+   * WHERE THE STYLOBATE IS CUT, AND WHY IT IS CUT AT ALL.
+   *
+   * The terrace runs z = -1.5 to -29 hard against the west wall, and the west
+   * wall has three openings inside that span: the canal's bought gate at bay 5
+   * and the chapel recesses at bays 4 and 6. Laid as one slab it sealed all
+   * three. The gate was the expensive one - a player paid 500, the door
+   * reported `opened`, its blockers were spliced out of the collider list, and
+   * he still walked into 1.35 metres of stylobate two and a half metres short
+   * of the hole. Nothing reported it, because every instrument in the build
+   * asks whether the DOOR opened and none of them asks whether the floor in
+   * front of it can be stood on.
+   *
+   * So a mouth in the wall behind the terrace cuts a passage through it. A real
+   * temple does the same thing for the same reason: you do not lay an unbroken
+   * plinth across your own side door.
+   *
+   * THE PASSAGE IS CLAMPED TO WHAT THE COLONNADE LEAVES, and that clamp is not
+   * a nicety. The stylobate is what the columns stand on. Cut it out from under
+   * one and a 3.3-metre plinth carrying eleven metres of column is standing on
+   * air, which is the same defect as the floating architraves and floating
+   * banners this file has already had to fix twice. The two columns bracketing
+   * the canal gate sit at z = -11 and z = -18, so the passage is what is left
+   * between their plinths: 3.7 metres, centred a metre south of the mouth. That
+   * is narrower than the 5.2-metre hole and wider than anything that has to walk
+   * through it.
+   *
+   * AND WHERE THE COLONNADE LEAVES NOTHING, NOTHING IS CUT. West bays 4 and 6
+   * put their chapel recesses at z = -4.5 and z = -22.5, and the columns at
+   * z = -4 and z = -25 stand across both approaches. Those two recesses stay
+   * sealed, they are still sealed after this change, and the fix for them is to
+   * move the west colonnade's rhythm - a composition decision, not a collision
+   * one, and not this pass's to take. They are listed here so the next person
+   * finds them named rather than by walking into them.
+   */
+  const MOUTH_HALF = 2.6;            // buildMouth's HALF: a 5.2 metre hole
+  const PASSAGE_PAD = 1.2;           // shoulder room either side of the mouth
+  const PASSAGE_MIN = 2.4;           // narrower than this is not a route
 
-  addWallRun(tX, tZ, tW * 0.5, TERRACE.h, 'z', tL);
+  const passages = [];
+  for (let b = 0; b < bays; b++) {
+    const key = `-1:${b}`;
+    if (!GATE_BAYS.has(key) && !BREACH_BAYS.has(key)) continue;
+
+    const mz = bayZ(b);
+    if (mz > TERRACE.zNear || mz < TERRACE.zFar) continue;   // terrace never reaches it
+
+    let hi = Math.min(mz + MOUTH_HALF + PASSAGE_PAD, TERRACE.zNear);
+    let lo = Math.max(mz - MOUTH_HALF - PASSAGE_PAD, TERRACE.zFar);
+
+    let underAColumn = false;
+    for (let i = 0; ; i++) {
+      const cz = COL_Z0['-1'] - i * COL_STEP;
+      if (cz < AVENUE.zFar + 1) break;                       // the colonnade stops here
+      const half = COL_BASE / 2;
+      if (Math.abs(cz - mz) < half) { underAColumn = true; break; }
+      if (cz > mz) hi = Math.min(hi, cz - half);
+      else lo = Math.max(lo, cz + half);
+    }
+
+    if (underAColumn || hi - lo < PASSAGE_MIN) continue;
+    passages.push({ hi, lo });
+  }
+
+  /**
+   * The stylobate is now the terrace MINUS its passages: north to south, a
+   * segment, a gap, a segment. One slab was the special case where the list of
+   * passages happens to be empty, and it still builds that way.
+   */
+  const terraceSegs = [];
+  {
+    let top = TERRACE.zNear;
+    for (const p of passages.slice().sort((a, b) => b.hi - a.hi)) {
+      if (p.hi < top) terraceSegs.push({ zNear: top, zFar: p.hi });
+      top = p.lo;
+    }
+    if (TERRACE.zFar < top) terraceSegs.push({ zNear: top, zFar: TERRACE.zFar });
+  }
+
+  for (const seg of terraceSegs) {
+    const sL = seg.zNear - seg.zFar;
+    const sZ = (seg.zNear + seg.zFar) / 2;
+
+    // Two courses rather than one slab, the upper inset, so the terrace edge is
+    // a real step profile instead of a painted line.
+    const terraceBase = stone(tW, 0.62, sL, M.limestone, DENSITY.limestone,
+      { eroded: 0.05, chamfer: 0.1 });
+    terraceBase.position.set(tX, 0.20, sZ);
+    group.add(terraceBase);
+
+    // The upper course TOPS OUT at TERRACE.h and laps down into the base.
+    //
+    // Two separate errors, both of which the flat noon key hid and the new key
+    // does not. It used to be 0.78 tall centred at 0.92, so its top surface was
+    // at 1.31 while the west colonnade is seated on TERRACE.h = 1.35: every
+    // column on the terrace stood on four centimetres of nothing, and with a
+    // real sun that gap is a strip of daylight under a 3.3-metre plinth. Its
+    // underside was at 0.53 against a base course topping out at 0.51, so the
+    // two courses of the stylobate did not touch each other either.
+    //
+    // Sized from TERRACE.h down rather than from an authored centre, so the
+    // surface the colonnade stands on and the number the colonnade is seated at
+    // are the same number and cannot drift apart again.
+    const terraceTopH = TERRACE.h - 0.4;
+    const terraceTop = stone(tW - 0.9, terraceTopH, sL - 0.6, M.limestone,
+      DENSITY.limestone, { eroded: 0.05, chamfer: 0.1 });
+    terraceTop.position.set(tX + 0.2, TERRACE.h - terraceTopH / 2, sZ);
+    group.add(terraceTop);
+
+    /**
+     * SEALED AS A RECTANGLE, AND SIZED SO THE COLLISION ENDS WHERE THE STONE
+     * ENDS.
+     *
+     * This was one `addWallRun` of r = 2.9 discs down the terrace centre line,
+     * and it had two faults that a passage makes fatal rather than merely
+     * untidy. A wall run centres its END discs on the ends it is given, so a
+     * run of the terrace's own length reached 2.9 metres past both faces: the
+     * old terrace's collision ran to z = 1.4, four metres north of any stone,
+     * and a passage cut between two such runs would have been filled in from
+     * both sides before anyone could walk it. And a line of discs down the
+     * middle of a 5.8 by 27.5 rectangle leaves the corners open, which is the
+     * exact defect `fillMass` exists to answer.
+     *
+     * So: fillMass, with both dimensions reduced by FILL_R, which is what makes
+     * the sealed footprint the stone's footprint and not a hand's width more.
+     * See the note on fillMass.
+     */
+    fillMass(tX, sZ, tW - FILL_R, sL - FILL_R, TERRACE.h);
+  }
 
   for (const side of [-1, 1]) {
     const west = side < 0;
 
-    // Offset the east rhythm by a third of a bay. Two facing rows on the same
-    // z are what makes an avenue read as a mirror.
-    const z0 = west ? -4 : -6.4;
+    const z0 = COL_Z0[side];
     const baseY = west ? TERRACE.h : 0;
 
     for (let i = 0; i < 7; i++) {
       const x = side * 13;
-      const z = z0 - i * 7;
+      const z = z0 - i * COL_STEP;
 
       // Stop at the temple front. Seven columns at seven metres runs to z=-48,
       // and the pyramid's base step occupies everything past z=-31, so the last
@@ -576,7 +770,12 @@ export function buildCourtyard(scene) {
       const col = new THREE.Group();
       col.position.set(x, baseY, z);
 
-      const base = stone(3.3, 0.65, 3.3, M.limestone, DENSITY.limestone, { chamfer: 0.08 });
+      // COL_BASE rather than a literal: the stylobate above measures its
+      // passages against this plinth to decide where it may be cut, and a
+      // plinth that grew here without that measurement growing with it would
+      // start overhanging a passage with nothing under it.
+      const base = stone(COL_BASE, 0.65, COL_BASE, M.limestone, DENSITY.limestone,
+        { chamfer: 0.08 });
       base.position.y = 0.32;
       col.add(base);
 
@@ -616,7 +815,28 @@ export function buildCourtyard(scene) {
           drum.castShadow = true;
           drum.receiveShadow = true;
           col.add(drum);
-          addCollider(x - side * spread * 0.72, z + dir * spread * 0.7, 1.25, 2.2);
+          /**
+           * ON THE SAND, AND IT HAS TO SAY SO.
+           *
+           * These three - the drums, the capital, the base disc - are the only
+           * things lying on the avenue floor within reach of a mouth, and they
+           * were the only three near one that declared no base. A collider with
+           * no `y0` is measured from the LOCAL FLOOR, which is the right default
+           * out here where props stand on dunes, and it is wrong the moment the
+           * local floor is a raised deck: the quarry breach's step is a walkable
+           * surface at 2.9, so a knee-high drum beside it was silently lifted to
+           * 2.9 and stood as an invisible 1.2-metre bar across the mouth. That
+           * is what stopped the player at x = 15 after the step itself was
+           * fixed, and from inside the mouth it reads as the game refusing to
+           * let you walk through a particular patch of nothing.
+           *
+           * `groundY` rather than 0: the sand under them is not flat, and a base
+           * declared at zero on a dune that sits at 0.4 makes the drum start
+           * below its own mesh.
+           */
+          const dcx = x - side * spread * 0.72;
+          const dcz = z + dir * spread * 0.7;
+          addCollider(dcx, dcz, 1.25, 2.2, groundY(dcx, dcz));
         }
 
         // The capital lands face down at the end of the run.
@@ -625,10 +845,13 @@ export function buildCourtyard(scene) {
         cap.rotation.z = Math.PI * 0.52;
         cap.rotation.y = dir * 0.6;
         col.add(cap);
-        addCollider(x - side * 4.6, z + dir * 4.4, 1.8, 3);
+        // Same rule as the drums above: lying on the sand, and saying so.
+        const ccx = x - side * 4.6;
+        const ccz = z + dir * 4.4;
+        addCollider(ccx, ccz, 1.8, 3, groundY(ccx, ccz));
 
         group.add(col);
-        addCollider(x, z, 1.7, 1.2);
+        addCollider(x, z, 1.7, 1.2, groundY(x, z));
         continue;
       }
 
@@ -755,51 +978,8 @@ export function buildCourtyard(scene) {
   // give the walls depth instead of making a tunnel, and architraves spanning
   // overhead so the frame is layered vertically as well as horizontally.
 
-  const bays = Math.round((AVENUE.zNear - AVENUE.zFar) / BAY);
-
-  // Which bays open into a side chapel rather than solid wall. Recesses stop
-  // the avenue reading as a corridor of two flat slabs.
-  //
-  // Different sets per side. When both walls opened at the same z the recesses
-  // cancelled out: the frame stayed symmetric and the alcoves only widened the
-  // corridor rather than reading as rooms off it. Staggered, each recess is
-  // read against solid wall opposite, which is what gives it depth.
-  const CHAPEL_BAYS = {
-    '-1': new Set([1, 4, 6]),
-    '1': new Set([2, 3, 7]),
-  };
-
   /** Focal points inside each recess, handed to the dressing pass. */
   const chapelSpots = [];
-
-  /**
-   * THE ACT 1 CIRCUIT: where the avenue opens onto the two new spaces.
-   *
-   * MAP.md ratifies Avenue -> Quarry -> Canal -> Avenue as one circuit of
-   * roughly 150 metres, each space opened by a purchase of about 500. Two
-   * spaces on opposite flanks of a corridor need four holes in that corridor,
-   * and four holes is two prices unless one of them is one-way. So each space
-   * gets exactly one BOUGHT mouth and one free BREACH, and the breach is a hole
-   * high in the wall with the spoil banked against it on the outside only:
-   * walk up the talus from inside the space and step down into the avenue, and
-   * from the avenue side it is a sill you cannot climb. One price per space,
-   * one direction round the circuit, and the direction is legible from the
-   * geometry rather than from a sign.
-   *
-   *   quarry  in  east bay 1  (z =  22.5)   out  east bay 5  (z = -13.5)
-   *   canal   in  west bay 5  (z = -13.5)   out  west bay 2  (z =  13.5)
-   *
-   * The two z = -13.5 mouths face each other across the avenue on purpose. The
-   * chapels were deliberately staggered so that no recess is ever read against
-   * another recess, and this is the opposite case rather than a violation of
-   * it: a crossroads wants to be symmetric, because the whole value of it is
-   * that from the middle of the avenue you can see both ways out at once.
-   *
-   * Neither of these bays is a chapel bay and neither is one of the two breached
-   * east bays, so nothing here competes with geometry that was already authored.
-   */
-  const GATE_BAYS = new Map([['1:1', 'quarry'], ['-1:5', 'canal']]);
-  const BREACH_BAYS = new Map([['1:5', 'quarry'], ['-1:2', 'canal']]);
 
   /** Every mouth built, in build order, collected for the claim records. */
   const mouths = [];
@@ -865,7 +1045,8 @@ export function buildCourtyard(scene) {
       // The step. Masonry rather than loose rubble, because it has to read as
       // something you can stand ON from one side, and a heap of stones reads as
       // something you climb over from both.
-      const step = stone(2.9, sill + 1.2, HALF * 2, M.limestone, DENSITY.limestone,
+      const STEP_W = 2.9;
+      const step = stone(STEP_W, sill + 1.2, HALF * 2, M.limestone, DENSITY.limestone,
         { eroded: 0.12, chamfer: 0.12 });
       step.position.set(x, sill - (sill + 1.2) / 2, z);
       group.add(step);
@@ -889,6 +1070,44 @@ export function buildCourtyard(scene) {
         x: (lo + hi) / 2, z, w: run, d: HALF * 2,
         y0: side > 0 ? sill : 0,
         y1: side > 0 ? 0 : sill,
+      });
+
+      /**
+       * AND THE STEP ITSELF IS A SURFACE, WHICH IT WAS NOT.
+       *
+       * The step is masonry with a flat top at `sill`, and the comment above it
+       * says in as many words that it "has to read as something you can stand
+       * ON from one side". Nothing ever told the sampler that. It got a
+       * collider and no deck record, so `heightAt` returned the SAND under it
+       * for every point across its top, and the breach was impassable in the
+       * one direction it exists for.
+       *
+       * Measured on the shipped build, driving the real controller up the
+       * quarry talus with the real frame loop: the player rises with the ramp to
+       * 2.83 at x = 16.75, the talus deck ends at 16.6, his feet drop 2.7 metres
+       * to the sand, and he is instantly inside the step's own collider - which
+       * blocks everything below 2.7 - and is pushed back east. He jams at
+       * x = 16.6 every time, walking or sprinting, from any start. That is the
+       * opening the owner photographed and asked to be able to run through, and
+       * it was never a window: it is the quarry's authored one-way exit with no
+       * floor on top of its step.
+       *
+       * The deck spans from the step's avenue-side face to where the talus deck
+       * begins, so the two meet with no gap. A tenth of a metre of nothing
+       * between them is enough to drop a body, because a body is 0.42 wide and
+       * has to have somewhere to put all of itself.
+       *
+       * FLAT, at `sill`, and that is what keeps the mouth one-way. `heightAt`
+       * only hands back a surface within a step of the feet, so from the talus
+       * (feet 2.8, reach 3.45) the step is the floor, and from the avenue floor
+       * (feet 0.15, reach 0.8) a surface at 2.9 is not - it stays the wall the
+       * design says it is. Nothing about the approach from the avenue changes.
+       */
+      const stepInner = x - side * (STEP_W / 2);       // its avenue-side face
+      addDeck({
+        x: (stepInner + xIn) / 2, z,
+        w: Math.abs(xIn - stepInner), d: HALF * 2,
+        y0: sill, y1: sill,
       });
 
       // The wedge under it, placed by working backward from where its top face

@@ -134,11 +134,93 @@ export function dressAvenue(parent, {
     return true;
   };
 
-  /** Mount a wall prop flat against a face. `normal` points away from the wall. */
-  const placeWall = (name, x, y, z, normalX, normalZ, { scale = 1 } = {}) => {
+  /**
+   * IS THERE ACTUALLY A WALL BEHIND THIS MOUNT POINT.
+   *
+   * A wall prop is surface relief. It has no legs, no plinth and no excuse: it
+   * is a panel pinned flat to masonry, and with no masonry behind it, it is a
+   * lattice hanging in clear sky. The owner photographed one and called it "a
+   * broken door", which is exactly what it reads as.
+   *
+   * The old guard asked the wrong question. It asked HOW TALL the wall at this
+   * bay is, and a bay that is a chapel recess or a gate mouth reports a height
+   * like any other - the height it would have if it were wall. Height was never
+   * the question. PRESENCE is. Measured on the shipped seed, two of the three
+   * wall panels were mounted on bays that have no wall at that line at all: a
+   * mashrabiya at (-13.65, 3.28, 12.58), which is the canal breach's mouth, and
+   * another at (-13.65, 3.52, -22.67), which is the bay 6 chapel recess with
+   * its back wall seven and a half metres further west.
+   *
+   * So this asks presence, against the collider set, which is the one
+   * description of the architecture this module is given. It is the same list
+   * the wall runs register into, so a bay that is solid answers immediately -
+   * the mount point is already INSIDE the wall's own cylinder - and a bay that
+   * opens has nothing within reach in any direction the wall could be.
+   *
+   * TALL ENOUGH, TOO. A prop mounted at 4.6 on a stub that tops out at 3.9 is
+   * the same defect one axis over, and the old height guard was catching that
+   * case and only that case; this keeps it rather than replacing it.
+   *
+   * IT MEASURES THICKNESS, NOT TOUCH, and that distinction is the whole test.
+   * The first version of this asked whether any collider CONTAINED a point
+   * behind the panel, and it passed the breach-bay panel, which is the one the
+   * owner photographed. The mouth's return is a 1.7-radius cylinder standing in
+   * for a 2.6-thick wall, so it bulges 1.7 metres sideways past the masonry it
+   * represents and its edge clips the opening. The ray through it covered 0.53
+   * metres of that cylinder against the 2.46 metres it covers on a real wall.
+   * Grazing the corner of the stone beside a hole is not being mounted on it.
+   *
+   * So the question is how much stone the ray actually passes through, in
+   * closed form per cylinder: the chord. Over a metre and the panel has a wall
+   * behind it; under, and it is hanging in an opening. The two populations on
+   * this map are 2.46 and 0.53, so nothing is balanced on the threshold.
+   */
+  const BACKING_REACH = 2.6;      // the wall face is 1.35 in from a 1.7 radius run
+  const BACKING_DEPTH = 1.0;      // metres of stone the ray has to cross
+  const backedBy = (x, y, z, normalX, normalZ) => {
+    // Into the wall is the opposite of the face normal.
+    const dx = -normalX, dz = -normalZ;
+    for (const c of colliders) {
+      // Stone that does not reach this high cannot be what the panel is on.
+      if ((c.y0 || 0) + c.h < y + 0.4) continue;
+
+      const ox = c.x - x, oz = c.z - z;
+      const t = ox * dx + oz * dz;                    // depth of closest approach
+      if (t < -c.r || t > BACKING_REACH + c.r) continue;
+
+      const latSq = Math.max(0, ox * ox + oz * oz - t * t);
+      const halfChordSq = c.r * c.r - latSq;
+      if (halfChordSq <= 0) continue;
+      if (2 * Math.sqrt(halfChordSq) >= BACKING_DEPTH) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Mount a wall prop flat against a face. `normal` points away from the wall.
+   *
+   * `backing` is the presence test above, and it defaults ON: a caller that
+   * wants a panel hanging in an opening has to say so, rather than every caller
+   * getting one by accident. The chapel banners are the one deliberate
+   * exception and they carry their reason at the call site.
+   *
+   * THE PROP IS BUILT BEFORE IT IS REJECTED, and that is not waste. Every prop
+   * constructor draws from the shared `rand`, and this file's whole layout -
+   * the ground clusters, the cover line, the chapel focal points, the forecourt
+   * - is downstream of that one stream. Skipping the construction would move
+   * every later placement by however many draws the panel would have taken, so
+   * a two-panel fix would reshuffle the finished avenue. courtyard.js has
+   * burned draws for this exact reason three times and states the rule as THE
+   * FINISHED AVENUE IS THE QUALITY BAR; this is that rule, one file over. The
+   * geometry of a rejected prop is never added to the scene and is collected.
+   */
+  const placeWall = (name, x, y, z, normalX, normalZ, { scale = 1, backing = true } = {}) => {
     if (!PROPS[name]) return false;
 
     const built = PROPS[name](rand, { scale });
+
+    if (backing && !backedBy(x, y, z, normalX, normalZ)) return false;
+
     const g = built.group;
     g.position.set(x, y, z);
     // The kit builds wall props with +Z out of the panel, so aim +Z along the
@@ -271,6 +353,22 @@ export function dressAvenue(parent, {
       // Mounted on the wall that is actually there. A shutter hung at 7.5 on a
       // bay ruined to 3.4 is a panel hanging in the sky beside a stub, which is
       // the same class of defect as a floating beam and reads exactly as badly.
+      //
+      // THIS TEST IS NECESSARY AND IT IS NOT SUFFICIENT, which took a bug
+      // report to learn. It asks how tall the wall is and gets an answer for
+      // every bay, including the three per side that are not wall: the chapel
+      // recesses step seven metres back and the gate and breach mouths are a
+      // 5.2-metre hole. Those bays report a height like any other and the panel
+      // goes up in front of nothing. `placeWall` now asks whether the masonry
+      // is THERE, which is the question this one cannot ask, and the two
+      // together are the guard this always needed.
+      //
+      // It also fails open on a miss - `top` falls back to 7.7, which passes -
+      // and that shape is worth naming even though it is currently unreachable:
+      // courtyard.js fills bayHeight for every b in 0..bays-1 and this loop
+      // reads the same range, so the lookup cannot miss today. It is the same
+      // shape as the reachesPlayer bug, where a check that could not answer
+      // returned the answer meaning "no problem here".
       const wall = bayHeight ? bayHeight.get(`${side}:${b}`) : null;
       const top = wall ? wall.h - 1.4 : 7.7;
       if (top < 3.4) continue;
@@ -432,10 +530,17 @@ export function dressAvenue(parent, {
     // bay it is nailed to: this bay can be as short as 3.4 units and the banner
     // was pinned at 8.2 regardless, which put a red rectangle in clear sky with
     // no wall behind it.
+    //
+    // BACKING OFF, and deliberately. This is the one wall prop in the file that
+    // is meant to hang across an opening rather than on a face: the alcove
+    // mouth is the whole subject, and the nearest stone behind it is its own
+    // back wall six and a half metres in. Measured, all four of these sit 6.6 m
+    // proud of anything solid, which for a banner over a recess is the intent
+    // and for a lattice panel on a wall would be the bug.
     const top = (c.h ?? avenue.height) - 2.6;
     if (top > 3.0 && rand() < 0.75) {
       placeWall('banner', c.x - c.side * 5.4, Math.min(8.2 + rand() * 1.5, top),
-        c.z, -c.side, 0, { scale: 1.0 + rand() * 0.4 });
+        c.z, -c.side, 0, { scale: 1.0 + rand() * 0.4, backing: false });
     }
   });
 

@@ -581,6 +581,41 @@ export function createDirector({
   const _fwd = new THREE.Vector3();
 
   /**
+   * WHICH COMPONENT COUNTS AS "WHERE THE PLAYER IS".
+   *
+   * One function because there are three readers - the spawn search, the
+   * reachability assertion, and the stats block - and they had three answers,
+   * one of which was a lie.
+   *
+   * `near` widens the query by two cells before giving up, so it returns -1
+   * only for a player the field genuinely has nothing open near: standing
+   * inside geometry, off the field's rectangle, or in a pocket the pad carved
+   * away entirely. That is rare and it is real, and the question "can this
+   * point be walked to the player" HAS NO ANSWER in that state.
+   *
+   * The old reachesPlayer answered `true`. Not "unknown", not "false": true,
+   * for every cell on the map at once, including cells inside the pyramid. It
+   * is a false-pass generator, and it is why the canal stayed sealed through a
+   * paid purchase without a single probe going red - the harness asserts this
+   * over every live actor and the assertion could not fail.
+   *
+   * So the unknown resolves the way the spawn search already resolved it, to
+   * the largest component: on any sane map that is the one the fight is in, and
+   * unlike `true` it is a claim that can be wrong and therefore a claim worth
+   * making. A point in a sealed pocket now answers false whatever the player is
+   * standing in.
+   *
+   * Returns -1 only when there is no field at all, which callers read as "this
+   * space does not answer the question this way" - the interior, which answers
+   * it through its room graph instead.
+   */
+  function playerIsland(field) {
+    if (!field) return -1;
+    const at = field.near(player.position.x, player.position.z);
+    return at >= 0 ? at : field.main;
+  }
+
+  /**
    * Choose where to put one enemy down.
    *
    * Scored rather than filtered, so the search always returns something. A
@@ -602,19 +637,9 @@ export function createDirector({
     // shambler uses and a colossus cannot.
     const field = wide ? navBoss : nav;
 
-    // The island the player is standing on. Read per pick rather than cached:
-    // the player moves, and the field is rebuilt under them whenever the
-    // collider set changes. A player somehow inside geometry reads -1, which
-    // disables the term rather than rejecting the whole map.
-    //
-    // For the wide field the player almost never stands in an open cell - the
-    // avenue is wide but the player hugs walls - so it falls back to the
-    // largest component, which on any sane map is the one the fight is in.
-    const island = field
-      ? (field.near(player.position.x, player.position.z) >= 0
-        ? field.near(player.position.x, player.position.z)
-        : field.main)
-      : -1;
+    // The island the player is standing on, by the one rule every reader of
+    // this field now shares. See playerIsland().
+    const island = playerIsland(field);
 
     // Forward is (-sin yaw, 0, -cos yaw), the same convention the player
     // controller and the camera rig use.
@@ -969,9 +994,51 @@ export function createDirector({
   const FLOW_MAX_S = 0.60;
   const FLOW_MOVE = 1.4;
 
+  /**
+   * A FLOOD THIS SMALL IS NOT A FIELD, AND IT USED TO CALL ITSELF VALID.
+   *
+   * flow.rebuild() sets `valid` on any flood that completes, including one that
+   * settled a single slot out of 12,875. Every actor on the map then samples it,
+   * every sample fails, and the whole horde silently reverts to walking the
+   * straight line at the player through whatever stone is in between. Measured
+   * on this build with the player standing in the west bay-1 chapel recess at
+   * (-19.6, 21.1): 117 rebuilds out of 117 reached exactly one slot, 16,648
+   * sample() calls out of 16,648 failed, and the worst actor spent 79 per cent
+   * of its life pushing into a wall.
+   *
+   * The director cannot fix the flood - the seed is flow.js's and so is the
+   * recovery inside it, and the cause is written up in the note on the retry
+   * there - but the director is the CONSUMER, and a consumer that keeps reading
+   * a field it can measure as dead is the reason this went a build and a half
+   * without being reported. So it marks the field invalid, which stops sample()
+   * pretending, puts the rebuild back on the fast interval so the field
+   * recovers the moment the player steps out of the pocket rather than up to
+   * FLOW_MAX_S later, and counts it in stats().
+   *
+   * A COUNT rather than a flag, because a field that collapses once while the
+   * player clips a doorway is noise and a field that collapses on every rebuild
+   * for a minute is the bug, and only a count tells those apart.
+   *
+   * THE REBUILD RATE THIS RAISES IS PAID FOR. In the collapsed state the field
+   * rebuilds every FLOW_MIN_S instead of every FLOW_MAX_S, five times as often,
+   * and each of those rebuilds is a flood that reaches one slot: measured at a
+   * mean of 0.008 ms against 1.6 ms for a healthy one. A collapsed field is the
+   * cheapest field there is, which is exactly why nobody noticed it - see the
+   * note in flow.js about a run that stood out only for being suspiciously
+   * fast.
+   *
+   * Eight rather than one or two. A legitimately tiny flood does not exist:
+   * the nearest actor is at least SPAWN_NEAR metres from the seed, so a field
+   * worth reading has hundreds of slots. Eight is small enough that no real
+   * space can trip it and large enough to catch the retry that recovers one
+   * neighbour and stops.
+   */
+  const FLOW_MIN_VISITED = 8;
+
   let flowDirty = true;
   let flowAge = 0;
   let flowX = 0, flowZ = 0;
+  let flowCollapsed = 0;
 
   function updateFlow(dt) {
     flowAge += dt;
@@ -997,7 +1064,13 @@ export function createDirector({
     // field describes - see the note on the seed in flow.js - and the player's
     // position carries the camera, one eye-height above the floor they are
     // actually standing on.
-    flow.rebuild(ctx, px, pz, player.position.y - PLAYER_CONSTANTS.EYE_HEIGHT);
+    const built = flow.rebuild(ctx, px, pz, player.position.y - PLAYER_CONSTANTS.EYE_HEIGHT);
+
+    // Believe the flood's own measurement of itself rather than its verdict.
+    if (built && flow.stats().visited < FLOW_MIN_VISITED) {
+      flowCollapsed++;
+      flow.invalidate();
+    }
 
     flowX = px;
     flowZ = pz;
@@ -1248,15 +1321,21 @@ export function createDirector({
      * Could something standing here be walked to the player?
      *
      * True wherever the question does not apply - the interior, which answers
-     * it through its room graph instead, and a player who is somehow not on the
-     * field at all. The harness asserts this over every live actor, because a
-     * horde that arrives on average while one of its members is sealed in a
-     * pocket is the exact failure this field was built to end.
+     * it through its room graph instead. The harness asserts this over every
+     * live actor, because a horde that arrives on average while one of its
+     * members is sealed in a pocket is the exact failure this field was built
+     * to end.
+     *
+     * A PLAYER THE FIELD CANNOT PLACE IS NO LONGER A UNIVERSAL PASS. This used
+     * to return true for every cell on the map whenever `near` came back -1,
+     * which is a diagnostic that cannot report a failure and therefore is not a
+     * diagnostic. It resolves through playerIsland() now, the same way the
+     * spawn search always has, so the worst case is an answer measured against
+     * the largest component rather than an answer that is true by construction.
      */
     reachesPlayer(x, z) {
       if (!nav) return true;
-      const island = nav.near(player.position.x, player.position.z);
-      if (island < 0) return true;
+      const island = playerIsland(nav);
       return nav.near(x, z) === island;
     },
 
@@ -1343,16 +1422,19 @@ export function createDirector({
         // How many of them the player could actually be walked to from. The
         // gap between these two numbers IS the bug this field was added for,
         // so it is reported rather than left implicit.
+        //
+        // Through playerIsland() like every other reader. Asking `near`
+        // directly meant that a player the field could not place turned this
+        // into a count of the spawn points standing INSIDE geometry, which is
+        // near enough to zero to look like an alarm and is not one.
         spawnPointsReachable: nav
-          ? nav.countIn(points, nav.near(player.position.x, player.position.z))
+          ? nav.countIn(points, playerIsland(nav))
           : points.length,
         // The same count for a god, which is a smaller number on any map with a
         // colonnade in it. A wave-five point set that has collapsed to nothing
         // is a boss wave that cannot start.
         spawnPointsForBoss: navBoss
-          ? navBoss.countIn(points, navBoss.near(player.position.x, player.position.z) >= 0
-            ? navBoss.near(player.position.x, player.position.z)
-            : navBoss.main)
+          ? navBoss.countIn(points, playerIsland(navBoss))
           : points.length,
         walkComponents: nav ? nav.components : 0,
         space: pointSpace,
@@ -1370,6 +1452,13 @@ export function createDirector({
         // performance that cannot be read from outside the page is not a claim
         // worth making, which is the same reason the governor is on __SANDS__.
         flow: flow.stats(),
+        // Rebuilds this run whose flood reached under FLOW_MIN_VISITED slots.
+        // Reported because the whole reason the collapse went a build and a
+        // half without being noticed is that nothing counted it: flow.stats()
+        // reports `visited` for the LAST rebuild only, so a field that dies
+        // while the player stands in a pocket and recovers when he steps out
+        // leaves no trace at all in a sample taken afterwards.
+        flowCollapsed,
       };
     },
 

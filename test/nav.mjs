@@ -400,11 +400,27 @@ const checks = {
   // is answering with the straight line, which is the bug, not the fix.
   'routes are longer than the crow flies': results.geodesic.meanRatio > 1.05,
 
+  // THE INTERIOR AND EXTERIOR KEYS ARE NAMED APART, and they were not.
+  //
+  // Both halves of this pair were called 'buying it opens one on the same
+  // frame'. An object literal keeps the last value written to a key, so the
+  // INTERIOR one was deleted at parse time and has never executed once. It is
+  // the interior twin of the canal defect - a door that reports bought while no
+  // route opens - and it was the half of the pair that was not watching.
   'a shut interior door has no route through it': doorI.skipped ? true : doorI.routeShut < 0,
-  'buying it opens one on the same frame': doorI.skipped ? true : doorI.routeOpen > 0,
+  'buying the interior door opens a route on the same frame': doorI.skipped ? true : doorI.routeOpen > 0,
   'and an actor then walks it': doorI.skipped ? true : doorI.chased.arrivedAt !== null,
   'a shut courtyard claim has no route through it': doorE.skipped ? true : doorE.routeShut < 0,
-  'buying it opens one on the same frame': doorE.skipped ? true : doorE.routeOpen > 0,
+  'buying the courtyard claim opens a route on the same frame': doorE.skipped ? true : doorE.routeOpen > 0,
+
+  // WHETHER THOSE FIVE ACTUALLY RAN. `skipped ? true` encodes a skipped check
+  // as a passing one, which this suite forbids in writing (test/headshot.mjs
+  // :132, "A skipped check is not a passing one"). Rather than restructure the
+  // file, this reports the fact so a green run cannot hide a silent skip.
+  // `skipped` is the REASON string, not a boolean, so this is a truthiness
+  // test and not an equality one.
+  'the interior door check actually ran': !doorI.skipped,
+  'the courtyard claim check actually ran': !doorE.skipped,
 
   'the gallery upper level is routed from the floor':
     g5.fromFloor.upper.eastLedge > 0 && g5.fromFloor.upper.westLedge > 0 && g5.fromFloor.upper.bridge > 0,
