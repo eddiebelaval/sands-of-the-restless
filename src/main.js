@@ -561,6 +561,12 @@ function boot() {
     // table. Low still pins 1, so the toggle remains a real lever.
     renderer.setPixelRatio(high ? resolutionScale() : 1);
     renderer.setSize(window.innerWidth, window.innerHeight);
+    // THE COMPOSER NEEDS THE RATIO TOO, and for years it was not given one.
+    // EffectComposer captures the renderer's pixel ratio ONCE in its constructor
+    // and multiplies every setSize by that frozen value forever, so a later
+    // setPixelRatio on the renderer changed the canvas and left the render
+    // targets where they were. See setPixelScale below for what that cost.
+    post.composer.setPixelRatio(high ? resolutionScale() : 1);
     post.composer.setSize(window.innerWidth, window.innerHeight);
 
     // A retro mode owns the composer's pixel ratio while it is on, and this
@@ -586,6 +592,22 @@ function boot() {
     setGovernorScale(k);
     renderer.setPixelRatio(high ? resolutionScale() : k);
     renderer.setSize(window.innerWidth, window.innerHeight);
+    /**
+     * WITHOUT THIS LINE THE BOTTOM TWO RUNGS DID NOTHING, which is to say the
+     * two rungs a struggling machine actually lands on.
+     *
+     * Measured before the fix, at a 1280x720 window: at `fewer-px` the canvas
+     * was 1088x612 while the composer's render target was still 1280x720, and
+     * at `low` the canvas was 921x518 against the same unchanged target. The
+     * scene and all nine fullscreen passes were still being drawn at full size
+     * and then blitted down. The ladder gave up ambient occlusion, soft
+     * shadows, bloom and anti-aliasing on the way to those rungs and then spent
+     * every fragment it had saved.
+     *
+     * `resolutionScale()` already multiplies by the governor's scale, so it
+     * carries `k` implicitly on the `high` path; the low path takes it directly.
+     */
+    post.composer.setPixelRatio(high ? resolutionScale() : k);
     post.composer.setSize(window.innerWidth, window.innerHeight);
     // Same reason as in setFidelity. In practice this path cannot run while a
     // retro mode is on - choosing one stands the governor down for the session -
