@@ -64,6 +64,36 @@ for (const id of ids) walk(id, id, [id]);
 /** Rooms that lie on at least one cycle. The only rooms you can train in. */
 const onACycle = new Set(cycles.flat());
 
+/**
+ * SPAWN COUNT, and why this is not `(r.spawnPoints || []).length`.
+ *
+ * The law below exempts rooms with no spawn points, correctly: a room the horde
+ * never appears in is not a room you can be cornered in. But `|| []` cannot tell
+ * "this room deliberately spawns nothing" from "the field this tool reads is not
+ * there any more", and it supplies exactly the value that triggers the exemption.
+ *
+ * So a rename of `spawnPoints` in rooms.js, or moving it behind a getter, would
+ * exempt EVERY room at once while the act-train and gallery-ring sections still
+ * passed from portal data, and this tool would print "the law holds" over a map
+ * where the Serdab is a spawning dead end. A law that switches itself off when it
+ * loses sight of its subject is not a law.
+ *
+ * An absent field is a defect in this tool, not a property of the room, so it is
+ * reported as one and it is fatal. An empty array is a real answer and stays
+ * exempt.
+ */
+function spawnCount(r) {
+  if (!Array.isArray(r.spawnPoints)) {
+    fail(
+      `${r.id} has no spawnPoints ARRAY (${typeof r.spawnPoints}). ` +
+      'This tool reads rooms.js directly; the field has moved or been renamed, ' +
+      'and every room would otherwise be silently exempt.'
+    );
+    return null;
+  }
+  return r.spawnPoints.length;
+}
+
 // ---------------------------------------------------------------------------
 // the report
 // ---------------------------------------------------------------------------
@@ -71,12 +101,14 @@ const onACycle = new Set(cycles.flat());
 console.log('ROOM                  portals  spawns  area     h   verdict');
 for (const r of ROOMS) {
   const n = neighbors(r.id);
-  const spawns = (r.spawnPoints || []).length;
+  const spawns = spawnCount(r);
   const area = r.bounds.w * r.bounds.d;
 
-  const verdict = onACycle.has(r.id)
-    ? (n.length > 2 ? 'hub, on a loop' : 'on a loop')
-    : spawns === 0 ? 'no spawns, exempt' : 'NO LOOP';
+  const verdict = spawns === null
+    ? 'SPAWN FIELD MISSING'
+    : onACycle.has(r.id)
+      ? (n.length > 2 ? 'hub, on a loop' : 'on a loop')
+      : spawns === 0 ? 'no spawns, exempt' : 'NO LOOP';
 
   console.log(
     `${r.id.padEnd(20)}  ${String(n.length).padStart(4)}  ${String(spawns).padStart(6)}  ` +
@@ -108,8 +140,10 @@ for (const c of cycles) {
 
 console.log('\nTHE LAW: every room with spawn points is in a cycle');
 for (const r of ROOMS) {
-  const spawns = (r.spawnPoints || []).length;
-  if (!spawns) continue;
+  // spawnCount has already reported an absent field as a failure in the report
+  // above; skipping here would double-count it, and the room cannot be judged.
+  const spawns = Array.isArray(r.spawnPoints) ? r.spawnPoints.length : null;
+  if (spawns === null || !spawns) continue;
   if (onACycle.has(r.id)) pass(`${r.id} (${spawns} spawns) is on a loop`);
   else fail(`${r.id} spawns ${spawns} enemies and is on NO loop at any price`);
 }
