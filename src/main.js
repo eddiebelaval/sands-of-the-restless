@@ -563,9 +563,9 @@ function boot() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     post.composer.setSize(window.innerWidth, window.innerHeight);
 
-    // PS1 mode owns the composer's pixel ratio while it is on, and this
+    // A retro mode owns the composer's pixel ratio while it is on, and this
     // function has just overwritten it with the shipping convention. Without
-    // this, changing fidelity from the panel while the mode is live leaves the
+    // this, changing fidelity from the panel while a mode is live leaves the
     // post chain rendering at window resolution into a canvas a third that
     // size: the picture survives, the entire performance argument does not.
     retro?.resize();
@@ -587,8 +587,8 @@ function boot() {
     renderer.setPixelRatio(high ? resolutionScale() : k);
     renderer.setSize(window.innerWidth, window.innerHeight);
     post.composer.setSize(window.innerWidth, window.innerHeight);
-    // Same reason as in setFidelity. In practice this path cannot run while
-    // PS1 mode is on - choosing it stands the governor down for the session -
+    // Same reason as in setFidelity. In practice this path cannot run while a
+    // retro mode is on - choosing one stands the governor down for the session -
     // but `governor.force()` exists for the harness and does not, so the two
     // writers are reconciled here rather than assumed apart.
     retro?.resize();
@@ -647,9 +647,11 @@ function boot() {
     },
     // Same shape, same rule. core/retro.js stands the governor down itself,
     // because the key binding can reach it without going through this panel.
+    // The value is the mode ID rather than a boolean, because there are three
+    // of them now and a boolean cannot say which.
     retro: {
-      get: () => !!(retro && retro.enabled),
-      set: (v) => retro && retro.set(!!v),
+      get: () => (retro ? retro.mode : 'off'),
+      set: (v) => retro && retro.set(v),
       stats: () => (retro ? retro.stats() : null),
     },
     onResume: () => {
@@ -699,40 +701,49 @@ function boot() {
   });
 
   /**
-   * THE PS1 MODE, and P is the key.
+   * THE RETRO MODES, and P is the key that walks them.
    *
    * The binding had to be one that is free with both hands on the controls and
    * free of any meaning the player already carries. Digit1-8 are the weapons, Q
    * is the khopesh, R reloads, V inspects, F interacts, G cooks a grenade, C
-   * and Ctrl crouch, Esc is the menu. P is untouched anywhere in src/, it is
-   * nowhere near WASD so it cannot be hit by accident during a wave, and it is
-   * the one letter in the alphabet that already means "PlayStation" to anyone
-   * who would want this mode. The panel carries the same switch on the Video
-   * tab, because a keystroke nobody is told about is a feature that does not
-   * exist - which is the lesson the CONTROLS tab in ui/pause.js was built out
-   * of.
+   * and Ctrl crouch, Esc is the menu. P is untouched anywhere else in src/, it
+   * is nowhere near WASD so it cannot be hit by accident during a wave, and it
+   * is the one letter in the alphabet that already means "PlayStation" to
+   * anyone who would want this.
    *
-   * It flips in place: no reload, no respawn, and the player does not move. The
-   * mode's whole argument is a comparison, and a comparison you have to walk
-   * back to is not one.
+   * IT CYCLES RATHER THAN TOGGLES, and that is the whole reason there is still
+   * only one key for three modes. Modern, PS1, N64, modern. A second binding
+   * for the second era would mean a key nobody can guess and a control scheme
+   * that grows every time a preset is added; a cycle means the player presses
+   * the same key again and the next thing happens, which is how every graphics
+   * toggle on the hardware being imitated worked. Three states is comfortably
+   * inside what a cycle can carry - past about four it becomes a slot machine
+   * and it should become a menu instead.
+   *
+   * The panel carries the same three on the Video tab, because a keystroke
+   * nobody is told about is a feature that does not exist - the lesson the
+   * CONTROLS tab in ui/pause.js was built out of - and because the panel is
+   * the only way to jump straight to a mode rather than walking to it.
+   *
+   * It switches in place: no reload, no respawn, and the player does not move.
+   * The whole argument is a comparison, and a comparison you have to walk back
+   * to is not one.
    */
   retro = createRetro({
     renderer, scene, canvas, post, viewmodel, governor,
-    onChange: (state) => {
-      showNotice(state
-        ? 'PS1 mode on - 270 lines, no AO, no bloom, no AA'
-        : 'PS1 mode off');
+    onChange: (mode, notice) => {
+      showNotice(notice, mode === 'off' ? 1400 : 2600);
       pause.refresh();
     },
   });
 
   window.addEventListener('keydown', (e) => {
-    // Not gated on `started`: the mode is worth seeing on the title card too,
+    // Not gated on `started`: the modes are worth seeing on the title card too,
     // which is a full render of the courtyard. It IS gated on the menu, for the
     // same reason every other binding in this file is - a keystroke meant for a
     // text field or a menu button is not a keystroke meant for the renderer.
     if (e.code !== 'KeyP' || pause.paused) return;
-    retro.toggle();
+    retro.cycle();
   });
 
   /**
@@ -1475,7 +1486,7 @@ function boot() {
     // actually settled on - a claim about performance that cannot be measured
     // from outside the page is not a claim worth making.
     governor,
-    // The PS1 mode, so tools/perf-retro.mjs can flip it and read what it cost.
+    // The retro modes, so tools/perf-retro.mjs can flip them and read the cost.
     // A render mode whose performance claim cannot be measured from outside the
     // page is not a claim worth making, which is the same argument the governor
     // above is exposed for.

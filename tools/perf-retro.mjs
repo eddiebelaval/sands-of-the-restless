@@ -1,5 +1,5 @@
 /**
- * WHAT PS1 MODE COSTS, AND WHAT IT BUYS, AT THREE FIXED POSES.
+ * WHAT THE RETRO MODES COST, AND WHAT THEY BUY, AT THREE FIXED POSES.
  *
  * `tools/perf.mjs` is the general instrument and everything in its header
  * applies here without repeating it: real GPU, no swiftshader, vsync disabled,
@@ -9,10 +9,16 @@
  * This is the A/B that file cannot do. perf.mjs sweeps CONFIGURATIONS at ONE
  * pose, which is the right shape for "where inside the post chain is the money
  * going". The question here is different and needs a different shape: a render
- * MODE, measured at several places in the level, with the two halves of each
- * pair taken from the same page at the same position seconds apart. The owner's
+ * MODE, measured at several places in the level, with all three rows of a pose
+ * taken from the same page at the same position seconds apart. The owner's
  * actual problem is a MacBook that cannot run this, and the honest form of the
- * answer is the same scene twice.
+ * answer is the same scene three times.
+ *
+ * N64 IS EXPECTED TO COST MORE THAN PS1 and the number is the point of the
+ * exercise, not a disappointment: it quantises less aggressively, it may carry
+ * anti-aliasing, and its upscale filter is not free. If it lands close to the
+ * shipping look it is not a rescue mode and should be described as a look
+ * rather than as a fix.
  *
  * WHY THE GOVERNOR IS STOOD DOWN FIRST. core/governor.js watches the frame and
  * changes the settings underneath a measurement that is trying to hold them
@@ -187,51 +193,65 @@ const ratio = await page.evaluate(() => ({
 console.log(`window:  ${ratio.w}x${ratio.h} css, devicePixelRatio ${ratio.dpr}`);
 console.log(`frames:  ${FRAMES} per row, vsync disabled\n`);
 
+/** The three modes, and the label each one prints under. */
+const MODES = [
+  { key: null, label: 'current' },
+  { key: 'ps1', label: 'PS1' },
+  { key: 'n64', label: 'N64' },
+];
+
 const rows = [];
 
 for (const p of POSES) {
   await pose(p);
 
-  // Baseline first, and the mode is turned off explicitly rather than assumed
-  // off, because the previous pose left it in whatever state it ended in.
-  await page.evaluate(() => window.__SANDS__.retro.set(false));
-  await page.waitForTimeout(500);
-  const off = await measure(FRAMES);
+  const modes = {};
+  for (const m of MODES) {
+    // Set explicitly rather than assumed, because the previous pose left the
+    // page in whatever mode ended it.
+    await page.evaluate((k) => window.__SANDS__.retro.set(k), m.key);
+    await page.waitForTimeout(500);
+    modes[m.label] = await measure(FRAMES);
+  }
 
-  await page.evaluate(() => window.__SANDS__.retro.set(true));
-  await page.waitForTimeout(500);
-  const on = await measure(FRAMES);
-
-  await page.evaluate(() => window.__SANDS__.retro.set(false));
+  await page.evaluate(() => window.__SANDS__.retro.set(null));
   await page.waitForTimeout(300);
 
-  rows.push({ pose: p.id, off, on });
+  rows.push({ pose: p.id, modes });
 }
 
 console.log('POSE               MODE       median      fps     p95     worst   calls    tris     buffer      composer RT');
 for (const r of rows) {
-  for (const [label, m] of [['current', r.off], ['PS1', r.on]]) {
+  for (const m of MODES) {
+    const x = r.modes[m.label];
     console.log(
-      `${r.pose.padEnd(18)} ${label.padEnd(9)} ` +
-      `${m.median.toFixed(2).padStart(6)} ms ${(1000 / m.median).toFixed(0).padStart(5)} ` +
-      `${m.p95.toFixed(1).padStart(7)} ${m.worst.toFixed(1).padStart(7)} ` +
-      `${m.calls.toFixed(0).padStart(6)} ${(m.tris / 1000).toFixed(0).padStart(6)}k ` +
-      `${`${m.w}x${m.h}`.padStart(11)}  ${m.rt}`
+      `${(m.key === null ? r.pose : '').padEnd(18)} ${m.label.padEnd(9)} ` +
+      `${x.median.toFixed(2).padStart(6)} ms ${(1000 / x.median).toFixed(0).padStart(5)} ` +
+      `${x.p95.toFixed(1).padStart(7)} ${x.worst.toFixed(1).padStart(7)} ` +
+      `${x.calls.toFixed(0).padStart(6)} ${(x.tris / 1000).toFixed(0).padStart(6)}k ` +
+      `${`${x.w}x${x.h}`.padStart(11)}  ${x.rt}`
     );
   }
 }
 
-console.log('\nWHAT THE MODE IS WORTH, per pose:');
+console.log('\nWHAT EACH MODE IS WORTH, against the shipping look:');
 for (const r of rows) {
-  const saved = r.off.median - r.on.median;
-  const pct = (saved / r.off.median) * 100;
-  const px = (r.off.w * r.off.h) / (r.on.w * r.on.h);
-  console.log(
-    `  ${r.pose.padEnd(18)} ${saved >= 0 ? '-' : '+'}${Math.abs(saved).toFixed(2)} ms  ` +
-    `(${(-pct).toFixed(0)}% of the frame, ` +
-    `${(1000 / r.off.median).toFixed(0)} -> ${(1000 / r.on.median).toFixed(0)} fps, ` +
-    `${px.toFixed(1)}x fewer pixels)`
-  );
+  const base = r.modes.current;
+  for (const label of ['PS1', 'N64']) {
+    const x = r.modes[label];
+    const saved = base.median - x.median;
+    const pct = (saved / base.median) * 100;
+    const px = (base.w * base.h) / (x.w * x.h);
+    console.log(
+      `  ${r.pose.padEnd(18)} ${label.padEnd(4)} ` +
+      `${saved >= 0 ? '-' : '+'}${Math.abs(saved).toFixed(2)} ms  ` +
+      `(${(-pct).toFixed(0)}% of the frame, ` +
+      `${(1000 / base.median).toFixed(0)} -> ${(1000 / x.median).toFixed(0)} fps, ` +
+      `${px.toFixed(1)}x fewer pixels)`
+    );
+  }
+  const d = r.modes.N64.median - r.modes.PS1.median;
+  console.log(`  ${''.padEnd(18)} N64 costs ${d >= 0 ? '+' : ''}${d.toFixed(2)} ms over PS1`);
 }
 
 writeFileSync(

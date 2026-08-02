@@ -119,10 +119,10 @@ export const BINDINGS = [
     rows: [
       { keys: ['F'], what: 'Buy, open, and use - whatever is under the crosshair' },
       { keys: ['Esc'], what: 'Pause, and this panel' },
-      // The same switch as the Video tab's PS1 mode row. Both are listed on
-      // purpose: a player looking for a key looks here, and a player looking
+      // The same control as the Video tab's Render mode row. Both are listed
+      // on purpose: a player looking for a key looks here, and a player looking
       // for a setting looks there.
-      { keys: ['P'], what: 'PS1 mode - flip the whole renderer back to 1997' },
+      { keys: ['P'], what: 'Cycle the render mode - Modern, PS1, N64' },
     ],
   },
 ];
@@ -475,28 +475,47 @@ function buildSpec({ rig, audio, mute, fidelity, retro, pad }) {
         },
         {
           id: 'retro',
-          kind: 'toggle',
-          label: 'PS1 mode',
+          kind: 'choice',
+          label: 'Render mode',
+          /**
+           * THREE, NOT A TOGGLE, and the middle one is not a halfway house.
+           *
+           * The two consoles failed in opposite directions: the PlayStation had
+           * no sub-pixel precision and no perspective correction, so it wobbled
+           * and swam but drew hard pixels; the Nintendo 64 fixed both and spent
+           * the difference on filtering everything soft. Listing them as a
+           * choice rather than as a quality slider is the honest shape, because
+           * neither is "more" than the other.
+           */
+          choices: [['Modern', 'off'], ['PS1', 'ps1'], ['N64', 'n64']],
           read: () => retro.get(),
           write: (v) => retro.set(v),
-          value: () => (retro.get() ? 'On' : 'Off'),
+          value: () => {
+            const s = retro.stats && retro.stats();
+            return s ? s.name : 'Modern';
+          },
           /**
-           * The note prints the LIVE buffer size rather than the setting,
-           * because the setting is a number of lines and what the player wants
-           * to know is how few pixels that turned out to be in their window.
-           * It is also the cheapest possible check that the mode did what it
-           * says: a row that reads On over an unchanged pixel count is the
-           * whole of this project's defining bug, visible from the menu.
+           * The note prints the LIVE buffer size and filter rather than the
+           * setting, because the setting is a number of lines and what the
+           * player wants to know is how few pixels that turned out to be in
+           * their window, and which way they are being scaled up. It is also
+           * the cheapest possible check that the mode did what it says: a row
+           * naming a mode over an unchanged pixel count is the whole of this
+           * project's defining bug, visible from the menu.
            */
           note: () => {
             const s = retro.stats && retro.stats();
-            if (!s) return 'Press P. 1997 rendering: low resolution, vertex'
-              + ' jitter, warped textures, five-bit colour';
+            if (!s) return 'Press P to cycle. Modern, then 1997, then 1996';
             const px = `${s.width}x${s.height}`;
-            return retro.get()
-              ? `Rendering ${px} and scaling up hard. No AO, no bloom, no AA,`
-                + ' no shadows. Fog stays'
-              : `Press P at any time. Currently rendering ${px}`;
+            if (s.mode === 'ps1') {
+              return `${px}, scaled up hard. Vertex wobble, warped textures,`
+                + ` ${s.levels} colour levels. No AO, bloom, AA or shadows`;
+            }
+            if (s.mode === 'n64') {
+              return `${px}, scaled up SMOOTH. No wobble, flat textures,`
+                + ` ${s.levels} levels, ${s.fog}x fog. The blur is the point`;
+            }
+            return `Press P at any time. Currently rendering ${px}`;
           },
         },
       ],
@@ -628,7 +647,7 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
    * that reads Off and does nothing rather than a thrown error over an open
    * menu.
    */
-  const NO_RETRO = { get: () => false, set: () => {}, stats: () => null };
+  const NO_RETRO = { get: () => 'off', set: () => {}, stats: () => null };
 
   /**
    * WHAT THE PLAYER CHOSE, kept separately from what the bus is doing.
