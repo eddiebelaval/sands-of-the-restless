@@ -5,142 +5,110 @@ not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
 
-## RIGHT NOW, 2026-08-01 21:08
+## RIGHT NOW, 2026-08-02 22:25
 
 Everything below "Run it" is history. This is where the work actually is.
 
-### Pushed and live: 306bab2
+### Live on main at 87df93b
 
-The story A to Z (`docs/NARRATIVE.md`), the map survey, both locked names, the
-doc renderer and its paired HTML. Docs only; the playable build on Pages is
-unchanged from this morning.
+The descent (Act 3 at y -6, three ramps, correctly lit), three render modes on
+`P` (Modern / PS1 / N64), the control centre (every key AND pad button
+rebindable, persisted under `sands.keys.v1`), `E` cycles weapons, the entry room
+widened to 544 m2 with a free west door, and four bugs the owner found by
+playing: the canal seal, the quarry breach window, floating wall props and
+`reachesPlayer`.
 
-### Committed, NOT pushed, in order
+### Committed, NOT pushed
 
-  4052419  PS1 render mode
-  0428ca5  the fail-open audit
-  5cf247d  N64 mode
-  71cbbac  npm test could never pass, three dead ports
-  0e6c0af  canal, quarry window, floating props, reachesPlayer
-  b12e350  THE DESCENT
-  daeec2b  N64 at 540 lines
+  b69bb65  docs: World 1's map scope, from the narrative
+  32b4066  docs: how the story reaches a player being chased
 
-### THE DESCENT WORKS. The floor can go below zero.
+### TWO LANES IN FLIGHT. Nothing of theirs is committed.
 
-Rooms carry `base`. Act 1 and 2 at y 0; Embalming, Crypt, Star Shaft, King's
-Chamber and Serdab at y -6, reached by three ramps at the Act 2/3 break, 16 m
-run for 6 m fall. `test/descent.mjs` verified IN THIS TREE, not taken on report:
-all checks pass, including a real-keydown walk from feet 0.00 to -5.96 and the
-climb back out, horde routing both ways, and `layersFull` 0 against flow.js's
-two-layer cap.
+**1. THE JAR CHAIN AND THE ENDING** (build items 1 and 6, owner approved).
+Four jars carryable and returnable; `jarsReturned` is declared 0 at
+`doors.js:289` and written NOWHERE, so the Serdab is unreachable and World 1's
+entire ending happens in it. Three jars run the machine, the fourth opens the
+Serdab. Kindling gets OPTION C: keep the system, delete only the lever's
+interactability, jars call the existing `throwSwitch()`. THE BEAT THAT MUST
+SURVIVE: the Kindling notice OVERWRITES THE ARCHAEOLOGIST MID-SENTENCE, now on
+the third jar, same room.
+Also: WORLD 1 CANNOT CURRENTLY END. Verified in source, there is no `gameWon`,
+no victory, no wave ceiling; `director.js` does `state.wave++` with nothing to
+stop it. Owner's call: terminate at wave 25, ending gated on the jars.
 
-THE DROP IS 6 BECAUSE THE CANOPIC CRYPT'S CEILING PRICED IT. A sill at the
-higher floor needs `height >= drop + 5`. One room's headroom set the depth of
-the whole descent. World 2 will violate this if nobody remembers it.
+**2. THE PACER, MGS STYLE** (owner overrode the design's Banjo-Kazooie vocal
+blips and asked for Metal Gear Solid codec). One tick per character as it
+appears, short dry percussive burst, speakers separated by PITCH AND FILTER not
+phonemes, punctuation costs time, spaces silent, small pitch jitter. His call is
+better: a codec tick is not a voice, so it dissolves the defect where her blip
+would have shared `groan()`'s formant bank and made her sound like the horde.
+Also fixing INSTANCE TWELVE (below) and the gatekeeper's two words on the death
+card.
 
-### KNOWN REGRESSION, committed knowingly: Act 3 ships a third too dark
+### INSTANCE TWELVE of "written but never rendered"
 
-`weathering.js:127` measures grime from ABSOLUTE world y against a datum of 0,
-so every room below it saturates at full grime. Serdab loses 43 per cent.
-Proven, not inferred: lifting the interior group +6 at runtime with identical
-lights takes it 13.83 to 21.78. That 21.78 is the target.
+`index.html` sets `text-transform: uppercase` AND `white-space: nowrap` on
+`#notice`. Her authored lines are LOWERCASE and run to 52 characters. The entire
+scheme where she is the only lowercase text in the game is unrenderable at any
+string, on a pill that would not fit the line anyway. Found by reading the CSS.
 
-FIX DECIDED after an argued reversal, and the reasoning matters more than the
-answer: per-base MATERIAL INSTANCES, not a per-mesh attribute. The attribute
-needs binding at ~120 sites (no geometry chokepoint) or relies on WebGL's
-unbound-attribute default, which renders correctly under swiftshader (what every
-harness here uses) and possibly wrong on a real GPU. The batching objection to
-material variants was MINE and was WRONG: `spaces.js:502-503` makes interior and
-exterior mutually exclusive, so interior instances split no batch. ~4 draw calls
-against 1372.
+### The map scope's answer to "we need more space"
 
-### Three render modes. P cycles Modern, PS1, N64.
+NINE INTERIOR ROOMS STILL SUFFICE, and the case got stronger, not weaker: the
+widening answered "too small to run in" without a room, and the descent gave
+"deeper and deeper" a built home. What is missing is OUTDOORS, IN PROPS AND IN
+SYSTEMS. Total ~2,000-2,700 lines, ONE new exterior space (the expedition camp,
+the biggest single build), ZERO new interior rooms.
 
-Presets are data over one implementation; jitter and affine are UNIFORMS, so
-`programs 62 -> 84 -> 84 -> 84` and a preset switch recompiles nothing.
+### The story fits in the silences that already exist
 
-  pose        current    PS1     N64
-  exterior     3.40 ms   0.80    1.70
-  ground       3.70 ms   0.80    1.20
-  interior    10.10 ms   2.30    4.40
+Normal's breather is 6.0 s and the director only enters it when nothing is
+alive. Twenty-four of them is ~144 s of quiet against a World 1 script of 233
+characters, about 17 s of speech. An 8 to 1 budget. That measurement is what
+made the delivery layer worth designing at all.
 
-Quiet-machine numbers. PS1 452x270 nearest; N64 904x540 linear. N64 was first
-built at 270 to share PS1's buffer so the frame-time delta would be the mode's
-own cost. The owner played it and said "why is it so blurry": correct for
-MEASURING, wrong for PLAYING, because a 3.2x smooth blow-up reads as out of
-focus. The blur is the FILTER's job, not an absence of pixels.
+### Owner decisions already taken, do not re-ask
 
-N64 is the MIDDLE option, not the rescue. PS1 is the rescue at 4.4x interior.
-Known art loss in both: the brazier fire and sun glow go with bloom.
+- HETEPHERES (the queen) and THE ANCIENTS (the pre-Egyptian builders). Locked.
+  "Meresankh" appears nowhere in the repo.
+- All five map-scope questions: camp doubles as the forecourt mass; camp is
+  FREE, not a fourth purchase; Kindling Option C; World 1 ends at wave 25 gated
+  on jars; all three forward plants ship now.
+- MGS codec over vocal blips.
+- Story transcripts are NEVER edited to match later decisions. They are the
+  record.
 
-### THE GOVERNOR'S BOTTOM TWO RUNGS DO NOT WORK
+### The landmine at the top of World 2
 
-`EffectComposer` freezes its pixel ratio at construction and
-`composer.setPixelRatio` is called nowhere in src/. Measured by forcing rungs:
-at `low` the canvas is 1036x619 while the composer target is still 1440x860. The
-bottom rungs shrink only the final blit. THE MACBOOK THIS STARTED FOR HAS BEEN
-FALLING TO RUNGS THAT DO NOTHING. One line in main.js; deferred because it
-changes the resolution every screenshot test renders at.
+`star-shaft -> serdab` sits at EXACTLY 0.00 SLACK on `height >= drop + 5.0`.
+When that rule breaks the builder does not refuse: it shrinks the clearance past
+zero, emits the lintel below the sill, and ships a door nobody can walk through,
+logging nothing. WORLDS.md specifies World 2 ceilings under six, which caps a
+World 2 drop at 0.9 m. Recorded in MAP-SURVEY section 7 and WORLDS.md.
 
-### Four bugs the owner found by PLAYING, all fixed in 0e6c0af
+### Still open
 
-The harness found none of them.
+- 20 fail-open findings unfixed (`docs/FAIL-OPEN-AUDIT.md`), 5 of them in tests.
+- `test/grenades.mjs` RED ON A PRISTINE HEAD TREE at 13.95. Pre-existing and
+  drifting. Do not chase it and do not move the threshold.
+- The Serdab's unexplained 0.76 in the weathering fix, flagged not explained.
+- Five story-delivery decisions in `docs/STORY-DELIVERY.md` section 11.
 
-- CANAL: emitter was NOT the dressing scatter. `addWallRun` at courtyard.js:541,
-  the west terrace, laid as one slab over three wall openings because it was
-  built before the bay tables that say where the wall opens. Now walks in.
-- QUARRY WINDOW: the quarry breach, one-way by design and broken. The sill
-  step's flat top was never registered as a deck though its own comment says it
-  must be standable. Walks through x 24 to x -0.39; still unclimbable from the
-  avenue, so one-way survives.
-- FLOATING PANELS: 50 to 70 PER CENT of all wall furniture, not one instance.
-  Cause was chapel bays, where the wall steps 7 m back. `placeWall` now requires
-  masonry behind the mount, measured as chord length; a containment test still
-  passed the broken panel.
-- `reachesPlayer`: over a 1320-point lattice with the player inside the pyramid,
-  it reported 1320 of 1320 reachable INCLUDING five points inside sixty metres
-  of solid limestone.
+### What the instruments cost, and the rule that keeps paying
 
-The stuck-mummy fix is small and honest: the obvious anchor fix was built,
-measured at arrivals 22/24 to 0/24, and DELETED, with the failure recorded in
-code so nobody rebuilds it. Shipped route memory instead: stalls 5.2 to 4.2 per
-cent over six seeds.
+The harness has lied at least eight times across this work: `reachesPlayer`, the
+wall-height lookup, an FPS counter read off the HUD, a colour statistic measured
+after the blur instead of before, three suites pointed at dead ports, a nav
+probe that hardcoded `footY: 0` and declared sixteen spawn points unreachable on
+a map where the horde walked every one, and `teleport()` leaving the camera 7.5 m
+in the air in Act 3, which failed 15 checks in economy.mjs and 4 in interior.mjs
+for reasons unrelated to what they test.
 
-### The fail-open audit: 21 instances, 6 inside the tests
-
-`docs/FAIL-OPEN-AUDIT.md`. A check that cannot answer returns the value meaning
-"no problem". Worst live one is `director.js:654`: `reach.size &&`
-short-circuits the anti-seal spawn filter, so when the director does not know
-the player's room EVERY point is accepted, the wave never ends, and the stall
-watchdog cannot fire because the actors are alive, just sealed in.
-
-`test/nav.mjs` declared the same object key twice, so one assertion had never
-run. Renamed and it passes. NONE of the 21 are fixed.
-
-### What the instruments cost tonight
-
-The harness lied five times: reachesPlayer, the wall-height lookup, an FPS
-counter I read off the HUD and repeated, the colour-ladder statistic measuring
-after the blur instead of before, and three suites pointed at dead ports so
-`npm test` could never pass. Rule that keeps proving itself: read the thing, not
-the thing that reports on it. A red result here means look closer; a green one
-still means green, since a reaped browser cannot manufacture a pass.
-
-`test/grenades.mjs` is RED ON A PRISTINE HEAD TREE at 13.95, worse than the
-working tree's 14.79. Already failing, already drifting. Do not chase it and do
-not move the threshold.
-
-### In flight
-
-One lane: the weathering fix, then widening `chamber-of-ascent` from 352 to
-about 544 m2, then making the hall-of-offerings exit FREE (owner's ruling). The
-Act 2 loop currently costs 1500 gold to close; freeing it should land at 750.
-
-### Why the push is being held
-
-`main` has the story and docs, which are finished. The local code is good but
-carries one known visual regression (Act 3 dark) and the widening/free-exit
-work is unstarted. Pushing now ships a darker Act 3 to save a few hours.
+RULE: read the thing, not the thing that reports on it. And read WHAT THE PROBE
+ASKS, not just what it answers: a correct answer to the wrong question is
+indistinguishable from a correct answer. A result that is UNIFORM across every
+case is the shape of a broken instrument, not of a severe bug.
 
 ## Run it
 
