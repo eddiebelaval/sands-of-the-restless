@@ -1390,22 +1390,48 @@ const PROPS = {
     plinth.position.y = 0.45;
     g.add(plinth);
 
+    /**
+     * THE VESSEL IS ITS OWN GROUP, AND THE PLINTH IS NOT IN IT.
+     *
+     * systems/jars.js lifts a jar out of the world and puts it back down in a
+     * niche eight rooms away, so exactly one question decides this shape: what
+     * moves. The answer is the jar and its stopper, and NOT the block of
+     * limestone they are standing on - which is the thing this fixture's
+     * collider describes.
+     *
+     * Hiding the whole group instead was the obvious version and it is wrong in
+     * a way the player would find within a second: the collider stays behind,
+     * because collision in this codebase is the authored array and never the
+     * mesh graph, so a taken jar would leave a knee-high invisible obstacle in
+     * the middle of a chapel. Lifting only the vessel leaves an EMPTY PLINTH,
+     * which is both the honest read of what happened and the exact object the
+     * collider was always standing in for.
+     *
+     * Reparented rather than copied when it goes home. One jar exists, it is in
+     * one place at a time, and a second mesh built in the niche would be a
+     * second thing to keep in step with the first.
+     */
+    const vessel = new THREE.Group();
+    vessel.name = 'vessel';
+
     const jar = new THREE.Mesh(
       cylinderUV(new THREE.CylinderGeometry(0.30, 0.22, 0.72, 14), 0.30, 0.72, DENSITY.carved),
       M.carved
     );
     jar.position.y = 1.26;
     jar.castShadow = true;
-    g.add(jar);
+    vessel.add(jar);
 
     // The stopper is the head of one of the four sons of Horus. At this scale
     // the shape is a silhouette, so the gold is doing the identifying.
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), M.gold);
     head.position.y = 1.76;
     head.scale.set(1, 1.15, 0.9);
-    g.add(head);
+    vessel.add(head);
 
-    jars.push({ ...slot, room: ctx.room.id, group: g });
+    g.add(vessel);
+
+    jars.push({ ...slot, room: ctx.room.id, group: g, vessel });
     addCollider(slot.x, slot.z, 0.62, 1.9);
     return g;
   },

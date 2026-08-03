@@ -659,11 +659,25 @@ const kindled = await page.evaluate(async () => {
   window.__H__.place(-29, -221.6, 0);
   await window.__H__.frames(3);
 
+  /*
+   * IT IS NOT A LEVER ANY MORE, AND THAT IS WHAT THIS NOW CHECKS.
+   *
+   * The trigger moved onto the four-jar chain - the third jar going home calls
+   * throwSwitch() - and the fire bowl stayed exactly where it was as scenery
+   * that lights. So the prompt is asserted EMPTY and the key is pressed anyway,
+   * because "the fixture no longer prompts" and "the key no longer works" are
+   * two claims and a suite that only made the first would miss a lever that
+   * still fired silently.
+   */
   const prompt = document.getElementById('prompt').textContent;
   window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyF' }));
   await window.__H__.frames(3);
+  const poweredByKey = g.interior.powered;
 
-  return { prompt, powered: g.interior.powered, room: g.spaces.roomId };
+  g.power.throwSwitch();
+  await window.__H__.frames(3);
+
+  return { prompt, poweredByKey, powered: g.interior.powered, room: g.spaces.roomId };
 });
 
 await shoot('int-11-embalming-kindling', 'Embalming Chamber, the Kindling lit');
@@ -854,7 +868,9 @@ const checks = {
   'power gate refuses':              power.stillClosed === true && power.goldUnchanged === true,
   'power gate explains itself':      /KINDLING/.test(power.lockedPrompt),
   'power refusal is not a price':    !/GOLD/.test(power.lockedPrompt),
-  'the Kindling lights':             kindled.powered === true,
+  'the fire bowl offers no prompt':  kindled.prompt.trim() === '',
+  'F at the bowl does nothing':      kindled.poweredByKey === false,
+  'the chain lights the map':        kindled.powered === true,
   'powered gate opens free':         opened.freeOfCharge === true && opened.frames < 200,
   'reached the King\'s Chamber':     opened.room === 'kings-chamber',
   'south wall holds':                containment.south.z > -271 && containment.room === 'kings-chamber',

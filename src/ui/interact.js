@@ -53,7 +53,28 @@ const REACH = 5.5;
  * single pooled list would let the player stand in the pyramid and buy a
  * weapon off a plaque hanging in a courtyard that is not being drawn.
  */
-export function createInteracts({ camera, interior, courtyard = null, spaces, prompt, handlers = {} }) {
+/**
+ * @param {object[]} [sources] Extra fixture sources, `{ interacts, space }`.
+ *
+ * THE THIRD KIND OF FIXTURE, AND WHY IT IS NOT A THIRD NAMED PARAMETER.
+ *
+ * `interior` and `courtyard` are the two SPACES, and they were the whole story
+ * while every fixture in the game was authored as an `interactSlots` entry in
+ * rooms.js. The four canopic jars are not: they are propSlots, deliberately -
+ * build.js says so in the builder - and they are published on `interior.jars`
+ * and `courtyard.jars` because the puzzle chain claims them rather than the
+ * fixture layer. One of them stands outside and three stand inside, so they are
+ * not a space either.
+ *
+ * A fourth named parameter would have made this file know what a jar is. What
+ * it actually needs to know is what it has always known: here is a list of
+ * records with a `type` and a `group`, and here is which space they stand in.
+ * That is `collect()`'s entire contract already, so the change is to let a
+ * caller hand it one more list rather than to teach it one more noun.
+ */
+export function createInteracts({
+  camera, interior, courtyard = null, spaces, prompt, handlers = {}, sources = [],
+}) {
   /**
    * Meshes a look-at ray may hit, keyed by the space they stand in. An explicit
    * list, because handing a raycaster the interior group would test several
@@ -89,12 +110,28 @@ export function createInteracts({ camera, interior, courtyard = null, spaces, pr
       // "it is hidden most of the time" is not a defence.
       slot.group.traverse((o) => {
         if (o.isMesh && !o.userData.noPick) targets[space].push(o);
+
+        // TAGGED HERE ONLY IF NOBODY TAGGED IT ALREADY.
+        //
+        // `pick()` resolves a raycast hit through `userData.interact`, and
+        // build.js's buildInteracts stamps that on every mesh of every fixture
+        // it builds - so for the interior's and the courtyard's own fixtures
+        // this is a no-op that reads one property. The records arriving through
+        // `sources` come off a PROP builder, which stamps `userData.prop` and
+        // nothing else, so without this they would be raycast targets that
+        // resolve to no record and produce no prompt: present, hit, and inert.
+        //
+        // Guarded rather than unconditional because a re-stamp would quietly
+        // become the authoritative one, and the day the two disagreed the
+        // fixture layer would be the thing that was wrong.
+        if (o.isMesh && !o.userData.interact) o.userData.interact = slot;
       });
     }
   };
 
   collect(interior, 'interior');
   collect(courtyard, 'exterior');
+  for (const s of sources) collect(s, s.space);
 
   const ray = new THREE.Raycaster();
   const centre = new THREE.Vector2(0, 0);

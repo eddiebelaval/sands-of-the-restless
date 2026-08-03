@@ -867,16 +867,62 @@
     100% { opacity: 0; }
   }
 
+  /* THE NOTICE PILL. Two voices use it and they are styled apart rather than
+     labelled apart; see src/ui/pacer.js.
+
+     `white-space: nowrap` WAS on this rule and had to go. It is fine for a
+     stamp - THE KINDLING TAKES is 18 characters - and it is a rendering bug
+     for anything longer: the pill is centred by a translate, so an unbreakable
+     string wider than the window runs off BOTH edges at once. The longest
+     string already passed to showNotice today is the 54-character pointer-lock
+     fallback in main.js, which at this size is roughly 640px of text that does
+     not fit a 720-wide window. Wrapping cannot change a line that already fits
+     on one, so every existing caller is untouched by this. */
   #notice {
     position: absolute; left: 50%; top: 62%;
     transform: translateX(-50%);
     padding: 6px 14px;
     font-size: 12px; letter-spacing: .2em; text-transform: uppercase;
     color: var(--gold);
-    white-space: nowrap;
+    white-space: normal;
+    max-width: min(34em, 78vw);
+    text-align: center;
     opacity: 0; transition: opacity .2s ease;
   }
   #notice.on { opacity: 1; }
+
+  /* HER VOICE, and the whole attribution scheme is this one declaration.
+     `text-transform: uppercase` stays on the base rule above, so the ten
+     systems that write to this pill keep the capitals they were built for and
+     nothing about them is renegotiated. It is overridden HERE, on her class
+     only, because until it is, no string handed to showNotice can render
+     lowercase at all - which is what the entire "she is the only lowercase
+     text in the game" device is downstream of.
+
+     Tracking comes down with it. .2em is set for capitals, which have no
+     ascender/descender rhythm to carry the eye; the same tracking on lowercase
+     reads as a ransom note. */
+  #notice.voice-her {
+    text-transform: none;
+    font-size: 13px;
+    letter-spacing: .07em;
+    line-height: 1.45;
+  }
+
+  /* THE GATEKEEPER, who does not get her lowercase - it is hers, and the
+     handover in World 2 only means something if it was never shared. He is
+     capitals with more air than the system's, which is the same fact as his
+     6-characters-per-second reveal said in type instead of in time. */
+  #notice.voice-gate {
+    letter-spacing: .34em;
+    color: var(--gold-mid);
+  }
+
+  /* The unsaid half of a line in flight. Hidden by VISIBILITY and not by
+     display, so it still occupies its space: every glyph then appears at the
+     position it will hold when the line is finished, instead of the pill
+     re-centring itself on every character for the whole reveal. */
+  #notice .notice-rest { visibility: hidden; }
 
   /* ---- settings ---- */
   #settings {

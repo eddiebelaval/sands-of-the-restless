@@ -921,8 +921,11 @@ await page.evaluate(() => {
     g.doors.all.find((x) => x.id === 'great-gallery/embalming-chamber').open();
     window.__H__.goRoom('embalming-chamber');
   });
-  check(step.text === 'LIGHT THE KINDLING', 'objective g: the Kindling', step.text);
-  check(step.detail === 'PRESS F AT THE LEVER', 'objective g: how', step.detail);
+  // The rung did not move and its test did not change - it is still
+  // `power.powered` - but the Kindling is thrown by the third canopic jar now
+  // and there is no lever to press F at, so the panel names the machine.
+  check(step.text === 'RETURN THE SONS OF HORUS', 'objective g: the machine', step.text);
+  check(step.detail === '0 OF 4 IN THE NICHES', 'objective g: the progress bar', step.detail);
 }
 
 // h. the map wakes. Shrines become the next thing that exists.

@@ -967,6 +967,108 @@ export function createAudio(options = {}) {
   };
 
   // ---------------------------------------------------------------------------
+  // voices that are not throats
+  // ---------------------------------------------------------------------------
+
+  /**
+   * THE CODEC TICK: the sound of text being typed, one per character.
+   *
+   * Metal Gear Solid's codec, not Banjo-Kazooie's mouth. The distinction is the
+   * whole design and it is not a downgrade, it is the correct fit twice over.
+   *
+   * WHAT IT SOLVES. A synthesised vocal blip is `groan()` with a shorter
+   * envelope - the same two detuned sawtooths through the same 570 / 1100 /
+   * 2410 Hz formant bank - and `groan()` is the mummy. The archaeologist would
+   * have been built out of the horde's throat, at a different pitch, and pitch
+   * is not what makes a formant bank recognisable. A codec tick is not a voice
+   * and structurally cannot have that problem: it is a filtered burst, it
+   * shares nothing with the horde but the output bus, and no amount of tuning
+   * can make it sound like a body.
+   *
+   * WHAT MAKES IT READ AS MGS RATHER THAN AS A BEEP, in the order it matters:
+   *
+   *   ONE TICK PER CHARACTER, fired by the reveal in ui/pacer.js as each glyph
+   *   lands. Not per word and not a loop under the line. The sound IS the
+   *   typing, which is why this function takes no duration and no rhythm - the
+   *   rhythm is the text, including the extra beat a full stop buys.
+   *
+   *   SHORT, DRY AND PERCUSSIVE. Tens of milliseconds, one-millisecond attack,
+   *   exponential decay, no hold. A tick with a tail is a tone, and a tone is a
+   *   vowel, and a vowel is the thing this exists to avoid.
+   *
+   *   SPEAKERS DIFFER BY PITCH AND FILTER, NOTHING ELSE. That is how one
+   *   mechanism gave Snake, Campbell and Naomi three recognisable codec voices,
+   *   and it is why the table below is two rows rather than two functions.
+   *
+   * THE SEPARATION, stated in numbers because "an octave or so apart" is not a
+   * claim anybody can check:
+   *
+   *   her    336 Hz square through a 2100 Hz bandpass, Q 3.2, 32 ms
+   *   gate   168 Hz square through a  820 Hz bandpass, Q 2.4, 52 ms
+   *
+   *   Exactly one octave of pitch and 1.36 octaves of filter centre between
+   *   them, plus a 1.6x difference in length, which the ear reads as him being
+   *   slower and heavier before it reads anything else. Against the horde:
+   *   `groan()` runs `rand(62, 104)`, so the floor to clear is 104 Hz, and the
+   *   lower of these two speakers sits 1.62x above it - 1.57x at the bottom of
+   *   the jitter below. Neither speaker enters the mummy's register at any
+   *   point in its range.
+   *
+   * THE JITTER is +/- 3 percent, about half a semitone. Enough that twenty
+   * characters in a row are not a metronome, small enough that it stays a
+   * rhythm rather than becoming a melody, and it moves the filter with the
+   * pitch so a tick never sounds like a different instrument.
+   */
+  const CODEC = {
+    her:  { hz: 336, filter: 2100, q: 3.2, dur: 0.032, gain: 0.16 },
+    gate: { hz: 168, filter: 820,  q: 2.4, dur: 0.052, gain: 0.19 },
+  };
+
+  const CODEC_JITTER = 0.03;
+
+  function codecTick(opts = {}) {
+    const spec = CODEC[opts.voice] || CODEC.her;
+
+    // A low send. A codec is close-miked by convention - it is in the ear, not
+    // in the room - and a tick with the Great Gallery's tail on it stops being
+    // percussive. It is not zero, because zero would make her the only sound in
+    // the game that does not know which room it is in.
+    const v = voice({ dest: opts.dest, send: opts.send ?? 0.10, gain: opts.gain ?? 1 });
+    if (!v) return false;
+
+    const t = now();
+    const j = 1 + rand(-CODEC_JITTER, CODEC_JITTER);
+    const pitch = (opts.pitch ?? 1) * j;
+
+    const out = gain(v);
+    out.connect(v.out);
+
+    // Square rather than saw: an odd-harmonic series through a narrow bandpass
+    // is hollow and electronic, which is what a codec is. A sawtooth here is
+    // dense enough that the filter starts sounding like a formant, and a
+    // formant is a mouth.
+    const band = filt(v, 'bandpass', spec.filter * pitch, spec.q);
+    band.connect(out);
+    const o = osc(v, 'square', spec.hz * pitch);
+    o.connect(band);
+
+    const end = env(out.gain, t, spec.gain, 0.001, 0, spec.dur);
+    fire(v, o, t, end + 0.01);
+
+    // The consonant. A hair of bandpassed noise on the leading edge, a third of
+    // the length of the pitched part, which is what stops each tick reading as
+    // a musical note and starts it reading as a key being struck.
+    const n = noiseSrc(v);
+    const nf = filt(v, 'bandpass', spec.filter * 1.6 * pitch, 1.1);
+    const ng = gain(v);
+    n.connect(nf); nf.connect(ng); ng.connect(out);
+    const nEnd = env(ng.gain, t, spec.gain * 0.42, 0.0008, 0, spec.dur * 0.34);
+    fire(v, n, t, nEnd + 0.01, noiseOffset(spec.dur));
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
   // enemies
   // ---------------------------------------------------------------------------
 
@@ -1729,6 +1831,10 @@ export function createAudio(options = {}) {
   const SOUNDS = {
     groan, footfall, swipe, deathRattle, bodyHit, headshotHit,
     waveStart, bossHorn, boxJingle, shrineChime, purchaseDenied, roundEnd,
+    // One per revealed character, from ui/pacer.js. It goes through the same
+    // router as everything else rather than getting a private entry point,
+    // because a second way to make a sound in this file is how the mix drifts.
+    codecTick,
     // The ambience one-shots are also playable on demand, which is how a
     // brazier prop gets its own crackle rather than relying on the room bed.
     crackle: (opts) => crackle(now(), opts),

@@ -47,6 +47,26 @@ import { PLAYER_CONSTANTS } from '../player/controller.js';
  */
 const LIVE_CAP = 24;
 
+/**
+ * WHERE WORLD 1 STOPS, AND UNTIL NOW NOTHING IN src/ COULD STOP IT.
+ *
+ * `beginWave()` did `state.wave++` and `bosses.forWave()` cycled the five gods
+ * forever, so the run had exactly one terminal condition: the player dying.
+ * A story with a written ending had no way to reach it - kill Set on wave
+ * twenty-five and wave twenty-six spawned.
+ *
+ * Twenty-five because that is the fifth boss wave, which is Set, which is the
+ * last of the five gods before the cycle would repeat. The number is not
+ * arbitrary and it is not tuning: it is the wave on which the pantheon runs out.
+ *
+ * REACHING IT IS NECESSARY AND NOT SUFFICIENT. This file's job ends at "no more
+ * waves"; whether the WORLD ends is gated on the four-jar chain and on the
+ * player walking into the Serdab, and that gate lives in ui/ending.js where the
+ * things it has to ask about - the jars, the room - already are. A director that
+ * knew about canopic jars would be a director that knew about World 1.
+ */
+const FINAL_WAVE = 25;
+
 /** Pool depth per variant. Deeper than the cap so crumbling corpses never
  * starve the wave behind them. */
 const POOL = { shambler: 16, husk: 10, bound: 6, scarab: 12 };
@@ -931,7 +951,7 @@ export function createDirector({
 
   const state = {
     wave: 0,
-    phase: 'breather',        // breather | spawning | clearing
+    phase: 'breather',        // breather | spawning | clearing | concluded
     timer: tierNow().firstBreather,
     spawnIn: 0,
     boss: null,
@@ -939,7 +959,37 @@ export function createDirector({
     remaining: 0,
     killed: 0,
     stall: 0,
+
+    /**
+     * True from the frame the last wave's last body is off the field.
+     *
+     * A separate flag as well as a phase, because "the phase is concluded" is a
+     * thing this file uses to decide what to do next frame and "the run has
+     * concluded" is a thing four other systems want to ask, and a reader that
+     * has to know the phase vocabulary to answer a yes/no question is a reader
+     * that breaks when a phase is added.
+     */
+    concluded: false,
+
+    /**
+     * Keep cycling the gods past the ceiling.
+     *
+     * OFF by default, because World 1 terminates and the default has to be the
+     * shipped world rather than the mode. It is a field rather than a constructor
+     * argument so that the start screen can offer endless as a mode in one line
+     * whenever that lane wants it, without this file gaining a second way to be
+     * configured.
+     */
+    endless: false,
   };
+
+  /** Whether this wave is the last one. See FINAL_WAVE. */
+  function concludes() {
+    return !state.endless && state.wave >= FINAL_WAVE;
+  }
+
+  /** Who wants to know the run is over. Same shape as onWaveStart, same reason. */
+  const endListeners = new Set();
 
   const ctx = {
     dt: 0,
@@ -976,6 +1026,39 @@ export function createDirector({
    * one line above it. Same shape as combat.onKill for the same reason.
    */
   const waveListeners = new Set();
+
+  /**
+   * THE ONE SECOND EVERY LIVING THING LOOKS AT THE SEALED CHAPEL.
+   *
+   * Set's gilding flares on a corpse and, on that frame, the whole room stops
+   * and turns to face the Serdab's door - not an attack, a RE-AIM - and then
+   * comes back at the player as if nothing happened.
+   *
+   * Two facts make this cheap. The horde already faces things: every actor
+   * turns toward `atan2(dx, dz)` once a frame in its own update, so the yaw
+   * convention is settled and this only has to write the same number at a
+   * different target. And "stops" is the absence of an update rather than a
+   * velocity of zero - skipping the tick leaves the body standing exactly where
+   * it was with its legs still, which is what stopping looks like.
+   *
+   * THE DYING BOSS IS EXEMPT, and it has to be: it is the thing that caused
+   * this, its topple is driven from its own update, and freezing it would leave
+   * a god standing bolt upright through its own death.
+   */
+  const FAREWELL_HOLD_S = 1.0;
+  let farewellT = 0;
+
+  /**
+   * Where they look. Resolved from the room graph rather than written down,
+   * because the coordinate is authored on the Star Shaft's portal in rooms.js
+   * and a copy of it here would be a second place to update the day the map
+   * moves. Null on any map with no Serdab, which is the harness's interior and
+   * every future world.
+   */
+  const CHAPEL_DOOR = (() => {
+    const p = allPortals().find((q) => q.to === 'serdab' || q.from === 'serdab');
+    return p ? p.at : null;
+  })();
 
   function beginWave() {
     state.wave++;
@@ -1280,9 +1363,32 @@ export function createDirector({
       if (!queue.length) state.phase = 'clearing';
     } else if (state.phase === 'clearing') {
       if (!live.length) {
-        state.phase = 'breather';
-        state.timer = tierNow().breather;
         state.boss = null;
+
+        if (concludes()) {
+          /*
+           * THE RUN STOPS HERE, AND IT STOPS BY NOT STARTING ANOTHER ONE.
+           *
+           * No timer set to infinity, no `running = false`, no early return
+           * bolted onto update(). `concluded` is its own phase and the phase
+           * machine simply has nothing to do in it, so everything else in this
+           * function - the flow field, the collider grid, the actor loop, the
+           * positional audio - goes on running exactly as it does during a
+           * breather. The world does not freeze; the horde has just run out.
+           *
+           * `forceWave` and `reset` both leave it, which is what keeps the
+           * harness and the death path able to put a concluded run back to
+           * work.
+           */
+          state.phase = 'concluded';
+          if (!state.concluded) {
+            state.concluded = true;
+            for (const fn of endListeners) fn(state.wave);
+          }
+        } else {
+          state.phase = 'breather';
+          state.timer = tierNow().breather;
+        }
       }
     }
 
@@ -1316,9 +1422,16 @@ export function createDirector({
     // still ahead of the cursor belongs to a wave that no longer exists, and
     // ticking one would advance a retired actor's gait and its audio emitter
     // against a list that has been deliberately cleared.
+    // Read BEFORE the actor loop, so a body that is being held does not take
+    // one more step on the frame the hold starts. See FAREWELL_HOLD_S.
+    const holding = farewellT > 0;
+
     const gen = generation;
     for (let i = live.length - 1; i >= 0; i--) {
       const a = live[i];
+      // Stopped, and already turned. The dying god keeps its tick because its
+      // own death is what it is running.
+      if (holding && !a.dying) continue;
       a.update(dt, ctx);
       if (generation !== gen) break;
       if (a.dead) {
@@ -1329,6 +1442,36 @@ export function createDirector({
     }
 
     bosses.update(dt, ctx);
+
+    /*
+     * --- the farewell hold, AFTER the actor loop -----------------------------
+     *
+     * AND AFTER IS THE WHOLE OF IT, because of who starts it. The hold is armed
+     * by `bossFarewell()`, which boss.js calls from inside its own update - so
+     * on the frame the gilding flares, `farewellT` goes from 0 to 1 in the
+     * MIDDLE of the loop above. A facing pass written before that loop would
+     * have read zero, done nothing, and left the room facing the player on the
+     * one frame the beat is about; every body would have turned a frame late.
+     *
+     * Measured, and this is not a hypothetical: the first version did exactly
+     * that, and the harness read a worst-case error of 3.05 radians - a room
+     * facing almost exactly the wrong way - against a mechanism that was
+     * otherwise correct. That is the shape of a false failure and it was very
+     * nearly filed as one.
+     *
+     * The clock is decremented here too, so the frame the flare lands on counts
+     * as the first frame of the hold rather than as a free one before it.
+     */
+    if (farewellT > 0) {
+      if (CHAPEL_DOOR) {
+        for (const a of live) {
+          if (!a.live || a.dying || !a.group) continue;
+          a.group.rotation.y = Math.atan2(
+            CHAPEL_DOOR.x - a.position.x, CHAPEL_DOOR.z - a.position.z);
+        }
+      }
+      farewellT -= dt;
+    }
 
     // --- positional audio ----------------------------------------------------
     // The handles read matrixWorld, and these dummies are not in the scene
@@ -1404,6 +1547,36 @@ export function createDirector({
       return () => waveListeners.delete(fn);
     },
 
+    /**
+     * Tell me the run is over. Called with the wave it ended on.
+     *
+     * Fired from the phase machine on the frame the last body leaves the field,
+     * exactly once per conclusion, for the same reason onWaveStart is fired
+     * from inside beginWave: a listener that cannot drift from the transition
+     * that caused it does not need a private copy of last frame's state.
+     */
+    onConclude(fn) {
+      endListeners.add(fn);
+      return () => endListeners.delete(fn);
+    },
+
+    /**
+     * Keep cycling the gods past the ceiling. The endless mode's one switch.
+     *
+     * Turning it ON while a run is already concluded also puts the phase
+     * machine back to work, because otherwise the flag would be true and the
+     * horde would still never come, which is the difference between a mode and
+     * a setting that reads well.
+     */
+    setEndless(on) {
+      state.endless = !!on;
+      if (state.endless && state.phase === 'concluded') {
+        state.concluded = false;
+        state.phase = 'breather';
+        state.timer = tierNow().breather;
+      }
+    },
+
     /** Skip the breather. The harness and the debug console both want this. */
     forceWave(n) {
       clearLive();
@@ -1411,6 +1584,22 @@ export function createDirector({
       state.wave = (n ?? state.wave + 1) - 1;
       state.phase = 'breather';
       state.timer = 0;
+      state.concluded = false;
+      farewellT = 0;
+    },
+
+    /**
+     * Announce that a god's gilding has flared. Called from boss.js.
+     *
+     * Takes the actor rather than nothing so the day a second farewell exists
+     * this does not have to guess which body it was about, and returns whether
+     * the hold actually started so a harness can tell a fired beat from a
+     * swallowed one.
+     */
+    bossFarewell(actor) {
+      if (!actor || farewellT > 0) return false;
+      farewellT = FAREWELL_HOLD_S;
+      return true;
     },
 
     reset() {
@@ -1420,6 +1609,8 @@ export function createDirector({
       state.phase = 'breather';
       state.timer = tierNow().firstBreather;
       state.killed = 0;
+      state.concluded = false;
+      farewellT = 0;
     },
 
     setFidelity(high) {
@@ -1466,6 +1657,12 @@ export function createDirector({
       return {
         wave: state.wave,
         phase: state.phase,
+        concluded: state.concluded,
+        endless: state.endless,
+        finalWave: FINAL_WAVE,
+        // Seconds left of the one-second stop-and-face, so a suite can assert
+        // the hold is RUNNING rather than assert that a function was called.
+        farewell: +Math.max(0, farewellT).toFixed(2),
         live: live.length,
         queued: queue.length,
         pooled,

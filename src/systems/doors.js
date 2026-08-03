@@ -31,6 +31,14 @@ import { ENTRY } from '../world/rooms.js';
 /** How far the player can reach a barrier from, in world units. */
 const REACH = 5.5;
 
+/**
+ * How many sons of Horus open the sealed chapel. Four, because there are four
+ * canopic jars and four niches, and it is a constant here rather than a literal
+ * inside `lockedBecause` because the same number is quoted to the player in the
+ * refusal string one line away from where it is tested.
+ */
+const JARS_REQUIRED = 4;
+
 /** Seconds for the courtyard slab to grind down out of its doorway. */
 const SLAB_SECONDS = 1.6;
 
@@ -284,8 +292,23 @@ export function createDoors({
   for (const c of claims) courtyardTargets.push(...c.parts);
 
   const state = {
-    /** How many canopic jars are back in their niches. The puzzle gate reads
-     * this; the jar system that will write it lands with M5. */
+    /**
+     * How many canopic jars are back in their niches, 0 to 4.
+     *
+     * READ HERE, WRITTEN BY systems/jars.js, AND THAT SPLIT IS DELIBERATE.
+     *
+     * This counter was declared here and written NOWHERE for the whole of M4,
+     * which meant `lockedBecause` below quoted "0 of 4 sons returned" forever
+     * and the Serdab - the room World 1 ends in - could not be entered in a
+     * shipped build. The fix is not to move the number: two readers already
+     * live off it here, this file's puzzle gate and ui/objective.js's detail
+     * line, and both were correct. What was missing was a writer.
+     *
+     * systems/jars.js is that writer and it is the ONLY one. It is constructed
+     * after this file, holds a reference to this state object, and sets this
+     * field from its own count of filled niches on the frame a jar goes home.
+     * One writer, two readers, no derivation anywhere else.
+     */
     jarsReturned: 0,
     /** Set once the courtyard's collider has actually been released, so a
      * harness can tell a working purchase from a purchase that changed a flag
@@ -600,26 +623,36 @@ export function createDoors({
     interiorTargets.push(...b.meshes);
   }
 
-  /**
-   * The Kindling. Not a door, but it is the gate condition for one, and the
-   * player interacts with it the same way, so it lives on the same prompt.
+  /*
+   * THE KINDLING USED TO BE A LEVER AND IT IS NOT ONE ANY MORE.
+   *
+   * What stood here built a `type: 'switch'` record over the Embalming
+   * Chamber's fire bowl, stamped it onto every mesh of the fixture, pushed
+   * those meshes into `interiorTargets`, and gave the F key a branch that
+   * called `interior.setPowered(true)` directly. Roughly forty-five lines
+   * across four places in this file, and all of them are gone.
+   *
+   * The trigger MOVED; the system did not. Power is now thrown by the third
+   * canopic jar going home, through systems/jars.js calling the `throwSwitch()`
+   * that systems/power.js has always exposed and describes in its own comment
+   * as existing "for the day the puzzle chain wants to light the map from
+   * somewhere else". power.js is untouched by this change, and so are the six
+   * shrines, the light ramp, the horn, the chime, the notice and the power
+   * gate into the King's Chamber, because none of them ever knew about a lever.
+   *
+   * WHAT SURVIVES, AND ON PURPOSE. The fire bowl itself is still authored in
+   * rooms.js as a `power` interactSlot, so build.js still builds the granite
+   * housing, the gold bowl, the ember sphere and the point light, and its
+   * `animated.setPowered` still lifts all of it when the map wakes. It is
+   * scenery that lights. It is simply no longer a thing you pull, which is what
+   * turns "turn on the power" from a walk-to-the-switch errand into the payoff
+   * of the only puzzle chain in the game.
+   *
+   * `power.js` still finds the slot by type for its own `slot` getter, and
+   * ui/minimap.js still draws its flame off that slot, so the map still says
+   * where the machine is. Both read rooms.js; neither read the record that was
+   * here.
    */
-  const kindling = (() => {
-    const slot = interior.interacts.find((i) => i.type === 'power');
-    if (!slot) return null;
-
-    const record = {
-      type: 'switch',
-      id: 'kindling',
-      label: (slot.config && slot.config.label) || 'The Kindling',
-      thrown: false,
-    };
-
-    slot.group.traverse((o) => { if (o.isMesh) o.userData.door = record; });
-    slot.group.traverse((o) => { if (o.isMesh) interiorTargets.push(o); });
-
-    return record;
-  })();
 
   function roomName(id) {
     const room = interior.rooms.find((r) => r.id === id);
@@ -639,7 +672,23 @@ export function createDoors({
       return interior.powered ? null : 'The Kindling is cold';
     }
     if (rec.kind === 'puzzle') {
-      return `${state.jarsReturned} of 4 sons returned`;
+      /*
+       * THE MISSING `null`, AND IT IS THE WHOLE OF WHY THE SERDAB WAS SEALED.
+       *
+       * This used to return the progress string unconditionally, so it was
+       * TRUTHY at four out of four: the gate quoted "4 of 4 sons returned",
+       * `describe` painted it red, and `interact` fell straight into `deny`.
+       * A puzzle whose completed state is indistinguishable from its refusal
+       * is a door with no open position, and every reader of this function
+       * behaved perfectly - the fault was that a finished puzzle had no way to
+       * say so.
+       *
+       * At four this returns null, which is the same word "gold is the only
+       * obstacle" is said in, and `describe` then quotes no price because the
+       * cost is zero. The payment was the four rooms.
+       */
+      const n = state.jarsReturned;
+      return n >= JARS_REQUIRED ? null : `${n} of ${JARS_REQUIRED} sons returned`;
     }
     return null;
   }
@@ -664,12 +713,6 @@ export function createDoors({
 
   function describe(rec) {
     if (!rec) return { text: '', deny: false };
-
-    if (rec.type === 'switch') {
-      return rec.thrown
-        ? { text: '', deny: false }
-        : { text: `${rec.label.toUpperCase()}  [F]`, deny: false };
-    }
 
     const why = lockedBecause(rec);
     if (why) return { text: `${rec.label.toUpperCase()} - ${why.toUpperCase()}`, deny: true };
@@ -701,15 +744,6 @@ export function createDoors({
   function interact() {
     const rec = candidate;
     if (!rec) return false;
-
-    if (rec.type === 'switch') {
-      if (rec.thrown) return false;
-      rec.thrown = true;
-      interior.setPowered(true);
-      audio?.bossHorn?.();
-      notice?.('The Kindling is lit', 2600);
-      return true;
-    }
 
     if (rec.opened || rec.opening) return false;
 
@@ -852,7 +886,6 @@ export function createDoors({
     for (const h of hits) {
       const rec = h.object.userData.door;
       if (!rec) continue;
-      if (rec.type === 'switch') return rec.thrown ? null : rec;
       if (rec.opened || rec.opening) continue;
       return rec;
     }

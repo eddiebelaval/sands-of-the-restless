@@ -331,6 +331,56 @@ export function createObjectives({
    * preconditions are a WALK rather than a state, toward() supplies them.
    */
   const LADDER = [
+    /*
+     * ---- 0. the sealed chapel, and it is first because it is last -----------
+     *
+     * The panel has named the next thing to do continuously since the first
+     * frame, and every rung below this one is a PURCHASE. This one is a place.
+     *
+     * It is at the top of the ladder rather than the bottom because of how
+     * next() reads the list: the first rung that is not done wins, so a rung
+     * appended at the end could only ever be reached by a player who had bought
+     * every shrine and renewed a weapon. The condition below is written to be
+     * DONE - and therefore skipped - for the whole of the run until the three
+     * things that end World 1 are all true at once, at which point it outranks
+     * everything, which is correct: there is nothing left to buy that matters.
+     *
+     * Suppressed once the player is actually in the room, because the ending
+     * fires on entry and a panel telling somebody to go where they are standing
+     * is the panel calling them a liar.
+     */
+    {
+      id: 'serdab',
+      done: () => !(
+        director && director.state.concluded && spaces.roomId !== 'serdab'
+      ),
+      next() {
+        /*
+         * THE HORDE HAS STOPPED COMING AND THE CHAIN IS NOT FINISHED.
+         *
+         * Reachable, and it is the one state where every rung below this is
+         * actively misleading: with no more waves, a panel saying TAKE THE
+         * SHRINE OF SEKHMET is pointing at a purchase for a fight that is over.
+         * The only thing left in the world is the puzzle, so the panel says so.
+         */
+        if (doors.state.jarsReturned < 4) {
+          return toward('embalming-chamber', {
+            id: 'jars',
+            text: 'RETURN THE SONS OF HORUS',
+            detail: `${doors.state.jarsReturned} OF 4 IN THE NICHES`,
+            cost: 0,
+          });
+        }
+
+        return toward('serdab', {
+          id: 'serdab',
+          text: 'GO DOWN TO THE SEALED CHAPEL',
+          detail: 'THE WAY IS OPEN',
+          cost: 0,
+        });
+      },
+    },
+
     // ---- 1. the doorway -----------------------------------------------------
     {
       id: 'doorway',
@@ -398,19 +448,32 @@ export function createObjectives({
       },
     },
 
-    // ---- 4. the Kindling ----------------------------------------------------
+    // ---- 4. the machine -----------------------------------------------------
     //
-    // Everything from here to the end of the map is behind this one lever, and
-    // it costs nothing: the price of the Kindling is the trip.
+    // Everything from here to the end of the map is behind this, and it costs
+    // nothing: the price is four trips.
+    //
+    // THE RUNG DID NOT MOVE AND ITS TEST DID NOT CHANGE. `power.powered` is
+    // still exactly the right question, because the third canopic jar going
+    // home is what throws the switch now - see systems/jars.js. What changed is
+    // that it used to say LIGHT THE KINDLING and PRESS F AT THE LEVER, and
+    // there is no lever any more. The Kindling is a fire bowl that lights when
+    // the machine starts; the machine is the four niches and what it runs on is
+    // his dead colleagues.
+    //
+    // The detail line is the progress bar the puzzle already had for free: two
+    // of four sons returned means you are halfway, in the same words the sealed
+    // chapel's own refusal uses eight rooms further down.
     {
       id: 'power',
       done: () => power.powered,
       next() {
         const room = kindlingSlot ? kindlingSlot.room : 'embalming-chamber';
+        const n = doors.state.jarsReturned;
         return toward(room, {
-          id: 'kindling',
-          text: 'LIGHT THE KINDLING',
-          detail: 'PRESS F AT THE LEVER',
+          id: 'jars',
+          text: 'RETURN THE SONS OF HORUS',
+          detail: `${n} OF 4 IN THE NICHES`,
           cost: 0,
         });
       },

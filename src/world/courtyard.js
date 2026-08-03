@@ -2501,7 +2501,14 @@ export function buildCourtyard(scene) {
    * outer ruins, the palms and the near-field dressing that the finished avenue
    * was tuned around. Authored coordinates cost nothing and move nothing.
    */
-  const JAR = { x: -19.0, z: 22.5, index: 1, son: 'imsety' };
+  /**
+   * `type` is carried so this record is the SAME SHAPE build.js publishes for
+   * the three inside. systems/jars.js enumerates both lists into one chain and
+   * routes on `type`; a jar out here with no type would be a jar the chain
+   * silently walked past, which is the one failure the exterior placement was
+   * specifically meant to avoid.
+   */
+  const JAR = { type: 'canopic-jar', x: -19.0, z: 22.5, index: 1, son: 'imsety' };
   {
     const g = new THREE.Group();
     const y = groundY(JAR.x, JAR.z);
@@ -2513,25 +2520,47 @@ export function buildCourtyard(scene) {
     plinth.position.y = 0.45;
     g.add(plinth);
 
+    // The vessel is its own group for the reason build.js gives at length on
+    // the interior builder: the chain lifts the jar and its stopper and leaves
+    // the plinth, because the plinth is what this fixture's collider is.
+    const vessel = new THREE.Group();
+    vessel.name = 'vessel';
+
     const jar = new THREE.Mesh(
       cylinderUV(new THREE.CylinderGeometry(0.30, 0.22, 0.72, 14), 0.30, 0.72, DENSITY.carved),
       M.carved
     );
     jar.position.y = 1.26;
     jar.castShadow = true;
-    g.add(jar);
+    vessel.add(jar);
 
     // The stopper is the son's head. At this scale the shape is a silhouette, so
     // the gold is doing the identifying.
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 10), M.gold);
     head.position.y = 1.76;
     head.scale.set(1, 1.15, 0.9);
-    g.add(head);
+    vessel.add(head);
+
+    g.add(vessel);
+
+    /**
+     * `noBatch`, AND IT IS THE SAME BUG THE B3AR WALL CARRIES A PARAGRAPH ABOUT.
+     *
+     * `batchStatics(group)` runs eight hundred lines below this and bakes every
+     * untagged mesh under the courtyard into merged chunks. This jar was built
+     * before the puzzle chain existed, so nothing needed its identity and
+     * nothing tagged it - which means the first jar in the game would have
+     * rendered perfectly, answered no raycast, owned no `vessel` to lift, and
+     * been unpickable by construction. Exactly the failure mode the wall buy
+     * was tagged against, in the same file, for the same reason.
+     */
+    g.userData.noBatch = true;
 
     g.position.set(JAR.x, y, JAR.z);
     group.add(g);
     addCollider(JAR.x, JAR.z, 0.62, 1.9);
     JAR.group = g;
+    JAR.vessel = vessel;
   }
 
   const dust = makeDust(M, 1600, 110);

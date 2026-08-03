@@ -214,9 +214,47 @@ export const GODS = [
     // Escalating: one more tell to read every quarter of its health bar.
     abilities: ['charge', 'slam', 'volley', 'teleport', 'summon'],
     escalating: true,
+    /**
+     * THE ONE GOD WHOSE DEATH IS NOT THE SHARED DEATH, and it is one field
+     * rather than a second death path.
+     *
+     * Wave twenty-five is the last one. The transcript's line about the gods is
+     * "it doesn't really die, it just goes away because it raises the dead
+     * again", and this is where that gets said without a word of copy: the
+     * topple runs exactly as built, so the player gets the kill they earned and
+     * whatever they did plainly worked on the body - and then the face goes out
+     * first, and THEN the gilding flares brighter than any telegraph in the
+     * game, on a corpse, and goes out. The thing lighting up is the METAL. It
+     * is not a ghost and there is no particle in it. Something left through the
+     * ornament.
+     *
+     * Absent on the other four on purpose. Anubis, Ammit, Apep and Sekhmet die
+     * the shared death four times so that the fifth one reads as different
+     * rather than as a boss death.
+     */
+    farewell: true,
     palette: { wrap: 0x94756a, wrapDark: 0x4e352d, deep: 0x2a1a15, eye: 0xff2a2a, accent: 0xb03a2a },
   },
 ];
+
+/**
+ * The farewell's three beats, in seconds after the body starts falling.
+ *
+ * `EYE_OUT` is short because the face being finished is a PREMISE rather than a
+ * beat: it has to be plainly over before anything else happens, or the flare
+ * reads as the god doing something instead of as something leaving it.
+ *
+ * `AT` is 0.55 rather than immediate because the topple is still running - the
+ * body reaches its ninety degrees around 1.1 - so the flare lands on a corpse
+ * that is visibly already going down. `HOLD` is a third of a second, which is
+ * long enough to be certain of and far too short to read as a state.
+ *
+ * `FLARE` is 6.4 against the telegraph's ceiling of 3.6 in setGlow below. The
+ * requirement is not "bright", it is BRIGHTER THAN ANY TELEGRAPH THE PLAYER HAS
+ * LEARNED, and that is a comparison against a number in this file rather than a
+ * taste call, so it is written as one.
+ */
+const FAREWELL = { EYE_OUT: 0.30, AT: 0.55, HOLD: 0.34, FLARE: 6.4 };
 
 /**
  * Ability timings, in seconds.
@@ -524,6 +562,15 @@ function createGod(god, effects) {
     deathT: 0,
     toppleX: 0, toppleZ: 0,
 
+    /**
+     * Whether the farewell flare has already announced itself this death.
+     *
+     * A one-shot rather than a time window, and reset on spawn like every other
+     * mutable on this record: a god pooled and re-spawned is a new death, and a
+     * flag left set would make the second one silent.
+     */
+    flared: false,
+
     // Wedge escape, the same one the horde runs. A god needs it MORE than a
     // shambler does, not less: it has no local avoidance at all - it steers
     // straight at the player by design, because a colossus that side-steps
@@ -562,6 +609,32 @@ function createGod(god, effects) {
     mats.wrapDark.emissive.setRGB(e * 0.75, e * 0.18, e * 0.10);
   }
 
+  /**
+   * The farewell curve. Only ever driven for a god carrying `farewell`.
+   *
+   * Written as a pure function of the death clock rather than as a little state
+   * machine with its own timers, for the same reason the shared death is: it is
+   * driven from one place, once a frame, and a curve that can be evaluated at
+   * any t cannot get stuck part way through it on a frame that was dropped.
+   *
+   * The hit flash is deliberately NOT carried here, unlike setGlow. The body is
+   * dead; a wrap that still lights up when a corpse is shot would be the game
+   * saying the fight is continuing, which is precisely the reading this whole
+   * sequence exists to refuse.
+   */
+  function setFarewellGlow(t) {
+    mats.eye.emissiveIntensity = 1.2 * Math.max(0, 1 - t / FAREWELL.EYE_OUT);
+
+    let accent;
+    if (t < FAREWELL.AT) accent = Math.max(0, 1 - t / FAREWELL.AT) * 1.2;
+    else if (t < FAREWELL.AT + FAREWELL.HOLD) accent = FAREWELL.FLARE;
+    else accent = 0;
+
+    mats.accent.emissiveIntensity = accent;
+    mats.wrap.emissive.setRGB(0, 0, 0);
+    mats.wrapDark.emissive.setRGB(0, 0, 0);
+  }
+
   function spawn(x, z, ctx, hpScale) {
     actor.live = true;
     actor.dead = false;
@@ -578,6 +651,7 @@ function createGod(god, effects) {
     st.tLeft = 0;
     st.nextAbility = 4.5;
     st.deathT = 0;
+    st.flared = false;
     st.wedge = st.detour = st.detourFrom = st.forceSide = 0;
     st.detourSide = 1;
 
@@ -699,7 +773,34 @@ function createGod(god, effects) {
       const k = Math.min(1, st.deathT / 1.1) ** 2;
       rig.body.rotation.x = st.toppleX * k * (Math.PI / 2);
       rig.body.rotation.z = st.toppleZ * k * (Math.PI / 2);
-      setGlow(Math.max(0, 1 - st.deathT * 0.6));
+
+      if (god.farewell) {
+        setFarewellGlow(st.deathT);
+
+        /*
+         * ONE SHOT, ON THE FLARE FRAME, AND THE DIRECTOR OWNS WHAT HAPPENS NEXT.
+         *
+         * Every living thing in the room stops for one second and turns to face
+         * the door of the sealed chapel, and then comes back at the player as
+         * if nothing happened. That is a fact about the HORDE, not about this
+         * body, so it is announced from here and staged there - `ctx.director`
+         * is the running api and has been on the context since the director was
+         * built, precisely so an actor can tell it something without importing
+         * it.
+         *
+         * Guarded by a flag rather than by an epsilon around the time, because
+         * a delta large enough to step over a window is exactly the frame this
+         * would otherwise be silently skipped on, and swiftshader produces
+         * those by the dozen.
+         */
+        if (!st.flared && st.deathT >= FAREWELL.AT) {
+          st.flared = true;
+          ctx.director?.bossFarewell?.(actor);
+        }
+      } else {
+        setGlow(Math.max(0, 1 - st.deathT * 0.6));
+      }
+
       if (st.deathT > 1.9) {
         const s = Math.min(1, (st.deathT - 1.9) / 1.4);
         rig.group.position.y = st.feetY - s * spec.height * spec.scale;

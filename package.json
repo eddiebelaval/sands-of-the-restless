@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "python3 -m http.server 4177",
-    "test": "node test/shot.mjs && node test/gun.mjs && node test/interior.mjs && node test/economy.mjs && node test/enemies.mjs && node test/mysterybox.mjs && node test/grenades.mjs && node test/powerups.mjs && node test/melee.mjs && node test/hud.mjs && node test/settings.mjs && node test/bindings.mjs && node test/probe.mjs && node test/act1probe.mjs && node test/rebind.mjs && node test/crouchslide.mjs && node test/headshot.mjs && node test/gamepad.mjs && node test/governor.mjs && node test/b3ar.mjs && node test/deathrespawn.mjs && node test/nav.mjs && node test/descent.mjs && node test/grime.mjs --gate && node test/doorlook.mjs && node test/curtain-rules.mjs",
+    "test": "node test/shot.mjs && node test/gun.mjs && node test/interior.mjs && node test/economy.mjs && node test/enemies.mjs && node test/mysterybox.mjs && node test/grenades.mjs && node test/powerups.mjs && node test/melee.mjs && node test/hud.mjs && node test/settings.mjs && node test/bindings.mjs && node test/probe.mjs && node test/act1probe.mjs && node test/rebind.mjs && node test/crouchslide.mjs && node test/headshot.mjs && node test/gamepad.mjs && node test/governor.mjs && node test/b3ar.mjs && node test/deathrespawn.mjs && node test/nav.mjs && node test/descent.mjs && node test/jars.mjs && node test/grime.mjs --gate && node test/doorlook.mjs && node test/curtain-rules.mjs && node test/pacer.mjs",
     "test:shot": "node test/shot.mjs",
     "test:gun": "node test/gun.mjs",
     "test:interior": "node test/interior.mjs",
@@ -33,12 +33,16 @@
     "test:deathrespawn": "node test/deathrespawn.mjs",
     "test:nav": "node test/nav.mjs",
     "test:descent": "node test/descent.mjs",
+    "test:jars": "node test/jars.mjs",
     "test:grime": "node test/grime.mjs --gate",
     "grime:defect": "node test/grime.mjs --defect",
     "grime:lift": "node test/grime.mjs --lift",
     "_comment:kite": "test/kite.mjs is DELIBERATELY OUT of `npm test`. It drives three thousand real requestAnimationFrame frames through the real main loop, which under swiftshader is half an hour, and a half-hour gate in a twenty-four suite run is a gate nobody runs. It is the played verification of the Act 2 route and it is run on purpose.",
     "test:kite": "node test/kite.mjs",
+    "_comment:e2e": "test/e2e.mjs is DELIBERATELY OUT of `npm test`, for the same reason kite is: it plays all twenty-five waves. It is the ONLY harness that climbs the wave ladder instead of setting it - it replaces director.forceWave and director.reset with functions that record a violation and throw, so the shortcut is mechanically unavailable rather than merely unused. test/jars.mjs proves every part of the ending and reaches wave 25 with forceWave; this proves the ladder underneath it. Run it before shipping World 1, and after any change to the director's wave or phase machinery.",
+    "test:e2e": "node test/e2e.mjs",
     "test:doorlook": "node test/doorlook.mjs",
+    "test:pacer": "node test/pacer.mjs",
     "test:curtainrules": "node test/curtain-rules.mjs"
   },
   "devDependencies": {

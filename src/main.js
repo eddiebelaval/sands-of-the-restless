@@ -32,6 +32,7 @@ import { createCombat } from './systems/damage.js';
 import { createMelee } from './systems/melee.js';
 import { createDirector } from './enemies/director.js';
 import { createPower } from './systems/power.js';
+import { createJars } from './systems/jars.js';
 import { createWallBuys } from './systems/wallbuy.js';
 import { createMysteryBox } from './systems/mysterybox.js';
 import { createShrines } from './systems/shrines.js';
@@ -45,10 +46,12 @@ import { createMinimap } from './ui/minimap.js';
 import { createObjectives, createObjectivePanel } from './ui/objective.js';
 import { createGrenades } from './systems/grenades.js';
 import { createDeath } from './ui/death.js';
+import { createEnding } from './ui/ending.js';
 import { createPowerups } from './systems/powerups.js';
 import { createPauseMenu } from './ui/pause.js';
 import { createDifficulty } from './systems/difficulty.js';
 import { createStartScreen } from './ui/start.js';
+import { createPacer } from './ui/pacer.js';
 
 // A single frame can never advance the simulation by more than this. A tab
 // that was backgrounded for a minute comes back with an enormous delta, and
@@ -205,6 +208,30 @@ function boot() {
     notice: (text, ms) => showNotice(text, ms),
   });
 
+  /**
+   * THE FOUR-JAR CHAIN, and it is built HERE for two reasons that pull the same
+   * way.
+   *
+   * It needs `doors` and `power`, both of which are above it. And the
+   * interaction layer below only builds raycast targets for slot types it has a
+   * handler for, so a chain constructed after it would register two handlers
+   * against a target list that had already been built without a single jar or
+   * niche in it - present, drawn, and unpickable. That is the same ordering the
+   * mystery box documents ten lines up, arrived at from the other direction.
+   *
+   * It writes `doors.state.jarsReturned`, which was declared for M4 and written
+   * nowhere, which is why the Serdab - the room World 1 ends in - could not be
+   * entered in a shipped build.
+   */
+  const jars = createJars({
+    interior: spaces.interior,
+    courtyard,
+    doors,
+    power,
+    audio,
+    notice: (text, ms) => showNotice(text, ms),
+  });
+
   const interacts = createInteracts({
     camera,
     interior: spaces.interior,
@@ -214,7 +241,17 @@ function boot() {
     courtyard,
     spaces,
     prompt: promptBus.channel('fixtures', 2),
-    handlers: { wallbuy: wallbuys, shrine: shrines, altar, box: mysterybox },
+    handlers: {
+      wallbuy: wallbuys, shrine: shrines, altar, box: mysterybox,
+      // Two more slot types, and until they were registered the interaction
+      // layer skipped both: it collects nothing for a type with no handler, so
+      // a niche was not merely unpickable, it was not even a raycast target.
+      ...jars.handlers,
+    },
+    // The jars are propSlots rather than interactSlots - build.js says why in
+    // the builder - and one of the four stands outside, so they are neither of
+    // the two SPACES this layer already took. See the note on `sources`.
+    sources: jars.sources,
   });
 
   shrines.attach(interacts.records);
@@ -937,6 +974,26 @@ function boot() {
   });
   combat.attach({ death });
 
+  /**
+   * THE END OF WORLD 1.
+   *
+   * After the death card because it is that file's sibling and reads as one, and
+   * because `main.js`'s freeze is now the OR of the two: whichever one has taken
+   * the run, the simulation block is skipped and doors keep their delta. Before
+   * anything that reads `halted`.
+   *
+   * It is handed the three things its gate asks about and nothing else. It does
+   * not get the player, the horde, the economy or the world - the ending is a
+   * question about a wave counter, a jar counter and a room name, and a module
+   * that could reach further would eventually be asked to.
+   */
+  const ending = createEnding({
+    doc: document,
+    director, doors, spaces,
+    input, audio, rig,
+    suspended: () => pause.paused,
+  });
+
   // -------------------------------------------------------------------------
   // entering the game
   // -------------------------------------------------------------------------
@@ -1104,7 +1161,7 @@ function boot() {
   }
 
   window.addEventListener('keydown', (e) => {
-    if (!started || pause.paused || death.halted) return;
+    if (!started || pause.paused || death.halted || ending.halted) return;
     const does = ACTION_DOES[keymap.actionFor(e.code)];
     if (does) does();
   });
@@ -1127,7 +1184,7 @@ function boot() {
 
   // Scrolling the settings panel must not swap the weapon underneath it.
   window.addEventListener('wheel', (e) => {
-    if (!started || pause.paused || death.halted) return;
+    if (!started || pause.paused || death.halted || ending.halted) return;
     weapons.cycle(e.deltaY > 0 ? 1 : -1);
   }, { passive: true });
 
@@ -1211,12 +1268,37 @@ function boot() {
     if (document.hidden && started) pause.open();
   });
 
-  let noticeTimer = 0;
-  function showNotice(text, ms = 2000) {
-    notice.textContent = text;
-    notice.classList.add('on');
-    clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => notice.classList.remove('on'), ms);
+  /**
+   * THE PILL, and it is a pacer now rather than five lines of last-write-wins.
+   *
+   * The body of showNotice moved to ui/pacer.js whole; what is left here is the
+   * adapter, because the signature is load-bearing. Ten systems are handed
+   * `(text, ms) => showNotice(text, ms)` between lines 171 and 396 above, and
+   * every one of them keeps the behaviour it was written against: a system
+   * notice is instant, in capitals, and expires on the wall clock.
+   *
+   * What is new is the third argument nobody passes yet. `pacer.speak()` is the
+   * voiced entry point and it returns the pill to a person: text that arrives
+   * at a readable rate, a hold that a purchase confirmation cannot break, and
+   * an interruption that lands on an authored character rather than wherever
+   * the reveal happened to be. See the file header there.
+   */
+  const pacer = createPacer({ el: notice, doc: document, audio });
+
+  /*
+   * THE JAR CHAIN TAKES THE PACER, LATE.
+   *
+   * The chain is built a thousand lines above this, with the doors and the
+   * power system, because that is what it is made of; the pill is UI and is
+   * built here. So the one thing the chain wants from it - the authored cut in
+   * her last line, which is where the Kindling is thrown - arrives through
+   * attach(), the same late binding the router, combat and the shrines use.
+   *
+   * ui/pacer.js documents this call site by name and exports the line for it.
+   */
+  jars.attach({ pacer });
+  function showNotice(text, ms = 2000, opts) {
+    return pacer.notice(text, ms, opts);
   }
 
   // -------------------------------------------------------------------------
@@ -1362,7 +1444,19 @@ function boot() {
     // There is no timeout, because a timeout is the bug it was written to fix -
     // a run that restarts itself is a run that kills an absent player on a loop.
     death.update(dt);
-    const halted = death.halted;
+
+    // THE OTHER WAY A RUN CAN STOP, and it is the one that does not come back.
+    //
+    // Driven before `halted` is read, and unconditionally, because its own gate
+    // is what decides whether the world has ended - a check that only ran while
+    // the world was still running could never fire on the frame it has to.
+    ending.update(dt);
+
+    // Either card owns the run. `death` restarts it and `ending` does not, and
+    // this line does not care which: what it means is that the simulation block
+    // below is skipped and doors keep their delta so a curtain in flight can
+    // still come down.
+    const halted = death.halted || ending.halted;
 
     // GOING DOWN COSTS THE BOONS, and it has to, or none of this is a wager.
     //
@@ -1516,6 +1610,11 @@ function boot() {
       // weapon the box has already withdrawn.
       mysterybox.update(dt, elapsed);
 
+      // The jar chain, and it only ever does anything in the one window
+      // between her last line starting and the machine lighting. It is the
+      // deadline that stops the Kindling depending on a text effect finishing.
+      jars.update();
+
       // Then the fixtures, then the arbiter. Both write to their own channel
       // and neither can see the other's, so the order of these two is a matter
       // of taste; paint() is what has to come last.
@@ -1667,10 +1766,15 @@ function boot() {
     THREE, renderer, scene, camera, post, world, player, rig, input, sky,
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
-    director, combat, melee, death,
+    director, combat, melee, death, ending, jars,
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     pause,
+    // The notice pill's pacer. Exposed on its own line rather than added to one
+    // above because main.js is shared this week; test/pacer.mjs reads the
+    // revealed substring off it, which is the only way to tell a line that is
+    // being spoken from a line that was merely set.
+    pacer,
     // The binding table, exposed for the same reason the governor is: a claim
     // about what the keyboard is doing that cannot be read from outside the page
     // is not a claim worth making. test/bindings.mjs reads it to compare what

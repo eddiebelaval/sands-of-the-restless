@@ -186,6 +186,7 @@
  */
 
 import { PIGMENT, ROLE, FORM, ink, incised, registerRules } from './tokens.js';
+import { createTypewriter } from './pacer.js';
 
 // ---------------------------------------------------------------------------
 // the beats, in seconds of SIMULATION time
@@ -214,6 +215,72 @@ const CARD_AT = 0.88;
  * down cannot satisfy it either.
  */
 const ARM_AFTER = 0.55;
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE GATEKEEPER'S TWO WORDS
+ * ---------------------------------------------------------------------------
+ *
+ * `docs/WORLD-1.md` THE GATEKEEPER'S TWO WORDS: the tomb passes a verdict on
+ * this card about twenty times a run, and something else answers it, in two
+ * words, in a different treatment, every single time, and then he stands up.
+ *
+ * That is the entire characterisation of the second supernatural power in the
+ * trilogy, and it is bought for one span. What it plants:
+ *
+ *   - The loop acquires an OWNER the player can feel from their first death,
+ *     with no exposition and without the game ever saying there are two powers.
+ *   - The two voices get SEPARATE SURFACES. She owns the notice pill, he owns
+ *     this card, and they never share - which is the mechanical statement that
+ *     they are different powers. When the pill becomes his in World 2, the
+ *     handover needs no announcement.
+ *   - The last card in World 3 has something to WITHHOLD. It comes up on the
+ *     far side of a shut gate, the player presses the key they have pressed
+ *     thirty times, and the answer does not arrive. That only lands if it
+ *     arrived every time before it, which is why the cheapest item in the
+ *     project is also one of the first.
+ *
+ * ---------------------------------------------------------------------------
+ * THE STRINGS ARE A CALL AND THEY ARE THE OWNER'S, NOT THIS FILE'S
+ * ---------------------------------------------------------------------------
+ *
+ * `docs/STORY-DELIVERY.md` NOT DECIDED HERE names the words as the owner's,
+ * and prices the span rather than the string. So what ships is a pick, made so
+ * the beat exists rather than waiting on a decision, and it is one edit to
+ * overrule: replace this array, or call `setAnswer()` at runtime.
+ *
+ * The pick, and the rule behind it: every line is two words, none of them is a
+ * sentence, and every one of them DISAGREES WITH THE VERDICT rather than
+ * explaining it. UNWORTHY, says the tomb. Not yet, says something else.
+ *
+ * They rotate by death count rather than at random, so a second-run player can
+ * name what the card said on their fourth death, and NOT YET is always first
+ * because it is the one every player meets.
+ */
+const ANSWER = ['NOT YET', 'STAND UP', 'COME BACK', 'NOT FINISHED', 'MINE STILL', 'WALK AGAIN'];
+
+/**
+ * When the answer arrives, in seconds after the card lands.
+ *
+ * It is a beat behind the verdict on purpose, and the ordering is the whole
+ * point: the tomb speaks, and then it is contradicted. Simultaneous, they read
+ * as one card with two lines on it. 0.34 also puts the answer in FRONT of the
+ * button arming at 0.55, so the last thing to appear is still the way out.
+ */
+const ANSWER_AFTER = 0.34;
+
+/**
+ * He is typed rather than printed, at six characters a second.
+ *
+ * ui/pacer.js paces her at 22. Six is the same mechanism with one number
+ * changed, and it is how the gatekeeper is characterised without a word of
+ * description: a two-word line from him takes as long to arrive as one of her
+ * sentences. Slowness is who he is. The codec tick under it is his, an octave
+ * below hers and through a filter a third of the height - see CODEC in
+ * core/audio.js for the numbers and for why the mummy cannot be confused with
+ * either of them.
+ */
+const ANSWER_VOICE = 'gate';
 
 /**
  * The confirm.
@@ -307,6 +374,13 @@ function build(doc) {
   line.textContent = 'THE HEART OUTWEIGHS THE FEATHER';
   card.appendChild(line);
 
+  // THE ANSWER. Under the verdict, in a different treatment, disagreeing with
+  // it. Empty until the sequence types into it, and it keeps its line height
+  // while it is empty so the card does not jump when the words arrive.
+  const answer = doc.createElement('div');
+  answer.className = 'death-answer';
+  card.appendChild(answer);
+
   const ruleBot = doc.createElement('div');
   ruleBot.className = 'death-rule';
   card.appendChild(ruleBot);
@@ -327,7 +401,7 @@ function build(doc) {
   root.appendChild(card);
   doc.body.appendChild(root);
 
-  return { root, card, word, line, stats, again };
+  return { root, card, word, line, answer, stats, again };
 }
 
 function css() {
@@ -420,6 +494,38 @@ function css() {
   text-shadow: ${incised()};
 }
 
+/*
+ * THE OTHER POWER, and it is painted rather than labelled.
+ *
+ * LAPIS, from tokens.js, which reserves it for "anything the game wants to feel
+ * supernatural rather than mechanical" - and specifically arcaneText, the
+ * legible value, because the fill measures 2.70 to one and this is text. The
+ * whole card above it is gold: the verdict, the cartouche, the rules, the
+ * epitaph. One line in the cool note is the only signal needed to say that the
+ * thing answering is not the thing that judged.
+ *
+ * Wide tracking and a small size: a whisper under a shout. It is deliberately
+ * NOT lowercase - lowercase is the archaeologist's, it is the only lowercase in
+ * the game, and the World 2 handover is worthless if the two ever shared it.
+ *
+ * min-height holds the row before the words arrive, so the card does not
+ * reflow underneath the verdict a third of a second after it lands. Same
+ * argument as the button's hidden visibility below.
+ */
+.death-answer {
+  min-height: 1.2em;
+  font-size: clamp(10px, 1.15vw, 14px);
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: ${ink(ROLE.arcaneText, 0.95)};
+  text-shadow: 0 0 14px ${ink(PIGMENT.lapis, 0.55)}, ${incised()};
+}
+/* The unsaid half of the line in flight; see ui/pacer.js. Hidden by
+   visibility so the two words occupy their finished width from the first
+   character, which on a centred card is the difference between typing and
+   sliding. */
+.death-answer .notice-rest { visibility: hidden; }
+
 .death-stats {
   font-size: clamp(11px, 1.3vw, 16px);
   letter-spacing: ${FORM.numeralTracking};
@@ -495,6 +601,29 @@ export function createDeath({
   input, audio, suspended, spaces,
 }) {
   const el = build(doc);
+
+  /**
+   * The gatekeeper's reveal.
+   *
+   * MANUAL, not self-driving, and that is the same decision the rest of this
+   * file already made: every clock in here is the clamped simulation delta from
+   * main.js, because the world is stopped and the harnesses step this sequence
+   * directly rather than waiting on a wall clock. A self-driving typewriter
+   * would type at full speed through a test that advances the card in one call,
+   * and would keep typing through a pause menu.
+   */
+  const answerTyper = createTypewriter({
+    el: el.answer, doc, audio, voice: ANSWER_VOICE, manual: true,
+  });
+
+  /**
+   * Which words answer the verdict, and the one hook that can withhold them.
+   *
+   * A world sets this. World 1 leaves it alone; World 3's last card sets it to
+   * null, at which point nothing answers, and the silence is the ending. That
+   * is the whole reason this is a variable and not a constant read inline.
+   */
+  let answerWords = ANSWER;
 
   const state = {
     /** 'none' | 'falling' | 'waiting' | 'restarting' */
@@ -647,8 +776,29 @@ export function createDeath({
   }
 
   function showCard() {
+    // THE GAME COUNTS THE RETURNS, in the tomb's own verb.
+    //
+    // The card is the tomb speaking, and what the tomb does to a heart that
+    // fails the weighing is erase the name - which is exactly what the empty
+    // cartouche above this line is. So the third field is not "deaths" or
+    // "attempts", both of which are a scoreboard's words for it; it is the
+    // count of erasures, said by the thing doing the erasing.
+    //
+    // `state.resets` counts COMPLETED sequences, so it is one behind at the
+    // moment the card is up: this erasure has happened and has not been walked
+    // away from yet. The +1 counts the one the player is looking at, which is
+    // the only reading that is not off by one on a player's first death.
+    const erased = state.resets + 1;
     el.stats.textContent =
-      `WAVE ${String(state.wave).padStart(2, '0')}   ·   ${state.gold} GOLD`;
+      `WAVE ${String(state.wave).padStart(2, '0')}   ·   ${state.gold} GOLD`
+      + `   ·   ERASED ${String(erased).padStart(2, '0')} ${erased === 1 ? 'TIME' : 'TIMES'}`;
+
+    // The answer is cleared here and typed in `step`, ANSWER_AFTER seconds
+    // later. Cleared rather than left standing so a card that comes up while a
+    // previous line is somehow still on it never shows the last death's words
+    // before this death's.
+    answerTyper.clear();
+
     el.again.classList.remove('armed');
     el.root.classList.add('on');
   }
@@ -764,6 +914,9 @@ export function createDeath({
 
     el.root.classList.remove('on');
     el.again.classList.remove('armed');
+    // The answer goes with the card. Left standing, it would be the first thing
+    // on the next one, before that death has been judged.
+    answerTyper.clear();
 
     state.phase = 'none';
     state.t = 0;
@@ -822,6 +975,21 @@ export function createDeath({
     }
 
     if (state.phase === 'waiting') {
+      // The answer, once, a beat behind the verdict. `phase === null` on the
+      // typewriter means it has not been given a line since showCard() cleared
+      // it, which is the flag rather than a second boolean beside it.
+      if (answerTyper.phase === null && state.t >= CARD_AT + ANSWER_AFTER) {
+        const words = answerWords && answerWords.length
+          ? answerWords[state.resets % answerWords.length]
+          : null;
+        // Null is a legal and load-bearing value: it is what the last card in
+        // the trilogy does. Nothing answers, and the card is still complete.
+        if (words) answerTyper.play(words);
+      }
+      // Typed on SIM time, so it slows down with everything else on a machine
+      // dropping frames rather than skipping characters.
+      answerTyper.advance(dt);
+
       if (!state.armed && state.t >= CARD_AT + ARM_AFTER) {
         state.armed = true;
         el.again.classList.add('armed');
@@ -840,6 +1008,7 @@ export function createDeath({
     suspendInput(false);
     el.root.classList.remove('on');
     el.again.classList.remove('armed');
+    answerTyper.clear();
     state.phase = 'none';
     state.t = 0;
     state.armed = false;
@@ -894,6 +1063,29 @@ export function createDeath({
     /** The word on the card, so a test can assert the card and not the DOM. */
     get verdict() { return el.word.textContent; },
 
+    /**
+     * What the other power has said SO FAR - the revealed substring, not the
+     * string it was handed. The two differ for a second while it types, and
+     * the difference is the only evidence that it typed at all.
+     *
+     * Read off the typewriter and NOT off `el.answer.textContent`, which would
+     * be wrong in the one way that matters: the unsaid half of the line is a
+     * span that is hidden by visibility, so it is still in the element's text
+     * content and a DOM read would report the whole line from the first frame.
+     */
+    get answer() { return answerTyper.text; },
+
+    /**
+     * Set the answering words, or withhold them entirely with `null`.
+     *
+     * The withholding is not a debug hook. It is World 3's last card: the
+     * player presses the key they have pressed thirty times, and for the first
+     * time nothing answers. See THE GATEKEEPER'S TWO WORDS above.
+     */
+    setAnswer(words) {
+      answerWords = words == null ? null : (Array.isArray(words) ? words : [words]);
+    },
+
     /** The confirm's DOM id, for the harness. It clicks this like `#begin`. */
     confirmId: CONFIRM_ID,
 
@@ -907,6 +1099,17 @@ export function createDeath({
         gold: state.gold,
         returned: state.returned,
         shown: el.root.classList.contains('on'),
+        // The answer, measured the same way the word below is: what is on the
+        // screen and how big it laid out, not what was assigned to it. See the
+        // `answer` getter for why this is not a textContent read.
+        answer: answerTyper.text,
+        answerFull: answerTyper.full,
+        answerTicks: answerTyper.ticks,
+        answerBox: (() => {
+          const r = el.answer.getBoundingClientRect();
+          return { w: Math.round(r.width), h: Math.round(r.height) };
+        })(),
+        epitaph: el.stats.textContent,
         // Measured, not assumed. The bug class in this project is UI that was
         // written, believed and never rendered, so the harness is handed the
         // laid-out size of the word rather than the fact that it exists.

@@ -226,6 +226,11 @@ const opening = await page.evaluate(async () => {
     gold: g.economy.gold,
     space: g.spaces.active,
     fixtures: g.interacts.records.length,
+    // Broken out by type, because the total moved when the four-jar chain
+    // landed and a bare count cannot say whether that was four jars arriving
+    // or four shrines leaving.
+    jars: g.interacts.records.filter((r) => r.type === 'canopic-jar').length,
+    niches: g.interacts.records.filter((r) => r.type === 'niche').length,
     wallbuys: g.interacts.records.filter((r) => r.type === 'wallbuy')
       .map((r) => `${r.config.weapon}:${r.config.cost}`),
     shrines: g.interacts.records.filter((r) => r.type === 'shrine')
@@ -498,7 +503,27 @@ const kindled = await page.evaluate(async () => {
   const beforeLevel = g.interior.powerLevel;
   const prompt = document.getElementById('prompt').textContent;
 
-  await window.__E__.press();
+  /*
+   * THE LEVER IS GONE AND THIS SECTION IS THE RECORD OF IT.
+   *
+   * Pressing F at the fire bowl used to throw the Kindling. It does not any
+   * more: the trigger moved onto the four-jar chain, the third jar going home
+   * is what calls `throwSwitch()`, and the bowl in this room is scenery that
+   * lights. `prompt` is captured above precisely so this suite ASSERTS the
+   * silence rather than assuming it - a fixture that quietly kept its prompt
+   * would be two ways to turn the map on, and the day they disagreed nothing
+   * here would have noticed.
+   *
+   * The map is then lit through `power.throwSwitch()`, which is the same entry
+   * point systems/jars.js uses and the same one power.js has always documented
+   * as being for exactly this. Everything measured below - the ramp, the level,
+   * the shrines - is testing the power system, which is untouched.
+   */
+  const pressed = await window.__E__.press();
+  const promptAfterF = document.getElementById('prompt').textContent;
+  const poweredByKey = g.power.powered;
+
+  g.power.throwSwitch();
 
   // Wait on the light RAMP, which is state, and is the whole point of the
   // switch being an event rather than a flag.
@@ -510,6 +535,9 @@ const kindled = await page.evaluate(async () => {
 
   return {
     prompt,
+    promptAfterF,
+    poweredByKey,
+    pressed,
     beforeLevel: +beforeLevel.toFixed(3),
     powered: g.power.powered,
     powerLevel: +g.interior.powerLevel.toFixed(3),
@@ -1087,7 +1115,17 @@ const checks = {
   // Both of these literals failed when the B3AR landed, which is the assertion
   // doing its job rather than breaking. An exact count is the only thing that
   // catches a fixture that was authored and never wired.
-  'fifteen fixtures are wired':       opening.fixtures === 15,
+  // FIFTEEN BECAME TWENTY-THREE, and it is eight arrivals rather than a drift.
+  // The four-jar chain registers two new slot types with the interaction layer -
+  // `canopic-jar` to take and `niche` to give - and the layer builds no raycast
+  // target at all for a type with no handler, so before the chain existed the
+  // four jars and the four sockets were present, drawn, and unpickable. The
+  // count is asserted BY TYPE as well as in total for exactly that reason: a
+  // total that happened to come out right while a shrine had gone missing is
+  // the assertion this project keeps being bitten by.
+  'twenty-three fixtures are wired':  opening.fixtures === 23,
+  'the four jars are pickable':       opening.jars === 4,
+  'the four niches accept':           opening.niches === 4,
   'five wall buys, priced':           opening.wallbuys.join() === 'smg:1000,shotgun:1200,carbine:1500,lmg:1600,b3ar:400',
   'six shrines exist':                opening.shrines.length === 6,
   'one altar exists':                 opening.altars === 1,
@@ -1138,8 +1176,11 @@ const checks = {
   'it says DARK, not poor':           dark.saysDark === true,
   'a dark shrine quotes no price':    dark.quotesNoPrice === true,
   'the refusal is red':               dark.deny === true,
-  'the Kindling prompts':             /KINDLING/.test(kindled.prompt),
-  'the Kindling lights the map':      kindled.powered === true,
+  // The retired lever, asserted as an ABSENCE. Both halves matter: nothing is
+  // offered, and pressing the key anyway changes nothing.
+  'the fire bowl offers no prompt':   kindled.prompt.trim() === '' && kindled.promptAfterF.trim() === '',
+  'F at the bowl does nothing':       kindled.poweredByKey === false,
+  'the chain lights the map':         kindled.powered === true,
   'the light RAMPED, not switched':   kindled.beforeLevel === 0 && kindled.powerLevel === 1 && kindled.rampFrames > 0,
 
   // shrines

@@ -649,7 +649,58 @@ export function createMinimap({
       }
     }
 
+    /*
+     * --- the four sons, and the four sockets --------------------------------
+     *
+     * THE PUZZLE IS A MAP PROBLEM, SO IT GOES ON THE MAP.
+     *
+     * Four jars stand in four rooms and one of them is outside the pyramid. A
+     * chain whose only affordance is walking into the right recess is not a
+     * puzzle, it is a search, and the difference between the two is whether the
+     * player can see where the pieces are. The objective panel already counts
+     * them; this is where they ARE.
+     *
+     * The two marks are deliberately different SHAPES rather than two states of
+     * one shape, because they are two different things: a jar is something to
+     * carry and a niche is a hole to put it in. A circle you can pick up, a
+     * square you can fill.
+     *
+     * The colour rule is the one the whole panel already runs on and it is not
+     * re-decided here: gold is a thing that is THERE, lapis is a thing that is
+     * WAITING. So a jar still on its plinth is gold and an emptied plinth is a
+     * lapis outline, a filled socket is gold and an empty one is a lapis
+     * outline, and the map reads as four golds crossing from one column to the
+     * other over the course of an act.
+     */
+    for (const rec of fixtures()) {
+      if (rec.type !== 'canopic-jar' || !mine(rec)) continue;
+      dot(rec.x, rec.z, 2.6,
+        rec.taken ? null : HOT,
+        rec.taken ? LAPIS_LIT : ink(PIGMENT.linen, 0.9));
+    }
+
+    for (const rec of fixtures()) {
+      if (rec.type !== 'niche' || !mine(rec)) continue;
+      // Asked of the SCENE GRAPH rather than of the puzzle system's count. The
+      // map is a readout and a readout that derives its own copy of a fact is
+      // the thing that is wrong on the day the two disagree.
+      const full = rec.group.children.some((c) => c.name === 'vessel');
+      const a = px(rec.x), b = py(rec.z);
+      ctx.beginPath();
+      ctx.rect(a - 2.4, b - 2.4, 4.8, 4.8);
+      if (full) { ctx.fillStyle = HOT; ctx.fill(); }
+      ctx.strokeStyle = full ? ink(PIGMENT.linen, 0.9) : LAPIS_LIT;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
     // --- the Kindling -------------------------------------------------------
+    //
+    // The fire bowl is not a lever any more and there is nothing to walk to,
+    // but the flame stays: it is still where the machine is, it still lights
+    // when the third son comes home, and the four sockets that now throw it
+    // stand eight metres from it in the same room. The glyph did not have to
+    // move because it was never pointing at a lever, it was pointing at a room.
     if (kindlingSlot) flame(kindlingSlot.x, kindlingSlot.z, 4.4, power.powered);
 
     // --- the Altar ----------------------------------------------------------
