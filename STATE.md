@@ -195,11 +195,27 @@ removed is a bug that is never fixed.
 
 ### TWO OPEN CALLS FOR THE OWNER, both from the pacer lane
 
-1. **Her line 4 overruns the Hard breather.** 71 chars, 5.17 s against Hard's
-   4.5 s window. STORY-DELIVERY's table had it clearing by 0.1 s, but that model
-   has no punctuation in it and the line has three full stops. Reported by the
-   harness, deliberately NOT gated: the fix is one constant (the 320 ms stop, or
-   the 1200 ms hold) and which one gives way is a story call.
+1. **RESOLVED 2026-08-03. Her line 4 overran the Hard breather** at 71 chars and
+   5.17 s against a 4.5 s window. NO CONSTANT FIXED IT: stop 320 to 200 left it
+   at 4.81, hold 1200 to 800 at 4.77, and both together at 4.63, while making
+   every other line flatter for nothing. 71 characters at 22 cps is 3.23 s
+   before punctuation, and the line carried three full stops. It was too long,
+   not the constants too slow.
+
+   Fixed in two halves. **A trailing full stop was being charged twice** -
+   `PUNCT_MS` buys the beat that FOLLOWS a mark, and after the last character
+   `HOLD_MS` is already that beat, so an end-of-line pause cost 1520 ms against
+   an internal break's 320. `schedule()` no longer charges the final character,
+   which gives every line 0.3 to 1.0 s back. **And the line was edited**, from
+
+       did anything happen to you. down there. anything you'd want to tell me.
+       did anything happen down there. anything you'd want to tell me.
+
+   which keeps `did`, keeps `you'd want to tell me` (the ask, and the point of
+   the line), and pays only by folding the `down there.` fragment into the first
+   sentence. 63 chars, 4.20 s, 0.30 s of room - the widest margin of the six
+   candidates timed. All five lines now clear Normal AND Hard.
+
 2. **The gatekeeper's two words are the lane's pick, not the owner's.**
    STORY-DELIVERY lists the string under NOT DECIDED HERE. Six two-word lines
    rotate by death count, `NOT YET` always first; `setAnswer(null)` withholds

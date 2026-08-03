@@ -165,7 +165,24 @@ export function schedule(text, cps) {
   for (let i = 0; i < text.length; i++) {
     at[i] = t;
     const ch = text[i];
-    t += (SILENT.test(ch) ? base * SPACE_SCALE : base) + (PUNCT_MS[ch] || 0);
+    /*
+     * A TRAILING FULL STOP USED TO BE CHARGED TWICE.
+     *
+     * PUNCT_MS buys the beat that FOLLOWS a mark, and on the last character
+     * there is nothing following it inside the line - HOLD_MS is already the
+     * beat after a finished line. So a line ending in a full stop paid 320 ms
+     * for a pause and then 1200 ms for the same pause, and an end-of-line beat
+     * cost 1520 against an internal sentence break's 320. Nothing in the design
+     * ever asked for that ratio; it is arithmetic nobody looked at.
+     *
+     * Dropping it gives every one of her World 1 lines 0.3 to 1.0 s more room
+     * inside the breather the director guarantees, which is the budget the
+     * whole delivery layer is sized against. It does not touch the cut point:
+     * `at[i]` is the moment a character APPEARS, and this only changes what is
+     * added after the final one.
+     */
+    const last = i === text.length - 1;
+    t += (SILENT.test(ch) ? base * SPACE_SCALE : base) + (last ? 0 : (PUNCT_MS[ch] || 0));
   }
   return { at, dur: t };
 }

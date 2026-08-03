@@ -129,10 +129,32 @@ empty:** `director.js:1283` sets `phase = 'breather'` only inside
 8.0 and 5.0 on Easy (`:115`), 4.5 and 2.5 on Hard (`:149`).
 
 **The budget.** 25 waves is about 24 full breathers, roughly 144 seconds of
-guaranteed quiet on Normal, against a World 1 script of five lines and 233
+guaranteed quiet on Normal, against a World 1 script of five lines and 225
 characters, about 17 seconds of speech at the rate in section 4. **8 to 1 on
 Normal, 6 to 1 on Hard.** There is no scarcity problem. There is a targeting
 problem, which is a different thing.
+
+**CORRECTION, 2026-08-03. The model above sizes a line as `chars / 22 * 1000 +
+1200`, and that model has no punctuation in it** - which is most of what makes
+typed text read as speech rather than as a ticker. The real schedule adds 320 ms
+per full stop, 150 per comma, 90 per dash. Against the true numbers line 4 did
+not clear Hard at all: this document had it fitting by a tenth of a second, and
+it was over by two thirds of one.
+
+Two things came out of measuring it, and only one of them was the line:
+
+- **A trailing full stop was being charged twice.** `PUNCT_MS` buys the beat
+  that FOLLOWS a mark, and after the final character `HOLD_MS` is already that
+  beat, so an end-of-line pause cost 1520 ms against an internal sentence
+  break's 320. Nothing in this design ever asked for that ratio. `schedule()` no
+  longer charges the last character, which is worth 0.3 to 1.0 s on every line.
+- **Line 4 was simply too long**, and no constant could save it: dropping the
+  full stop to 200 ms left it at 4.81 s, halving the hold at 4.77, both together
+  at 4.63 - each of them flattening the other four lines to buy nothing. It was
+  rewritten (section 4), and all five lines now clear Normal AND Hard.
+
+**Size lines against `schedule()` in `ui/pacer.js`, not against the arithmetic
+in this document.** `test/pacer.mjs` prints the real table on every run.
 
 **Eligibility, in order.** A line fires when all of these hold:
 

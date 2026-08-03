@@ -228,7 +228,7 @@ const rate = await page.evaluate(async (line) => {
       'i keep thinking you were further back. that walk in.',
       'how many of us came in. i keep getting it wrong.',
       'you sound-',
-      "did anything happen to you. down there. anything you'd want to tell me.",
+      "did anything happen down there. anything you'd want to tell me.",
       "there's something i've been meaning to ask you since we-",
     ].map((l, i) => {
       const total = schedule(l, CPS.her).dur + HOLD_MS.her;
@@ -376,7 +376,7 @@ await page.screenshot({ path: `${OUT}pacer-04-her-in-frame.png`, timeout: 120000
  * runs off both edges of a 720 one. It has to WRAP now, and it has to stay
  * inside the viewport while it does.
  */
-const LONG_LINE = "did anything happen to you. down there. anything you'd want to tell me.";
+const LONG_LINE = "did anything happen down there. anything you'd want to tell me.";
 const longest = await page.evaluate(async (args) => {
   const g = window.__SANDS__;
   g.pacer.clear();

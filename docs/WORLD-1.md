@@ -584,7 +584,7 @@ the one who is wrong.
 | 1 | the avenue, on the walk from `(0, 30)` | "i keep thinking you were further back. that walk in." | small talk under stress | she is describing the order they walked in when he was killed, and asking him to tell her she has it wrong |
 | 2 | Chamber of Ascent, just inside | "how many of us came in. i keep getting it wrong." | counting the crew | she counts the living and gets a number that includes him |
 | 3 | **Great Gallery, mid-wave, from the far ledge** | "you sound-" | a bad line, a loud room | she almost has it, and stops herself |
-| 4 | Canopic Crypt, Act 3 | "did anything happen to you. down there. anything you'd want to tell me." | are you hurt | she is holding the door open for him to say it, and he cannot |
+| 4 | Canopic Crypt, Act 3 | "did anything happen down there. anything you'd want to tell me." | are you hurt | she is holding the door open for him to say it, and he cannot |
 | 5 | Embalming Chamber, at the machine | "there's something i've been meaning to ask you since we-" | interrupted | the last thing she ever says |
 
 Line 3 is the owner's "very intense scene": the biggest room in the map, sixteen
