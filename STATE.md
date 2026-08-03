@@ -79,6 +79,76 @@ remembering - **a window closed too early and a beat that genuinely died produce
 identical evidence.** `litVia` is what tells them apart, and the run reports
 `"cut"`.
 
+### THE STUCK CORNERS - FIXED 2026-08-03
+
+Owner: "theres a few corners where we get stuck, like litereqally cant move."
+TWO were real. Both fixed, and the fix is NOT where anyone would look first.
+
+**It was geometry, not the collision resolver.** Two systems that never knew
+about each other left slots narrower than the player:
+
+    canal  (-17.2, 17.6)   perimeter wall reaches south to z 17.34
+                           prop row reaches north to z 17.09   = 0.25 m corridor
+    quarry (17.5, -16.9)   the same sliver against the quarry's own row
+
+The body is 0.84 m across. A 0.25 m slot is not a passage anyone can use, and
+the one thing it can still do is swallow a player the resolver pushes into it
+and hold them with stone on both sides.
+
+**The fix is a post-build sealer in `world/courtyard.js`**, running LAST after
+every builder including the quarry and the canal, so a slot formed between two
+systems that never coordinated is still caught. It fills any gap narrower than
+the body. 1104 slots sealed; colliders 662 -> 1766; measured cost **0.0054 ->
+0.0151 ms per frame**, about 0.09 per cent of a 16.7 ms budget.
+
+    instrument          bad    stuck   confirmed   TRAPS
+    baseline           1052     1031           5       2
+    8-pass resolver    1235     1224           8       2     <- REJECTED
+    slot sealer         708      694           4       0
+
+`nav`, `economy`, `governor`, `enemies` all pass, including nav's own routing
+cost gates. The four remaining stuck places are all behind `faceX` or `wallX`,
+inside rock, and the trap test confirms every one is unreachable.
+
+**THE REJECTED FIX IS WORTH REMEMBERING.** Raising the resolver's pass count
+from 2 to 8 was the obvious move and the reasoning was sound - three overlapping
+cylinders cannot converge in two passes. It made the game measurably WORSE.
+More iterations do not free a body from a slot narrower than itself; they push
+it further in. The numbers live in `RESOLVE_PASSES` so nobody re-derives it.
+The resolver keeps ONE real fix: a body landing exactly on a cylinder's axis
+used to get no push at all, because the guard `distSq > 1e-8` skipped it.
+
+**Three harnesses, and only one of them gets to have an opinion.**
+`test/stuck.mjs` sweeps and finds CANDIDATES. `test/stuck-trap.mjs` decides,
+because a place you cannot walk out of is only a bug if you can walk INTO it -
+the inside of a rock face is not a defect. `test/stuck-pins.mjs` is the A/B
+instrument: the sweep's own clustering picks its points, so before and after
+runs report different coordinates and prove nothing.
+
+**MY OWN INSTRUMENTS WERE WRONG THREE TIMES IN THIS ONE INVESTIGATION**, and the
+tells were all in their own output:
+
+1. `player.update(dt, input, yaw)` takes the yaw as its THIRD ARGUMENT and does
+   not read the rig. Every probe passed 0 and set the rig separately, so all
+   eight "directions" walked due -z. THE TELL: 947 bad points, 100 per cent
+   STUCK, ZERO pockets. A world does not fail that uniformly. Same signature as
+   the sixteen unreachable spawn points in July.
+2. Distance measured over a fixed FRAME count, when a swiftshader frame is worth
+   between 100 ms and 1.7 s. Same code, same point, two runs: 0 m and 35.24 m.
+3. An approach walk given 2 s to cross 6 m, which reported every target
+   UNREACHABLE with four metres still to go.
+
+Every harness now carries a CONTROL in open ground, in the same run, and judges
+speeds against it rather than against a constant.
+
+### THE 2AM EOD BOT COMMITTED KNOWN-BAD CODE
+
+`d5b6575` swept up `controller.js` mid-investigation - the 8-pass version that
+had just been measured as a regression - plus three harness files and a
+throwaway probe. It was caught before pushing and the commit was reset. The
+pre-push divergence guard would also have stopped it at the push. Worth knowing
+the sweep runs at 02:00 and does not care whether the tree is mid-experiment.
+
 ### THE PACER, MGS STYLE - BUILT 2026-08-02
 
 Owner overrode the design's Banjo-Kazooie vocal blips and asked for Metal Gear
