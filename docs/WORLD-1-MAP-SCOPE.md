@@ -11,8 +11,17 @@ there. **PURPOSES, NOT GEOMETRY. No coordinates, no dimensions, no layout.**
 
 **Nothing below is claimed built or unbuilt from a document.** Every such claim
 was checked against `rooms.js`, `doors.js`, `interact.js`, `build.js`,
-`courtyard.js`, `boss.js` or today's survey. This project has twelve confirmed
-instances of things written that never rendered.
+`courtyard.js`, `boss.js` or today's survey. This project has thirteen confirmed
+instances of things written that never rendered. The thirteenth was found while
+building BUILD 1 and is the only one caught before it shipped: the courtyard
+jar, the first jar a player ever sees, was untagged, so `batchStatics` would
+have merged it into the static mesh. It would have rendered perfectly and been
+unpickable by construction.
+
+**STATUS, 2026-08-02, updated after the build rather than before it: BUILD 1
+and BUILD 6 ARE BUILT.** World 1 can be finished. `test/jars.mjs` is 65 checks
+of real key events on real frames and it passes. Rows and items below are marked
+**BUILT** where that is now true; everything unmarked is still scope.
 
 **Names, as locked by the owner:** the queen is **HETEPHERES**, the
 pre-Egyptian builders are **THE ANCIENTS**. Checked: "Meresankh" appears
@@ -22,19 +31,21 @@ nowhere in this repository, in source or in documents. Nothing to correct.
 
 ## 1. BLUF
 
-- **Nine build items.** One is a new exterior space, one is a system that gates
-  shipping World 1 at all, and seven are additive work inside surfaces that
-  already exist.
-- **The biggest single build is the EXPEDITION CAMP**, a new authored exterior
-  space at the scale of `quarry.js` or `canal.js`, roughly 500 to 700 lines plus
-  its courtyard wiring and its own probe. **The most consequential is the
-  four-jar chain**, which is smaller and blocks everything: the Serdab is
-  unreachable, the ending happens in it, and `doors.js` reads a `jarsReturned`
-  counter that is declared 0 and written nowhere.
+- **Nine build items. Two of them, BUILD 1 and BUILD 6, are now BUILT.** Of the
+  seven left, one is a new exterior space and six are additive work inside
+  surfaces that already exist.
+- **The most consequential item is DONE.** The four-jar chain blocked everything
+  and it shipped: the counter has one writer, the Serdab opens, the run
+  terminates at wave 25 and the end card lands. **The biggest single build left
+  is the EXPEDITION CAMP**, a new authored exterior space at the scale of
+  `quarry.js` or `canal.js`, roughly 500 to 700 lines plus its courtyard wiring
+  and its own probe.
 - **Total honest size: roughly 2,000 to 2,700 lines of new or changed source,
   ONE new exterior space, ZERO new interior rooms**, about fourteen to eighteen
   new prop and fixture types, two new interact handler types, and two or three
-  new harnesses.
+  new harnesses. **Roughly 1,750 of those lines are now spent**, across BUILD 1
+  and BUILD 6 plus their harness, both interact handler types, and one of the
+  three harnesses.
 - **The nine interior rooms still suffice, and the case is STRONGER than when
   the map brief said so.** Every interior purpose in the narrative has a home
   among the nine. The two changes since the brief both removed reasons to add
@@ -64,7 +75,7 @@ section 3.
 | 4 | The dead come across the sand, he kills them and takes their gold | the avenue plus the Quarry and the Canal, both built and both wired as purchases in `doors.all` | yes | nothing. Act 1 has its circuit |
 | 5 | Somewhere to circle when the circuit is too long to run | the avenue only | partly | the forecourt mass is unbuilt and `courtyard.js` states the opposite intent. Folded into BUILD 2, see section 4 |
 | 6 | The doorway is blocked, and the first purchase in the game is the way back in | the sealed doorway, `ENTRY`, a gate in the courtyard | yes | nothing. Refusal: no line ever explains that he came OUT through it |
-| 7 | Jar 1 in a side chapel on the walk down the avenue | the courtyard west chapel. The jar is meshed, collidered and published on `courtyard.jars` | yes | nothing in the geometry. The verb that picks it up is BUILD 1 |
+| 7 | Jar 1 in a side chapel on the walk down the avenue | the courtyard west chapel. The jar is meshed, collidered and published on `courtyard.jars` | **yes, BUILT** | nothing. The verb shipped with BUILD 1, and the jar was made `noBatch` in the same pass: it would have merged into the static mesh and been unpickable while looking perfect |
 | 8 | Fragment 1 on taking it: seven black shapes in a stone room, doing something to a door | nowhere | **no** | BUILD 4 |
 | 9 | She calls out on the avenue. Question 1 | the notice pill, `main.js` `showNotice` | channel yes | BUILD 3: the line list, the lowercase mode, the hold |
 | 10 | Her lamp, ahead of him in the dark | nowhere. There is no lamp prop of any kind | **no** | BUILD 7 |
@@ -79,7 +90,7 @@ section 3.
 | 14 | The camp gradient: bleached in Act 1, crisp in Act 2, warm in Act 3, nothing modern in the boss room | the same rooms plus the Canopic Crypt | rooms yes | BUILD 7 |
 | 15 | Question 2, just inside, counting the crew | the Chamber of Ascent | yes | BUILD 3 |
 | 16 | Question 3, mid-fight, from a ledge above the loudest room, and it does not finish | the Great Gallery's upper ring, ledges and bridge, built | yes | BUILD 3, plus her lamp on the ledge from BUILD 7 |
-| 17 | Jar 2 up the shaft that points at the sky | the Star Shaft. Jar 2 is placed and meshed | yes | BUILD 1, the pickup |
+| 17 | Jar 2 up the shaft that points at the sky | the Star Shaft. Jar 2 is placed and meshed | **yes, BUILT** | nothing. The pickup shipped with BUILD 1 |
 | 18 | A rope in the shaft going up into the dark, ending at nothing | the Star Shaft | room yes | BUILD 7. Verified today: there is no rope prop, mesh or slot type anywhere in `src/` |
 | 19 | Fragment 2: the same room, growth on the wall, one shape too close to the door | nowhere | **no** | BUILD 4 |
 
@@ -89,13 +100,13 @@ section 3.
 |---|---|---|---|---|
 | 20 | Deeper. The rooms get lower and he physically goes down | the descent: five rooms on the lower datum, three ramps at the Act 2 to Act 3 break | **yes, BUILT** | nothing. Do not re-scope this |
 | 21 | The world tells him how deep he is | nowhere on the HUD | **no** | BUILD 9, one span beside the wave counter |
-| 22 | The room with four empty niches, and a notebook with them chalk-numbered in the wrong order | the Embalming Chamber. Four `niche` interact slots are authored, one per son | yes | BUILD 1: `interact.js` registers handlers for four slot types and `niche` is not one, so a niche is not even pickable. BUILD 7 for the notebook |
-| 23 | He puts the jars in the niches. Jar 3, fragment 3: he is watching himself from where she was hiding | the Embalming Chamber | yes | BUILD 1 and BUILD 4 |
-| 24 | The third jar going home turns the building on: light across nine rooms, a horn then a chime, six shrines waking, a gate opening, the notice | `systems/power.js`, and the fire bowl stands in the Embalming Chamber | **yes, all of it ships** | BUILD 1: move the trigger, retire the lever's interactability in `doors.js`. The power system itself is untouched |
-| 25 | THE KINDLING TAKES overwrites her mid-sentence, and she never speaks again | the notice pill, which already overwrites everything | channel yes | BUILD 3: the hold, and its one deliberate exception here |
+| 22 | The room with four empty niches, and a notebook with them chalk-numbered in the wrong order | the Embalming Chamber. Four `niche` interact slots are authored, one per son | **yes, BUILT** | `niche` is a registered handler type now and the niches accept. BUILD 7 still owes the notebook |
+| 23 | He puts the jars in the niches. Jar 3, fragment 3: he is watching himself from where she was hiding | the Embalming Chamber | **the returns are BUILT** | BUILD 4 for fragment 3. `jars.onTake(fn)` is live and unused, and is the seam the four fragments want |
+| 24 | The third jar going home turns the building on: light across nine rooms, a horn then a chime, six shrines waking, a gate opening, the notice | `systems/power.js`, and the fire bowl stands in the Embalming Chamber | **yes, BUILT** | nothing. Option C landed: the third jar calls `throwSwitch()`, the lever's interactability is deleted, and **`systems/power.js` is byte-for-byte untouched** |
+| 25 | THE KINDLING TAKES overwrites her mid-sentence, and she never speaks again | the notice pill, which already overwrites everything | **the beat is BUILT** | nothing for this beat: the third jar seats, her line reveals lowercase, stops dead at "since we-", and the machine starts inside that callback. `test/jars.mjs` reports `litVia: "cut"`, so it fires through the authored cut rather than a backstop. BUILD 3 still owes the other four lines and the hold |
 | 26 | Ten waves of silence follow and nothing visibly changes | everywhere | yes | nothing, once BUILD 3 exists. This beat is a refusal |
 | 27 | Down a long sightline, her lamp stands still and the horde flows around it, once, unremarked | Act 3 has the sightlines: each descent gate looks down its own ramp into a room, and the boss arena is the largest floor in the map | yes | BUILD 7 for the lamp. The exact placement is the map lane's call |
-| 28 | Jar 4 in the room with the sarcophagus, the biggest room, the boss arena, nothing modern in it | the King's Chamber. Jar 4 and the sarcophagus are both placed | yes | BUILD 1. Refusal: this room stays clear of every BUILD 7 prop |
+| 28 | Jar 4 in the room with the sarcophagus, the biggest room, the boss arena, nothing modern in it | the King's Chamber. Jar 4 and the sarcophagus are both placed | **yes, BUILT** | nothing. Refusal still stands: this room stays clear of every BUILD 7 prop |
 | 29 | Fragment 4: he sees himself die, and that she was there | nowhere | **no** | BUILD 4 |
 | 30 | He carries it back to the fourth niche, and the struck cartouche lights one glyph at a time: HETEPHERES | the Serdab | room yes, surface no | BUILD 5. There is no way to write text on a wall; the only cartouche in the codebase is the death card's, in `ui/death.js` |
 
@@ -104,17 +115,17 @@ section 3.
 | # | Beat | Where it lands today | Exists | What is missing |
 |---|---|---|---|---|
 | 31 | The five gods are the tomb's staff, and the ending is rehearsed five times as boss fights | `boss.js` ships five gods on the five-wave cycle | yes | nothing. It is a reading, not a build |
-| 32 | Wave 25. Set falls, the gilding flares once on a corpse, brighter than any telegraph, then goes out | `boss.js` has one death path shared by all five gods | yes | BUILD 6: a `farewell` field on the god record, absent on the other four |
-| 33 | Every living thing stops for one second and turns to face the door of the sealed chapel | `director.js` | **no** | BUILD 6: a one-shot stop-and-face on the director |
-| 34 | The doorway that gold cannot open is open now | the Serdab portal, `kind: 'puzzle'`, cost 0 | yes | BUILD 1. **Verified: `doors.js` declares `jarsReturned: 0` and nothing anywhere writes it. The room World 1 ends in cannot be entered in the shipped build** |
+| 32 | Wave 25. Set falls, the gilding flares once on a corpse, brighter than any telegraph, then goes out | `boss.js` has one death path shared by all five gods | **yes, BUILT** | nothing. `farewell: true` on Set only; measured flare peak 6.4 against the telegraph's ceiling of 3.6, eye emissive to zero first |
+| 33 | Every living thing stops for one second and turns to face the door of the sealed chapel | `director.js` | **yes, BUILT** | nothing. Sixteen live bodies turned to the chapel door with worst error 0.0000 rad |
+| 34 | The doorway that gold cannot open is open now | the Serdab portal, `kind: 'puzzle'`, cost 0 | **yes, BUILT** | nothing. **Two bugs, not one: the counter had no writer, and `lockedBecause` returned the progress string unconditionally, so it stayed truthy at 4 of 4 and denied. `systems/jars.js` is the one writer; the gate returns `null` at four** |
 | 35 | The only room in twenty-five waves with no spawn points, so he can be alone | the Serdab. `spawnPoints: []`, deliberately, with the reason written in the record | yes | nothing. This is the beat's load-bearing fact and it already ships |
 | 36 | Ten rock-cut figures of the same woman, and an eleventh niche cut on its own, empty | the Serdab, which carries one statue today | room yes | BUILD 5 |
 | 37 | She is sitting on a stool with her back to the door, the lamp beside her. The first time she has a body | the Serdab | room yes | BUILD 5: a fixture type, plus BUILD 7's stool and lamp |
 | 38 | He is prompted, and this one has no price | `ui/prompt.js` already has a refusal path that quotes no price | channel yes | BUILD 5: a handler whose `buy()` fires the sequence and returns false. Four slot types are registered today and hers is not one |
 | 39 | The mark he has been finding chiselled into walls is on her lamp, lit from inside | nowhere. The effaced cartouche does not exist as a world object | **no** | BUILD 7 |
 | 40 | Her eyes take the boss telegraph, on a person, in the one room with nothing to shoot | `boss.js` `setGlow` owns the curve | curve yes | BUILD 5: apply it to her fixture |
-| 41 | Black, and a card in the death card's shape: struck glyphs, THE NAME IS NOT HERE | `ui/death.js` machinery, tokens, confirm gate | yes | BUILD 6: a sibling module sharing `ui/tokens.js`, not a flag on the death card |
-| 42 | He confirms, and when the frame comes back he is in the eleventh niche going down | `spaces.enter()` swaps the world behind a curtain held for two drawn frames | machinery yes | BUILD 6: the run has to be able to END. `forWave()` cycles the five gods forever and nothing in `src/` can conclude a run |
+| 41 | Black, and a card in the death card's shape: struck glyphs, THE NAME IS NOT HERE | `ui/death.js` machinery, tokens, confirm gate | **yes, BUILT** | nothing. `ui/ending.js` is a sibling module sharing `ui/tokens.js`, not a flag on the death card. Laid-out box measured 427x32 px, four struck glyphs, death card does not fire |
+| 42 | He confirms, and when the frame comes back he is in the eleventh niche going down | `spaces.enter()` swaps the world behind a curtain held for two drawn frames | **the run can END** | BUILD 5 still owes the eleventh niche as a place. `FINAL_WAVE = 25`, a `concluded` phase, and `onDescend` all ship; endless mode is `setEndless`, off by default |
 | 43 | On the boundary, twenty times a run: the death card judges him, erases him, and then he stands up | `ui/death.js`, shipping | yes | nothing |
 | 44 | Two or three words under the verdict, in a different treatment, disagreeing with it | the same card | frame yes | BUILD 8 |
 | 45 | The game counts the returns | `state.resets` exists in `ui/death.js` | yes | BUILD 8: print it |
@@ -126,8 +137,22 @@ section 3.
 Ranked by what the story cannot survive without. Sizes are in this project's own
 units: lines of source, new rooms, new props.
 
-### BUILD 1. The four-jar chain, and the Kindling repointed onto it
+### BUILD 1. The four-jar chain, and the Kindling repointed onto it - BUILT 2026-08-02
 
+- **Built as `src/systems/jars.js`**, about 640 lines, plus `ui/interact.js`,
+  `systems/doors.js`, `ui/objective.js`, `ui/minimap.js`, `world/build.js`,
+  `world/courtyard.js`. Harness `test/jars.mjs`, 952 lines, 65 checks, wired
+  into `npm test` and `test:jars`. Option C was taken as recommended.
+- **What actually landed, against what was scoped.** The estimate was 250 to 400
+  lines for the chain plus 150 for the repoint; the chain came in at the top of
+  that and the repoint under it. Two things were not in the scope and are worth
+  recording: `lockedBecause` had a second bug independent of the missing writer,
+  and the courtyard jar needed `noBatch` or it would have been unpickable.
+- **Verified by playing it, not by asserting it.** Every pickup and return in the
+  harness is a real `KeyboardEvent` at the window, through `main.js`'s own
+  binding table, on real frames, using the game's own crosshair raycast. Where a
+  jar ended up is read off the scene graph rather than off the system's own
+  bookkeeping.
 - **What.** A carried-item verb, four niches that accept, a counter that is
   written, and the third jar landing calls the existing `throwSwitch()`.
 - **Beats.** 7, 8, 17, 19, 22, 23, 24, 25, 28, 29, 30, 34. The spine of Acts 2
@@ -199,8 +224,26 @@ no new interior rooms.
 - **FLAG, LOUDLY: nothing in this item may change the Serdab's floor or its
   ceiling.** Section 6.
 
-### BUILD 6. World 1 has to be able to END
+### BUILD 6. World 1 has to be able to END - BUILT 2026-08-02
 
+- **Built as `src/ui/ending.js`**, about 550 lines, plus `enemies/director.js`
+  (`FINAL_WAVE = 25`, a `concluded` phase, `onConclude`, `setEndless`,
+  `bossFarewell()`) and `enemies/boss.js` (`farewell: true` on Set only).
+  Covered by `test/jars.mjs`.
+- **The gate on the end card is three conditions**, not one: the run concluded,
+  four sons home, and the player standing in the Serdab.
+- **The eleventh niche was deliberately NOT built here.** It is BUILD 5's, and
+  section 6's zero-slack flag says nothing may touch the Serdab's floor or
+  ceiling. Nothing did.
+- **The ladder is verified too, as of `test/e2e.mjs`.** `jars.mjs` reaches wave
+  25 with `forceWave`, which is correct for a unit harness and leaves the climb
+  unproven. `e2e.mjs` replaces `forceWave` and `reset` with functions that record
+  a violation and throw, then plays waves 1 to 25 and checks the ladder for
+  CONTIGUITY rather than for its last number: a director that skipped 7 to 9
+  would still conclude on 25. Measured spawn curve, which is the difficulty ramp
+  made visible: 7, 8, 10, 12, **7**, 17, 19, 21, 23, **11**, 24, 24, 24, 24,
+  **15** ... The bold dips are the boss waves, one god instead of a crowd, and 24
+  is the live cap holding from wave 11 on.
 - **What.** Four small things that only matter together: the run terminating at
   wave 25 on Set's death rather than cycling; a `farewell` variant on Set's god
   record; a one-shot stop-and-face on the director; and an end card as a sibling
@@ -344,6 +387,13 @@ Specifically, so nobody rebuilds it.
 - **All four jars placed**, jar 1 outside and published on `courtyard.jars` in
   the shape `build.js` publishes the other three, and **the four niches**
   authored in the Embalming Chamber, one per son.
+- **The four-jar chain itself, BUILT 2026-08-02.** `systems/jars.js` owns take
+  and give, `doors.state.jarsReturned` has exactly one writer, the Serdab opens
+  at four, and the third jar lights the map through the existing `throwSwitch()`.
+- **The ending, BUILT 2026-08-02.** Wave 25 is the ceiling, Set gets a farewell
+  flare, the room turns to the chapel door, and `ui/ending.js` lands the card.
+  The run can conclude. What it cannot yet do is descend into a niche that has
+  been built, which is BUILD 5.
 - **The Serdab as the stage.** No spawn points, deliberately, with the reason in
   the record. The only room in twenty-five waves where the player can be alone.
 - **The power system entire.** `throwSwitch`, the horn and chime, the six shrine
@@ -402,15 +452,16 @@ Five. Each has a recommendation and one line of reason.
    where the institution appears should not be behind a gold gate in a game
    about robbing graves.
 
-3. **Take Option C on the Kindling: keep the system, keep the fire bowl, move
-   only the trigger?** **Recommendation: yes.** It gives meeting 2 its own words
-   literally, costs about a fifth of a rewrite, and the best beat in World 1
-   survives untouched because the notice is untouched.
+3. **ANSWERED YES, AND BUILT. Take Option C on the Kindling: keep the system,
+   keep the fire bowl, move only the trigger?** It gave meeting 2 its own words
+   literally and the best beat in World 1 survived untouched, because
+   `systems/power.js` is byte-for-byte unchanged. The fire bowl still stands and
+   still lights; only its interactability is gone, and the harnesses now assert
+   that absence as two separate claims (no prompt, and F does nothing).
 
-4. **Does World 1 terminate at wave 25, and is the ending gated on the jars?**
-   **Recommendation: yes to both**, with endless mode kept as a separate mode off
-   the start screen. Verified today: nothing in `src/` can conclude a run, so
-   without this the player kills Set and wave 26 spawns.
+4. **ANSWERED YES TO BOTH, AND BUILT. Does World 1 terminate at wave 25, and is
+   the ending gated on the jars?** Endless mode is `director.setEndless`, off by
+   default, one line for the start screen when that screen wants it.
 
 5. **Do World 1's forward plants ship now: the gatekeeper's two words, the
    resurrection count, and the depth readout?** **Recommendation: yes to all

@@ -5,7 +5,7 @@ not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
 
-## RIGHT NOW, 2026-08-02 22:25
+## RIGHT NOW, 2026-08-02 23:30
 
 Everything below "Run it" is history. This is where the work actually is.
 
@@ -18,40 +18,139 @@ widened to 544 m2 with a free west door, and four bugs the owner found by
 playing: the canal seal, the quarry breach window, floating wall props and
 `reachesPlayer`.
 
-### Committed, NOT pushed
+### Committed and pushed, HEAD a199408
 
   b69bb65  docs: World 1's map scope, from the narrative
   32b4066  docs: how the story reaches a player being chased
+  a199408  docs: RIGHT NOW before compaction, two lanes in flight
 
-### TWO LANES IN FLIGHT. Nothing of theirs is committed.
+### WORLD 1 CAN NOW BE FINISHED. Built 2026-08-02, NOT COMMITTED.
 
-**1. THE JAR CHAIN AND THE ENDING** (build items 1 and 6, owner approved).
-Four jars carryable and returnable; `jarsReturned` is declared 0 at
-`doors.js:289` and written NOWHERE, so the Serdab is unreachable and World 1's
-entire ending happens in it. Three jars run the machine, the fourth opens the
-Serdab. Kindling gets OPTION C: keep the system, delete only the lever's
-interactability, jars call the existing `throwSwitch()`. THE BEAT THAT MUST
-SURVIVE: the Kindling notice OVERWRITES THE ARCHAEOLOGIST MID-SENTENCE, now on
-the third jar, same room.
-Also: WORLD 1 CANNOT CURRENTLY END. Verified in source, there is no `gameWon`,
-no victory, no wave ceiling; `director.js` does `state.wave++` with nothing to
-stop it. Owner's call: terminate at wave 25, ending gated on the jars.
+**BUILD 1 and BUILD 6 landed together**, because the ending was gated on the
+jars. New: `src/systems/jars.js`, `src/ui/ending.js`, `test/jars.mjs`,
+`test/e2e.mjs`. Changed: `doors.js`, `director.js`, `boss.js`, `objective.js`,
+`interact.js`, `minimap.js`, `build.js`, `courtyard.js`. `test/jars.mjs` is
+65/65, re-run independently rather than taken from the building lane's report.
 
-**2. THE PACER, MGS STYLE** (owner overrode the design's Banjo-Kazooie vocal
-blips and asked for Metal Gear Solid codec). One tick per character as it
-appears, short dry percussive burst, speakers separated by PITCH AND FILTER not
-phonemes, punctuation costs time, spaces silent, small pitch jitter. His call is
-better: a codec tick is not a voice, so it dissolves the defect where her blip
-would have shared `groan()`'s formant bank and made her sound like the horde.
-Also fixing INSTANCE TWELVE (below) and the gatekeeper's two words on the death
-card.
+- **The counter has ONE writer**, `jars.js` -> `publish()`, two pre-existing
+  readers, no derivation anywhere else.
+- **There were TWO bugs in the gate, not one.** The missing writer was known.
+  The second was not: `lockedBecause` returned the progress string
+  unconditionally, so it stayed truthy at 4 of 4 and the Serdab denied. A puzzle
+  whose completed state is indistinguishable from its refusal is a door with no
+  open position.
+- **Option C held. `systems/power.js` is byte-for-byte untouched.** The fire
+  bowl still stands and still lights; only its interactability is gone, and
+  interior and economy now assert that ABSENCE as two separate claims (no
+  prompt, and F does nothing).
+- **The beat survived.** Third jar seats, her line reveals lowercase, stops dead
+  at "since we-", and the machine starts inside that callback. `litVia: "cut"`
+  in an independent run, so it fired through the authored cut, not the backstop.
+- **INSTANCE THIRTEEN, and the only one ever caught BEFORE it shipped.** The
+  courtyard jar - the first jar a player ever sees - was untagged, so
+  `batchStatics` would have merged it into the static mesh. It would have
+  rendered perfectly and been unpickable by construction. Now `noBatch`.
 
-### INSTANCE TWELVE of "written but never rendered"
+**THE LADDER IS NOW CLIMBED, NOT SET. `test/e2e.mjs`, 19/19.** `jars.mjs`
+reaches wave 25 with `forceWave`, which is right for a unit harness and leaves
+the climb unproven; "concludes when you SET 25" and "concludes when you SURVIVE
+to 25" are different claims. `e2e.mjs` REPLACES `forceWave` and `reset` with
+functions that record a violation and throw, so the shortcut is mechanically
+unavailable rather than merely unused, then plays 1 to 25 and checks the ladder
+for CONTIGUITY rather than its last number - a director that skipped 7 to 9
+would still conclude on 25 and still pass a test that reads only the end. Run
+with `npm run test:e2e`; deliberately out of `npm test`, on the kite precedent.
 
-`index.html` sets `text-transform: uppercase` AND `white-space: nowrap` on
+Measured spawn curve, the difficulty ramp made visible: 7, 8, 10, 12, **7**, 17,
+19, 21, 23, **11**, 24, 24, 24, 24, **15** ... The dips are the boss waves, one
+god instead of a crowd; 24 is the live cap holding from wave 11 on.
+
+Its concessions are in its own header rather than buried: kills go through
+`hurt()` not bullets, the player is topped up each wave, and world swaps use
+`spaces.enter()` rather than buying the entry door. None of the three touches
+the wave counter, which is the thing under test.
+
+**Two of its first three failures were the instrument, not the game**, and the
+file now carries both fixes with the reason beside them: it read the wave number
+at the TOP of the loop and counted the pre-run wave 0 as a rung, and it closed
+the notice observer four frames after the keypress while her line was still
+revealing, then reported the Kindling beat as absent. That second one is worth
+remembering - **a window closed too early and a beat that genuinely died produce
+identical evidence.** `litVia` is what tells them apart, and the run reports
+`"cut"`.
+
+### THE PACER, MGS STYLE - BUILT 2026-08-02
+
+Owner overrode the design's Banjo-Kazooie vocal blips and asked for Metal Gear
+Solid codec. One tick per character as it appears, short dry percussive burst,
+speakers separated by PITCH AND FILTER not phonemes, punctuation costs time,
+spaces silent, small pitch jitter. His call is better: a codec tick is not a
+voice, so it dissolves the defect where her blip would have shared `groan()`'s
+formant bank and made her sound like the horde. Also fixing INSTANCE TWELVE
+(below) and the gatekeeper's two words on the death card.
+
+`src/ui/pacer.js` (new, 751 lines), `codecTick()` in `core/audio.js`, the
+gatekeeper's two words on `ui/death.js`, `test/pacer.mjs` (66 checks, wired into
+`npm test`). Two exports: `createTypewriter` (the reveal primitive) and
+`createPacer` (the pill's voice and hold policy). Punctuation costs time (stop
+320 ms, comma 150, dash 90); spaces cost 0.6x and are SILENT.
+
+**The two speakers are separated by pitch and filter, not phonemes**, which is
+what makes a codec tick not a voice. Measured by rendering through the real
+graph, by AUTOCORRELATION rather than loudest bin - the lane's first attempt
+reported the gatekeeper at 506 Hz, his third harmonic, and it caught that before
+believing it:
+
+    archaeologist   337 Hz, centroid 1229 Hz, 30.5 ms
+    gatekeeper      169 Hz, centroid  566 Hz, 50.0 ms
+    groan(), horde   89 Hz median  (rand 62-104)
+
+Exactly one octave apart, and the lower speaker sits 1.59x above the horde's
+ceiling at the bottom of its jitter. That is the defect the owner's MGS call
+dissolved: a formant-based blip would have shared `groan()`'s bank and made her
+sound like the thing chasing him.
+
+**INSTANCE TWELVE IS FIXED, AND SCOPED RATHER THAN RIPPED OUT.**
+`text-transform: uppercase` STAYS on the base `#notice` rule and is overridden
+only on `#notice.voice-her`, so not one of the ten existing callers has its
+rendering renegotiated. `white-space` went global to `normal` with
+`max-width: min(34em, 78vw)`, on the argument that wrapping cannot change a line
+that already fits on one line. Verified by reading the CSS, not the report.
+
+**THE TWO-CLOCK DEFECT IS FIXED AND THE GUARD IS OUT.** `arm()` is deleted; a
+spoken line's reveal, cut and hold are counted on ONE per-frame clock inside the
+typewriter. `jars.js`'s `hold: 12000` guard has been REMOVED and the beat
+re-verified without it rather than assumed to survive. A guard that is never
+removed is a bug that is never fixed.
+
+### TWO OPEN CALLS FOR THE OWNER, both from the pacer lane
+
+1. **Her line 4 overruns the Hard breather.** 71 chars, 5.17 s against Hard's
+   4.5 s window. STORY-DELIVERY's table had it clearing by 0.1 s, but that model
+   has no punctuation in it and the line has three full stops. Reported by the
+   harness, deliberately NOT gated: the fix is one constant (the 320 ms stop, or
+   the 1200 ms hold) and which one gives way is a story call.
+2. **The gatekeeper's two words are the lane's pick, not the owner's.**
+   STORY-DELIVERY lists the string under NOT DECIDED HERE. Six two-word lines
+   rotate by death count, `NOT YET` always first; `setAnswer(null)` withholds
+   them for World 3's last card. Overruling it is one array.
+
+### INSTANCE TWELVE of "written but never rendered" - FIXED 2026-08-02
+
+`index.html` set `text-transform: uppercase` AND `white-space: nowrap` on
 `#notice`. Her authored lines are LOWERCASE and run to 52 characters. The entire
-scheme where she is the only lowercase text in the game is unrenderable at any
+scheme where she is the only lowercase text in the game was unrenderable at any
 string, on a pill that would not fit the line anyway. Found by reading the CSS.
+Fixed by the pacer lane, scoped rather than ripped out - see above.
+
+### INSTANCE THIRTEEN - FIXED 2026-08-02, AND CAUGHT BEFORE IT SHIPPED
+
+The courtyard jar, the first jar a player ever sees, carried no `noBatch` tag,
+so `batchStatics` would have merged it into the static mesh. It would have
+rendered perfectly and been unpickable by construction - the pickup prompt would
+simply never appear, on an object visibly sitting right there. Found while
+building the verb that picks it up, which is the only reason it was found at
+all. Every other instance on this list was found after it shipped.
 
 ### The map scope's answer to "we need more space"
 
