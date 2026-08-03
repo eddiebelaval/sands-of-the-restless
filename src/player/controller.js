@@ -109,6 +109,24 @@ const HEAD_CLEARANCE = 0.10;
 const STEP_UP = 0.65;
 
 /**
+ * HOW MANY TIMES THE CYLINDER RESOLVER MAY ITERATE.
+ *
+ * TWO, AND IT WAS MEASURED RATHER THAN ASSUMED. Raising it was the obvious fix
+ * for the owner's report of corners you cannot walk out of, the reasoning was
+ * sound - three or more overlapping cylinders cannot converge in two passes -
+ * and it is WRONG. `test/stuck.mjs` swept both exterior spaces before and after:
+ *
+ *     2 passes                       1052 bad, 1031 stuck, 5 confirmed
+ *     8 passes + contact skin        1238 bad, 1227 stuck, 8 confirmed
+ *     8 passes + skin + unwedge      1235 bad, 1224 stuck, 8 confirmed
+ *
+ * More iterations do not free a wedged body, they eject it further, and it
+ * arrives somewhere worse. The count stays at two until something measures a
+ * reason to change it.
+ */
+const RESOLVE_PASSES = 2;
+
+/**
  * ---------------------------------------------------------------------------
  * THE SLIDE
  * ---------------------------------------------------------------------------
@@ -637,11 +655,14 @@ export function createPlayer(world) {
   }
 
   /**
-   * Push the player out of any cylinder they have entered. Two passes, because
-   * escaping one collider can push you into its neighbour.
+   * Push the player out of any cylinder they have entered.
+   *
+   * Iterates up to RESOLVE_PASSES times and breaks the instant a pass finds
+   * nothing. See that constant: raising the count was tried against a measured
+   * baseline and made the game measurably worse.
    */
   function resolveCollisions() {
-    for (let pass = 0; pass < 2; pass++) {
+    for (let pass = 0; pass < RESOLVE_PASSES; pass++) {
       let hit = false;
 
       // Rooms first. A cylinder cannot approximate a wall without either
@@ -713,26 +734,53 @@ export function createPlayer(world) {
         const distSq = dx * dx + dz * dz;
         const minDist = c.r + RADIUS;
 
-        if (distSq < minDist * minDist && distSq > 1e-8) {
-          const dist = Math.sqrt(distSq);
-          const push = (minDist - dist) / dist;
-          position.x += dx * push;
-          position.z += dz * push;
+        if (distSq >= minDist * minDist) continue;
 
-          // Kill the velocity component heading into the surface, so the
-          // player slides along it instead of sticking.
-          const nx = dx / dist, nz = dz / dist;
-          const into = velocity.x * nx + velocity.z * nz;
-          if (into < 0) {
-            velocity.x -= nx * into;
-            velocity.z -= nz * into;
-          }
-          hit = true;
+        /*
+         * DEAD CENTRE USED TO MEAN NO PUSH AT ALL.
+         *
+         * The condition here was `distSq < minDist^2 && distSq > 1e-8`, so a
+         * body whose centre landed on a cylinder's axis failed the second half
+         * and was skipped - no push, no velocity kill, nothing. A player who
+         * arrived exactly there was inside that cylinder permanently, and the
+         * resolver's own answer was that there was nothing to resolve.
+         *
+         * It is rare and it is not unreachable: `teleport` puts the body at an
+         * authored coordinate, and authored coordinates are round numbers sitting
+         * on props placed at round numbers. A degenerate direction is a reason to
+         * CHOOSE one, not a reason to decline to push.
+         *
+         * The choice is deterministic - straight out along +x - because a random
+         * or time-derived direction would make the one bug in this file that is
+         * hardest to reproduce also impossible to reproduce twice.
+         */
+        let nx, nz, pen;
+        if (distSq > 1e-8) {
+          const dist = Math.sqrt(distSq);
+          nx = dx / dist; nz = dz / dist;
+          pen = minDist - dist;
+        } else {
+          nx = 1; nz = 0;
+          pen = minDist;
         }
+
+        position.x += nx * pen;
+        position.z += nz * pen;
+
+        // Kill the velocity component heading into the surface, so the
+        // player slides along it instead of sticking.
+        const into = velocity.x * nx + velocity.z * nz;
+        if (into < 0) {
+          velocity.x -= nx * into;
+          velocity.z -= nz * into;
+        }
+
+        hit = true;
       }
 
       if (!hit) break;
     }
+
 
     // Perimeter. The courtyard is a square and states one min and one max; the
     // interior is a long rectangle and states four sides. Reading both shapes

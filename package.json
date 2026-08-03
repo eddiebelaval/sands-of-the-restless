@@ -41,6 +41,9 @@
     "test:kite": "node test/kite.mjs",
     "_comment:e2e": "test/e2e.mjs is DELIBERATELY OUT of `npm test`, for the same reason kite is: it plays all twenty-five waves. It is the ONLY harness that climbs the wave ladder instead of setting it - it replaces director.forceWave and director.reset with functions that record a violation and throw, so the shortcut is mechanically unavailable rather than merely unused. test/jars.mjs proves every part of the ending and reaches wave 25 with forceWave; this proves the ladder underneath it. Run it before shipping World 1, and after any change to the director's wave or phase machinery.",
     "test:e2e": "node test/e2e.mjs",
+    "_comment:stuck": "THREE HARNESSES, AND THE ORDER MATTERS. test/stuck.mjs sweeps the quarry and the canal on a grid and reports places the body cannot walk out of - it is a CANDIDATE finder and its output is not a bug list. test/stuck-trap.mjs is the one that decides: it walks AT each candidate from open ground and then tries to walk back out, because the inside of a rock face is a place you cannot walk out of and it is not a defect. Only a place you can get INTO and not out of is a bug. test/stuck-pins.mjs re-walks a fixed coordinate list on real frames and is the A/B instrument: the sweep cannot compare a fix to a baseline because its own clustering picks the points, so a run reporting different coordinates before and after has measured two different things. All three are OUT of `npm test` - they are minutes each, and the trap test is the only one whose verdict should ever be quoted.",
+    "test:stuck": "node test/stuck.mjs",
+    "test:trap": "node test/stuck-trap.mjs",
     "test:doorlook": "node test/doorlook.mjs",
     "test:pacer": "node test/pacer.mjs",
     "test:curtainrules": "node test/curtain-rules.mjs"

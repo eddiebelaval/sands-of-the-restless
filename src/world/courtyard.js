@@ -2903,6 +2903,8 @@ export function buildCourtyard(scene) {
   // It sits on `groundY` rather than on zero because out here the floor is a
   // dune field. The interior's fixtures stand on a flat slab and can assume it;
   // nothing outside can.
+  let slotsSealed = 0;
+
   const interacts = [];
   {
     const rec = buildWallBuyFixture({
@@ -2913,9 +2915,95 @@ export function buildCourtyard(scene) {
     if (rec) { group.add(rec.group); interacts.push(rec); }
   }
 
+  /**
+   * SEAL EVERY SLOT TOO NARROW TO WALK DOWN.
+   *
+   * The owner reported corners in the quarry and the canal where you literally
+   * cannot move. `test/stuck.mjs` and `test/stuck-trap.mjs` found two that a
+   * player can walk into and not out of, and both are the same shape, measured
+   * rather than guessed:
+   *
+   *   canal  (-17.2, 17.6)  the perimeter wall reaches south to z 17.34, a prop
+   *                         row reaches north to z 17.09. A 0.25 m corridor.
+   *   quarry (17.5, -16.9)  the same sliver against the quarry's own row.
+   *
+   * The body is 0.84 m across. A 0.25 m corridor is not a passage anybody can
+   * use, so nothing is lost by making it solid - and everything is gained,
+   * because the ONE thing a sub-body-width slot can still do is swallow a
+   * player who is pushed into it by the resolver and then hold them there with
+   * geometry on both sides.
+   *
+   * This is why the fix is here and not in the collision resolver. Raising the
+   * resolver's pass count was tried against a measured baseline and made the
+   * game worse (see RESOLVE_PASSES in player/controller.js): more iterations do
+   * not free a body from a slot narrower than itself, they only push it further
+   * in. The slot is the defect. A resolver cannot fix a hole that should not
+   * exist.
+   *
+   * It runs LAST, after every builder including the quarry and the canal, so a
+   * slot formed between two systems that never knew about each other - which is
+   * exactly what both of these are - is still caught.
+   */
+  {
+    /*
+     * The gap a body needs. RADIUS is 0.42 in player/controller.js, so the body
+     * is 0.84 wide; this adds a hand's width, because a corridor exactly as wide
+     * as the player is one the player scrapes down at zero speed with both
+     * shoulders resolving every frame, which is the feel being fixed.
+     */
+    const BODY_CLEAR = 1.0;
+    const before = colliders.length;
+    const filled = [];
+
+    // Snapshot: the fills themselves must not be considered as sealing partners,
+    // or one slot begets another along its own length.
+    const src = colliders.slice();
+
+    for (let i = 0; i < src.length; i++) {
+      const a = src[i];
+      const aBase = a.y0 === undefined ? null : a.y0;
+      for (let j = i + 1; j < src.length; j++) {
+        const b = src[j];
+        const bBase = b.y0 === undefined ? null : b.y0;
+
+        // Only pairs that share vertical extent can form a slot a body walks
+        // into. Two cylinders at different storeys are not a corridor.
+        if (aBase !== null && bBase !== null) {
+          if (aBase + a.h <= bBase || bBase + b.h <= aBase) continue;
+        }
+
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const d = Math.hypot(dx, dz);
+        const gap = d - a.r - b.r;
+
+        // Overlapping already, or far enough apart to walk between: leave it.
+        if (gap <= 0 || gap >= BODY_CLEAR) continue;
+
+        const base = aBase === null || bBase === null ? undefined : Math.max(aBase, bBase);
+        const top = aBase === null || bBase === null
+          ? Math.min(a.h, b.h)
+          : Math.min(aBase + a.h, bBase + b.h) - base;
+        if (top <= 0.5) continue;   // a shin-high sliver is not a trap
+
+        filled.push({
+          x: a.x + (dx / d) * (a.r + gap / 2),
+          z: a.z + (dz / d) * (a.r + gap / 2),
+          r: gap / 2 + 0.06,        // reaches both faces with a little to spare
+          h: top,
+          y0: base,
+        });
+      }
+    }
+
+    for (const f of filled) addCollider(f.x, f.z, f.r, f.h, f.y0);
+    slotsSealed = colliders.length - before;
+  }
+
   return {
     group,
     colliders,
+    /** How many sub-body-width slots the sealer closed. Read by test/stuck-trap.mjs. */
+    slotsSealed,
     braziers,
     /** What the merge actually did, for the harness and for the record. */
     batched,
