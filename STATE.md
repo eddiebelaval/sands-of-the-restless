@@ -79,6 +79,75 @@ remembering - **a window closed too early and a beat that genuinely died produce
 identical evidence.** `litVia` is what tells them apart, and the run reports
 `"cut"`.
 
+### THE DEAD ARE SOLID - BUILT 2026-08-03
+
+Owner: "the zombies need to be solid objects so that we can't walk through
+them." They were not, and not because a test was failing: `resolveCollisions`
+knew about `world.colliders` and `world.walls` and had never heard of an actor.
+NOTHING TESTED IT.
+
+`player/controller.js` gains `resolveBodies()` and a `setBodies()` late-bind;
+`main.js` wires `player.setBodies(() => director.live)` after the director
+exists, because the player is built at :121 and the director at :342. A FUNCTION
+rather than an array: the director splices its pool in place, and a snapshot
+would leave a crumbled shambler holding a doorway forever.
+
+**Three calls, all reversible, all written down where they live:**
+
+- **ONE-WAY.** The horde pushes the player; the player never pushes the horde.
+  A player who could shove the dead aside would walk through a horde at walking
+  pace, which is the thing being fixed, and `mummy.js` already owns the horde's
+  own spacing solver that a second opinion from here would fight.
+- **BODIES RESOLVE BEFORE STONE**, so static geometry has the last word. The
+  horde can pin the player against a wall; it can never post them into it.
+  Measured: a shambler driving the player into the quarry face leaves collider
+  overlap 0.000.
+- **CORPSES ARE NOT SOLID.** `dying` and `dead` are skipped, so a body in its
+  topple is walked through. Otherwise a kill the player already earned keeps
+  holding a doorway for the length of an animation. `mummy.js` skips the same
+  two flags in its own separation pass, so the horde and the player now agree
+  what a corpse is.
+
+**Verified by `test/solid.mjs`, 8/8, and it carries its own control** - every
+case is walked twice, once with `setBodies(null)` and once wired:
+
+    control (not solid)   closest 0.015   walks straight through
+    solid                 closest 0.766   stopped at the 0.780 radius
+    corpse                closest 0.025   walks straight through
+    contact damage        16 hp taken     pinned overlap 0.000
+
+**The regression that was NOT there:** contact damage fires at 2.57 m and the
+body stops at 0.78 m, so making the horde solid cannot starve the attack. That
+margin is the thing to re-measure if `attackRange`, the actor radius or the
+player radius ever move - a solid body that cannot reach you is this fix wearing
+a costume.
+
+**`kite` and `enemies` both pass, and the entry room is untouched**: all four
+laps reached at 0-3 per cent corked, so the owner's original "hard to run from
+enemies in such a small space" is NOT re-broken by solid bodies.
+
+**A BASELINE WAS RUN BEFORE BELIEVING THE SCARY NUMBER.** The solid run showed
+two of four Great Gallery laps failing at 80 and 92 per cent corked, which reads
+as the horde pinning the player in the biggest room in the game. It is not.
+`kite` with bodies UNWIRED fails two of four gallery laps as well, and
+`gallery lap E` returns 3.1 m at 92 per cent in BOTH runs, identical to the
+decimal. It is deterministic because it is a COLUMN: a 0.5 m gallery pillar
+centred at `(14, -166)`, and kite holds W in a straight line into it. A
+straight-line probe walking into a pillar is a limitation of the probe, not a
+defect in the room.
+
+**Two of my own errors on this build, both the same shape as the stuck-corner
+ones:** the first three runs of `solid.mjs` were staged at `(30, 5)`, which
+`stuck-pins` had already reported as carrying a collider and which measures
+MINUS 0.80 m clearance - the player stands inside stone, so every reading was
+the static resolver rather than the zombie, and the corpse case "failed" because
+the thing holding the player was never the corpse. And a "corpse coming back to
+life" was the actor POOL recycling the object into the next spawn, not a bug.
+
+**Known and NOT this change's to fix:** `kite` runs its chamber laps while the
+wave is still spawning (6-14 live) and its gallery laps at the full cap (24), so
+`chamberCork <= galleryCork + 20` is a softer check than it reads. Pre-existing.
+
 ### THE STUCK CORNERS - FIXED 2026-08-03
 
 Owner: "theres a few corners where we get stuck, like litereqally cant move."

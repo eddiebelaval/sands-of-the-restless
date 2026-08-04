@@ -127,6 +127,17 @@ const STEP_UP = 0.65;
 const RESOLVE_PASSES = 2;
 
 /**
+ * How tall a standing actor is, for the "are we on the same storey" test.
+ *
+ * Repeated from `enemies/director.js`'s `actorHeight: 2`, on the same terms
+ * STEP_UP above is repeated from build.js: what matters is that they agree, and
+ * a comment naming the other is a cheaper coupling than an import that makes the
+ * body depend on the director's private numbers - especially when the body is
+ * built two hundred lines before the director exists.
+ */
+const ACTOR_HEIGHT = 2;
+
+/**
  * ---------------------------------------------------------------------------
  * THE SLIDE
  * ---------------------------------------------------------------------------
@@ -655,6 +666,96 @@ export function createPlayer(world) {
   }
 
   /**
+   * The live horde, as a PROVIDER rather than a list.
+   *
+   * Late-bound because main.js builds the player at :121 and the director at
+   * :342, so no constructor argument could have carried it. A function rather
+   * than an array because the director owns a pool and splices it in place: a
+   * snapshot taken once at wiring time goes stale the first time an actor is
+   * retired, and a body that had already crumbled would go on holding a doorway
+   * forever with nothing on screen to explain it.
+   */
+  let bodies = null;
+
+  /**
+   * Push the player out of any LIVING actor they have entered.
+   *
+   * ONE-WAY, and that is the whole feel decision. The actor is never moved. A
+   * player who could shove the dead aside would walk through a horde at walking
+   * pace, which is the thing being fixed; and the horde already has a solver for
+   * its own spacing - the `sepRadius` steering in enemies/mummy.js - that a
+   * second opinion from here would fight.
+   *
+   * THE DYING ARE NOT SOLID. `dying` and `dead` are skipped, so a corpse in its
+   * topple, its lie or its crumble is walked straight through. The alternative
+   * is a killed shambler that keeps holding a doorway for the length of its
+   * death animation, which reads as the game taking back a kill it already gave.
+   * enemies/mummy.js's separation pass skips the same two flags for the same
+   * reason, so the horde and the player now agree about what a corpse is.
+   */
+  function resolveBodies() {
+    const live = bodies();
+    if (!live || !live.length) return false;
+
+    const feet = position.y - EYE_HEIGHT;
+    let hit = false;
+
+    for (const a of live) {
+      if (!a || a.live === false || a.dying || a.dead) continue;
+
+      /*
+       * Vertical test, so a shambler on the gallery bridge is not an invisible
+       * pillar to somebody standing six metres beneath it. Exactly the defect
+       * the collider base test grew its missing half for, and the same fix.
+       */
+      const af = a.feetY ?? a.position.y ?? 0;
+      if (af - feet > state.eyeHeight) continue;
+      if (feet - af > ACTOR_HEIGHT) continue;
+
+      const dx = position.x - a.position.x;
+      const dz = position.z - a.position.z;
+      const distSq = dx * dx + dz * dz;
+      /*
+       * `a.scale` FIRST, because it is the number the mesh is drawn at.
+       *
+       * A shambler's scale is its authored `spec.scale` times its own asymmetry
+       * jitter, resolved once at build so the spawn path and the crumble agree.
+       * enemies/mummy.js's own world collision reads `spec.scale` and therefore
+       * misses the jitter, which is a pre-existing inconsistency and not this
+       * change's to settle - but the PLAYER must agree with what is on screen,
+       * or the body stops a hand's width from a silhouette it never touched.
+       * The boss carries no resolved scale, so it falls through to its spec.
+       */
+      const minDist = RADIUS + (a.radius ?? 0.42) * (a.scale ?? a.spec?.scale ?? 1);
+      if (distSq >= minDist * minDist) continue;
+
+      let nx, nz, pen;
+      if (distSq > 1e-8) {
+        const d = Math.sqrt(distSq);
+        nx = dx / d; nz = dz / d;
+        pen = minDist - d;
+      } else {
+        // Dead centre. Same reasoning as the cylinder resolver: a degenerate
+        // direction is a reason to CHOOSE one, not a reason to decline to push.
+        nx = 1; nz = 0;
+        pen = minDist;
+      }
+
+      position.x += nx * pen;
+      position.z += nz * pen;
+
+      const into = velocity.x * nx + velocity.z * nz;
+      if (into < 0) {
+        velocity.x -= nx * into;
+        velocity.z -= nz * into;
+      }
+      hit = true;
+    }
+
+    return hit;
+  }
+
+  /**
    * Push the player out of any cylinder they have entered.
    *
    * Iterates up to RESOLVE_PASSES times and breaks the instant a pass finds
@@ -664,6 +765,18 @@ export function createPlayer(world) {
   function resolveCollisions() {
     for (let pass = 0; pass < RESOLVE_PASSES; pass++) {
       let hit = false;
+
+      /*
+       * THE DEAD ARE SOLID, AND THEY RESOLVE FIRST SO THAT STONE STILL WINS.
+       *
+       * Bodies before walls and cylinders, deliberately. A shambler pressing the
+       * player against a wall must not be able to push them THROUGH it, and the
+       * only ordering that guarantees it is the one where static geometry
+       * resolves LAST and therefore has the final say on where the body ends up.
+       * The horde can pin the player against stone. It can never post them into
+       * it.
+       */
+      if (bodies) hit = resolveBodies() || hit;
 
       // Rooms first. A cylinder cannot approximate a wall without either
       // leaking at the corners or eating the doorway, so the interior hands
@@ -883,6 +996,16 @@ export function createPlayer(world) {
     position,
     velocity,
     update,
+
+    /**
+     * Hand the body the live horde. See `bodies` above for why it is a function.
+     *
+     * Optional on purpose: every harness that drives this controller without a
+     * director - and most of them do - simply never calls it, and the body keeps
+     * the behaviour it had before the dead were solid. Passing null turns it
+     * back off, which is what makes an A/B of this feature possible at all.
+     */
+    setBodies(fn) { bodies = typeof fn === 'function' ? fn : null; },
 
     damage(n) {
       state.health = Math.max(0, state.health - n);

@@ -347,6 +347,18 @@ function boot() {
 
   combat.attach({ director });
 
+  /*
+   * THE DEAD ARE SOLID.
+   *
+   * Wired here rather than handed to createPlayer, because the player is built
+   * two hundred lines above this and the director does not exist yet at that
+   * point. `director.live` is an array the director splices IN PLACE, so the
+   * body is given a reader of it rather than a copy: a copy would go stale the
+   * first time an actor was retired and leave a crumbled shambler holding a
+   * doorway forever, with nothing on screen to explain it.
+   */
+  player.setBodies(() => director.live);
+
   /**
    * THE KHOPESH.
    *
