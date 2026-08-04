@@ -285,10 +285,34 @@ removed is a bug that is never fixed.
    sentence. 63 chars, 4.20 s, 0.30 s of room - the widest margin of the six
    candidates timed. All five lines now clear Normal AND Hard.
 
-2. **The gatekeeper's two words are the lane's pick, not the owner's.**
-   STORY-DELIVERY lists the string under NOT DECIDED HERE. Six two-word lines
-   rotate by death count, `NOT YET` always first; `setAnswer(null)` withholds
-   them for World 3's last card. Overruling it is one array.
+2. **RESOLVED 2026-08-04. The gatekeeper's two words are RATIFIED.**
+
+       NOT YET · STAND UP · GO DEEPER · NOT FINISHED · MINE STILL · WALK AGAIN
+
+   Rotating by death count, `NOT YET` always first because it is the one every
+   player meets; `setAnswer(null)` still withholds them for World 3's last card,
+   whose whole trick is that the words do not arrive.
+
+   **The rule that settled it: HE IS NOT KIND.** `NARRATIVE.md` has him standing
+   the corpse up "because he needs it to reach the bottom", telling the player
+   nothing ever, and at the end throwing him through the gate for being what the
+   OTHER power made him - the being who has been standing him up for three worlds
+   is the one holding the list he is on. `COME BACK` was the lane's original pick
+   and was cut as the only warm line in the set: it implies he misses the player,
+   and that the player went somewhere, which muddles which power owns the death
+   loop. `GO DEEPER` is the one thing the narrative says he actually wants.
+   `MINE STILL` is load-bearing - a claim of possession on the most-read text in
+   the game, and what makes the ending a betrayal rather than a twist.
+
+   **All six are now RENDERED in the harness, not just declared.** `pacer.mjs`
+   only ever exercised slots 0 and 1, which left four of his lines written and
+   never drawn - this project's single most repeated defect. It now walks the
+   whole rotation with real Enter presses (`state.resets` moves only on the
+   CONFIRM) and measures the laid-out box of each, because a word that is
+   assigned but not painted has width zero:
+
+       NOT YET 84x13   STAND UP 97x13   GO DEEPER 110x13
+       NOT FINISHED 141x13   MINE STILL 115x13   WALK AGAIN 122x13
 
 ### INSTANCE TWELVE of "written but never rendered" - FIXED 2026-08-02
 

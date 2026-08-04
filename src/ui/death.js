@@ -241,23 +241,41 @@ const ARM_AFTER = 0.55;
  *     project is also one of the first.
  *
  * ---------------------------------------------------------------------------
- * THE STRINGS ARE A CALL AND THEY ARE THE OWNER'S, NOT THIS FILE'S
+ * THE STRINGS ARE THE OWNER'S, AND AS OF 2026-08-04 THEY ARE RATIFIED
  * ---------------------------------------------------------------------------
  *
- * `docs/STORY-DELIVERY.md` NOT DECIDED HERE names the words as the owner's,
- * and prices the span rather than the string. So what ships is a pick, made so
- * the beat exists rather than waiting on a decision, and it is one edit to
- * overrule: replace this array, or call `setAnswer()` at runtime.
+ * `docs/STORY-DELIVERY.md` NOT DECIDED HERE named the words as the owner's and
+ * priced the span rather than the string. The owner has now taken the call, so
+ * this array is a decision and not a placeholder. It stays one edit to change:
+ * replace it, or call `setAnswer()` at runtime.
  *
- * The pick, and the rule behind it: every line is two words, none of them is a
- * sentence, and every one of them DISAGREES WITH THE VERDICT rather than
- * explaining it. UNWORTHY, says the tomb. Not yet, says something else.
+ * THE RULE. Every line is two words, none of them is a sentence, and every one
+ * DISAGREES WITH THE VERDICT rather than explaining it. UNWORTHY, says the
+ * tomb. Not yet, says something else.
+ *
+ * AND THE RULE UNDER THAT ONE, which is what settled the last slot: HE IS NOT
+ * KIND. `docs/NARRATIVE.md` is explicit - the gatekeeper stands the corpse up
+ * "because he needs it to reach the bottom", he tells the player nothing ever,
+ * and at the end he throws him through the gate for being what the OTHER power
+ * made him. The being who has been standing him up for three worlds is the one
+ * holding the list he is on.
+ *
+ * So these are a user's words, not a friend's. `COME BACK` shipped here first
+ * and was cut for exactly that: it is the only warm line in the set, it implies
+ * he misses the player, and it implies the player went somewhere - which muddles
+ * which of the two powers owns the death loop. `GO DEEPER` replaced it because
+ * it is the one thing the narrative says he actually wants, in an announcer's
+ * register with no comfort in it.
+ *
+ * `MINE STILL` is the load-bearing line. It is a claim of possession, made on
+ * the most-read text in the game, and it is what turns the ending into a
+ * betrayal rather than a twist.
  *
  * They rotate by death count rather than at random, so a second-run player can
  * name what the card said on their fourth death, and NOT YET is always first
  * because it is the one every player meets.
  */
-const ANSWER = ['NOT YET', 'STAND UP', 'COME BACK', 'NOT FINISHED', 'MINE STILL', 'WALK AGAIN'];
+const ANSWER = ['NOT YET', 'STAND UP', 'GO DEEPER', 'NOT FINISHED', 'MINE STILL', 'WALK AGAIN'];
 
 /**
  * When the answer arrives, in seconds after the card lands.

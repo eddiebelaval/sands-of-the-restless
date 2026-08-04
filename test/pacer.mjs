@@ -905,7 +905,48 @@ const card2 = await page.evaluate(async () => {
 });
 await page.screenshot({ path: `${OUT}pacer-08-death-second.png`, timeout: 120000 });
 
+
+/**
+ * EVERY SLOT IN THE ROTATION, RENDERED AND MEASURED.
+ *
+ * The two deaths above only ever exercise slots 0 and 1. That left four of the
+ * gatekeeper's six lines written and never once drawn - which is this project's
+ * single most repeated defect, thirteen confirmed instances of something set in
+ * source and never rendered, and the reason `GO DEEPER` at slot 2 could have
+ * shipped as a string nobody had seen.
+ *
+ * So this walks the whole rotation with real Enter presses, because
+ * `state.resets` only moves on the CONFIRM and nothing else advances the index,
+ * and it reads the LAID-OUT BOX rather than the string. A word that is assigned
+ * but not painted has width zero.
+ */
+const rotation = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+  const frames = async (n) => { for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r)); };
+  const rows = [];
+  for (let i = 0; i < 6; i++) {
+    g.combat.state.invulnerable = false;
+    g.player.state.health = 9;
+    g.combat.damagePlayer(60, g.player.position.x, g.player.position.z);
+    await frames(45);
+    const st = g.death.stats();
+    rows.push({ resets: st.resets, word: st.answerFull, w: st.answerBox.w, h: st.answerBox.h });
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Enter', bubbles: true }));
+    await frames(30);
+    g.player.heal(999);
+    await frames(5);
+  }
+  return rows;
+});
+
 await browser.close();
+
+console.log('\n--- the gatekeeper, every slot ---');
+for (const r of rotation) {
+  console.log(`  reset ${String(r.resets).padStart(2)}  ${JSON.stringify(r.word).padEnd(16)} ${r.w}x${r.h} px`);
+}
+
 
 // ---------------------------------------------------------------------------
 // report
@@ -988,6 +1029,7 @@ say('groan (horde)', codec.groan);
 console.log('--- 7. the death card ---');
 for (const [k, v] of Object.entries(card)) say(k, v);
 say('second death', card2);
+
 
 console.log('--- shots ---');
 for (const f of ['00-empty-control', '01-system-uppercase', '02-her-midreveal',
@@ -1122,6 +1164,12 @@ const checks = {
   'the tomb counts erasures':      /ERASED 01 TIME$/.test(card.epitaph),
   'the count moves':               /ERASED 02 TIMES$/.test(card2.epitaph),
   'the answer rotates':            card2.answer !== card.answer,
+  'all six of his lines are distinct':
+    new Set(rotation.map((r) => r.word)).size === 6,
+  'and every one of them was LAID OUT, not just assigned':
+    rotation.every((r) => r.w > 40 && r.h > 6),
+  'none of them is a sentence':
+    rotation.every((r) => r.word.split(/\s+/).length <= 2 && !/[.!?]$/.test(r.word)),
 
   'no console errors':             errs.length === 0,
 };

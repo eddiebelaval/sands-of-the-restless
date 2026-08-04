@@ -525,7 +525,16 @@ room he is standing in.
 
 - **Where her lamp sits in Act 3 so the horde flows past it.** Map lane, per
   `WORLD-1-MAP-SCOPE.md` beat 27.
-- **The two words on the death card.** The gatekeeper's entire characterisation
-  in World 1. Owner's. This document prices the span, not the string.
+- **The two words on the death card. DECIDED 2026-08-04, and no longer open.**
+  `NOT YET / STAND UP / GO DEEPER / NOT FINISHED / MINE STILL / WALK AGAIN`,
+  rotating by death count with `NOT YET` always first. The rule that settled
+  them: he is NOT KIND. `NARRATIVE.md` has him standing the corpse up "because
+  he needs it to reach the bottom", telling the player nothing ever, and at the
+  end throwing him through the gate for being what the other power made him.
+  `COME BACK` was the first pick and was cut as the only warm line in the set -
+  it implies he misses the player, and that he went somewhere, which muddles
+  which power owns the death loop. `GO DEEPER` is the one thing he actually
+  wants. `MINE STILL` is load-bearing: a claim of possession on the most-read
+  text in the game, which is what makes the ending a betrayal and not a twist.
 - **The four-jar chain's API.** In flight in another lane. Items C and H attach at
   one call site each and assume nothing else about it.
