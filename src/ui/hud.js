@@ -1137,6 +1137,7 @@ export function createReadouts(root = document) {
   const healthPlate = q('#r-health');
   const goldEl = q('[data-gold]');
   const waveEl = q('[data-wave]');
+  const depthEl = q('[data-depth]');
   const ammoEl = q('#r-ammo');
   const magEl = q('[data-mag]');
   const reserveEl = q('[data-reserve]');
@@ -1151,7 +1152,7 @@ export function createReadouts(root = document) {
 
   const painted = {
     health: null, healthFrac: null, hurt: null,
-    gold: null, wave: null,
+    gold: null, wave: null, depth: null,
     mag: null, reserve: null, weapon: null, slot: null,
     empty: null, reloading: null, canReload: null, renewed: null,
     fps: null, boss: null,
@@ -1221,6 +1222,26 @@ export function createReadouts(root = document) {
     if (s.wave !== painted.wave) {
       painted.wave = s.wave;
       if (waveEl) waveEl.textContent = s.wave;
+    }
+
+    /*
+     * --- depth ---------------------------------------------------------------
+     *
+     * METRES BELOW THE SAND, and it is a live position rather than a record.
+     * BUILD 9 in the map scope says "derived from the deepest room reached
+     * rather than from the wave"; the important half of that is the second one -
+     * a depth faked off the wave number is a progress bar wearing a gauge's
+     * clothes. Live position is chosen over deepest-reached because the job is
+     * navigation, not score: a number that only ever goes up cannot tell the
+     * player they have walked back up a ramp.
+     *
+     * Rounded to whole metres. The dunes outside vary by tens of centimetres and
+     * a readout that flickers between 0 and 1 crossing a courtyard is noise on
+     * the one axis this is trying to make legible.
+     */
+    if (s.depth !== painted.depth) {
+      painted.depth = s.depth;
+      if (depthEl) depthEl.textContent = `${s.depth}M`;
     }
 
     // --- ammunition ---------------------------------------------------------

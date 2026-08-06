@@ -144,6 +144,59 @@ const stillFrames = await page.evaluate(async () => {
 const still = await shotPair('control-no-target');
 
 // ---------------------------------------------------------------------------
+// 3. depth is legible: the HUD reads it, the map draws it
+// ---------------------------------------------------------------------------
+//
+// This map is 132 m long and 6 m deep and, until 2026-08-06, expressed depth
+// NOWHERE in the interface - no readout, and a minimap with one incidental
+// mention of `base` in the whole file. A two-level building the player navigates
+// as a flat sprawl is the reason four rooms of jars were hard to hold in the
+// head. Both halves are checked here, and the contour half is checked against a
+// CONTROL that flattens every room to the datum: a contour that is coded and
+// never reached cannot change the canvas.
+
+const depths = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+  const settle = async (x, z) => {
+    const y = g.world.heightAt(x, z);
+    g.player.teleport({ x, y, z });
+    for (let i = 0; i < 220; i++) {
+      g.player.update(1 / 60, { forward: 0, strafe: 0, sprint: false, jump: false }, 0);
+      if (g.player.state.grounded) break;
+    }
+    await window.__G__.frames(8);
+  };
+  const read = () => ({
+    hud: (document.querySelector('[data-depth]') || {}).textContent,
+    label: (document.getElementById('map-room') || {}).textContent,
+    feet: +(g.player.position.y - 1.68).toFixed(2),
+  });
+  const out = {};
+  g.spaces.enter('interior', { x: 0, z: -149, rot: 0 }); await settle(0, -149);
+  out.act2 = read();
+  g.spaces.enter('interior', { x: 14, z: -266, rot: 0 }); await settle(14, -266);
+  out.act3 = read();
+  return out;
+});
+
+const flatDiff = await (async () => {
+  const before = await page.screenshot({ clip: mapBox });
+  const lowered = await page.evaluate(async () => {
+    const g = window.__SANDS__;
+    let n = 0;
+    for (const r of g.spaces.interior.rooms) { if (r.base < 0) n++; r.base = 0; }
+    await window.__G__.frames(10);
+    return n;
+  });
+  const after = await page.screenshot({ clip: mapBox });
+  const A = await sharp(before).greyscale().raw().toBuffer();
+  const B = await sharp(after).greyscale().raw().toBuffer();
+  let sum = 0; const n = Math.min(A.length, B.length);
+  for (let i = 0; i < n; i++) sum += Math.abs(A[i] - B[i]);
+  return { lowered, diff: +(sum / n).toFixed(3) };
+})();
+
+// ---------------------------------------------------------------------------
 // 3. the ladder puts the mandatory step above the optional one
 // ---------------------------------------------------------------------------
 
@@ -171,17 +224,27 @@ const checks = {
     pulsing > 0.05,
   'CONTROL: with no target the same canvas is still':
     still < pulsing * 0.5,
+  'the HUD reads 0M on the datum':
+    depths.act2.hud === '0M' && Math.abs(depths.act2.feet) < 0.5,
+  'and 6M on the lower storey':
+    depths.act3.hud === '6M' && Math.abs(depths.act3.feet + 6) < 0.5,
+  'the map labels the room with its depth':
+    /\d+m down/.test(depths.act3.label || '') && !/m down/.test(depths.act2.label || ''),
+  'the storey contours are PAINTED (flattening the map changes it)':
+    flatDiff.lowered > 0 && flatDiff.diff > 0.02,
   'no console errors':
     errors.length === 0,
 };
 
 writeFileSync(`${OUT}guide-report.json`,
-  JSON.stringify({ fetching, returning, pulsing, still, order, errors }, null, 1));
+  JSON.stringify({ fetching, returning, pulsing, still, depths, flatDiff, order, errors }, null, 1));
 
 console.log(`empty-handed   ${JSON.stringify(fetching.panel)}`);
 console.log(`carrying       ${JSON.stringify(returning.panel)}`);
 console.log('');
 console.log(`map diff pulsing ${pulsing}   control ${still}`);
+console.log(`depth  act2 ${depths.act2.hud} "${depths.act2.label}"   act3 ${depths.act3.hud} "${depths.act3.label}"`);
+console.log(`storey contours: flattening ${flatDiff.lowered} rooms changes the map by ${flatDiff.diff}`);
 console.log('');
 
 let failed = 0;

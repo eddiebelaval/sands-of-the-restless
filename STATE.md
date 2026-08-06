@@ -79,6 +79,65 @@ remembering - **a window closed too early and a beat that genuinely died produce
 identical evidence.** `litVia` is what tells them apart, and the run reports
 `"cut"`.
 
+### DEPTH IS A DIMENSION NOW - 2026-08-06
+
+The owner sent a design diagram: a TEMPLE/DUNGEON drawn as a tall stack of thin
+floors, beside a TOWN drawn as one wide flat plane with landmarks and a winding
+path. "our map should feel like this."
+
+**He is right, and the measurement says the gap is wider than it looks:**
+
+    interior footprint   132 m long  (z -140 to -272)
+    vertical drop          6 m       (two levels, base 0 and -6)
+    ratio                 22 : 1     horizontal to vertical
+
+**The pyramid is currently shaped like the town, not the dungeon.** The exterior
+half is already right - the avenue IS the winding path, the pyramid the
+landmark, the quarry and canal the buildings off it. The interior is a second
+town: a 132 m sprawl with one incidental step, which is why four rooms of jars
+were hard to hold in the head.
+
+**What the diagram is really claiming** is not geometry, it is that each space
+gets ONE DOMINANT AXIS. A town is legible because it is all visible at once. A
+dungeon is legible because there is only ever one question: how deep am I. The
+interior had no dominant axis at all.
+
+**BUILT: the two cheapest halves, because depth existed in the geometry and was
+expressed NOWHERE in the interface** - no readout, and one incidental mention of
+`base` in the whole of `ui/minimap.js`.
+
+- **The depth readout** (BUILD 9, scoped since 08-02, unbuilt until now) sits
+  beside the wave counter: the wave is where the run is on the TIME axis, this is
+  where the player is on the SPACE axis. It reads LIVE POSITION, not
+  deepest-reached - the map scope said "derived from the deepest room reached
+  rather than from the wave" and the load-bearing half of that is the second one.
+  A depth faked off the wave number is a progress bar in a gauge's clothes; a
+  number that only goes up cannot tell the player they walked back up a ramp.
+- **Storey contours on the minimap.** A line inset inside every room below the
+  datum, ONE PER SIX METRES so a third and fourth level get two and three without
+  this code being told. Chosen over a fill or a hue because the fill already
+  carries state (current / adjacent / seen / unseen) and the panel's colour rule -
+  gold is THERE, lapis is WAITING - has no spare term for "lower". A line inside
+  a line is a step down and costs no colour.
+- **The room label carries it**: `King's Chamber . 6m down`.
+
+**Verified against controls.** The contours are proved by FLATTENING all five
+lower rooms to the datum and diffing the canvas: 0.458. Contours that were coded
+and never reached would produce identical images. `guide` 12/12, `hud`,
+`settings`, `jars` green.
+
+**NOT DONE, and the open question this makes answerable:** whether the geometry
+itself has to move. 6 m across 132 is still a ribbon with a step in it. If it
+still reads flat when played, the next move is re-basing the nine rooms across
+four or five levels - they already sit at distinct z, so extra levels cost ramps
+and ceiling-rule checks rather than a nav rewrite; the flow field's LAYERS = 2
+only bites when rooms stack over the SAME x/z, which these do not.
+
+**REFUSED, and worth writing down:** the literal tall box. Stacking rooms above
+each other breaks the two-storey cap AND fights a fact the narrative keeps on
+purpose - "the building is bigger inside than outside, and nobody mentions it".
+The diagram's LEGIBILITY is the thing to take. Its footprint is not.
+
 ### WAYFINDING, AND THE QUARRY'S INVISIBLE STONE - 2026-08-05
 
 The owner played the shipped build: "i cant find 2 of the jars... the outside

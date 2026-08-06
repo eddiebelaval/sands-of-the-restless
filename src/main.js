@@ -19,7 +19,7 @@ import { createSky } from './world/sky.js';
 import { buildCourtyard } from './world/courtyard.js';
 import { buildMaterials, applyFidelity, upgradeMaterials } from './world/materials.js';
 import { loadAssets } from './world/assets.js';
-import { createPlayer } from './player/controller.js';
+import { createPlayer, PLAYER_CONSTANTS } from './player/controller.js';
 import { createCameraRig } from './player/camera.js';
 import { createViewmodel } from './player/viewmodel.js';
 import { createWeapons, SLOTS } from './player/weapons.js';
@@ -1726,6 +1726,13 @@ function boot() {
       health: player.state.health,
       maxHealth: player.state.maxHealth,
       wave: director.state.wave,
+      /*
+       * METRES BELOW THE SAND. The feet, not the eye - a depth gauge that reads
+       * 1.68 while standing on the datum is measuring the wrong end of the body.
+       * Clamped at zero because the courtyard is a dune field and negative depth
+       * is not a thing the player can be asked to interpret.
+       */
+      depth: Math.max(0, Math.round(-(player.position.y - PLAYER_CONSTANTS.EYE_HEIGHT))),
       magazine: weapons.magazine,
       reserve: weapons.reserve,
       // The weapon's NAME, and the upgraded one once it has been through the

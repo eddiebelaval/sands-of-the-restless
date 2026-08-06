@@ -398,6 +398,39 @@ export function createMinimap({
       } else {
         rect(x0, z0, x1, z1, ink(ROLE.ground, 0.94), ink(ROLE.frame, 0.28), 1);
       }
+
+      /*
+       * THE STOREY, AS A CONTOUR.
+       *
+       * This map is 132 m long and 6 m deep and it draws in PLAN, so until now a
+       * two-level building rendered as one flat ribbon and the panel never
+       * mentioned levels at all. Act 3's five rooms sit on `base: -6` and read
+       * exactly like Act 2's four.
+       *
+       * A contour line inset inside the wall is the convention a plan already
+       * has for elevation, and it is chosen over a fill or a hue for two
+       * reasons: the fill is already carrying the state (current, adjacent,
+       * seen, unseen) and a second meaning on the same channel is a channel that
+       * says neither, and the panel's colour rule - gold is a thing that is
+       * THERE, lapis is a thing that is WAITING - has no spare term for "lower".
+       * A line inside a line is a step down, and it costs no colour at all.
+       *
+       * Drawn per SIX METRES rather than per room, so a map that later grows a
+       * third and fourth level gets two and three lines without this code being
+       * told about them.
+       */
+      const base = room.base || 0;
+      if (base < 0) {
+        const steps = Math.min(4, Math.round(-base / 6));
+        for (let i = 1; i <= steps; i++) {
+          const g = 1.6 * i;
+          ctx.beginPath();
+          ctx.rect(px(x0) + g, py(z0) + g, px(x1) - px(x0) - g * 2, py(z1) - py(z0) - g * 2);
+          ctx.strokeStyle = ink(ROLE.frame, 0.30);
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+        }
+      }
     }
   }
 
@@ -982,7 +1015,17 @@ export function createMinimap({
     frame();
 
     const room = roomsById.get(current);
-    const name = room ? room.name : 'The Pyramid';
+    /*
+     * The name, and how far down it is. Depth is on the HUD too, beside the
+     * wave, but it belongs here as well for a different reason: there it is
+     * where the PLAYER is, and here it is what the ROOM is. A player reading
+     * KING'S CHAMBER . 6M DOWN learns a fact about the map that survives them
+     * walking back out of it.
+     */
+    const depth = room && room.base < 0 ? Math.round(-room.base) : 0;
+    const name = room
+      ? (depth ? `${room.name} · ${depth}m down` : room.name)
+      : 'The Pyramid';
     if (roomLabel && roomLabel.textContent !== name) roomLabel.textContent = name;
 
     state.painted++;

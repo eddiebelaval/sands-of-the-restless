@@ -1056,7 +1056,11 @@ check(new Set(progression.map((p) => p.text)).size >= 8,
              label: document.getElementById('map-room').textContent };
   });
   check(b.room === 'star-shaft', 'minimap: follows a second transition', String(b.room));
-  check(b.label === 'Star Shaft', 'minimap: relabels', b.label);
+  // The label carries the room's STOREY as of 2026-08-06 - "Star Shaft . 6m
+  // down" - because a 132 m by 6 m building that never mentions levels reads as
+  // a flat sprawl. Asserted by prefix so the depth suffix is free to change
+  // without this check pinning a defect the way stages e and f once did.
+  check(b.label.startsWith('Star Shaft'), 'minimap: relabels', b.label);
 }
 
 // --- the highlight MOVES, in pixels ------------------------------------------
