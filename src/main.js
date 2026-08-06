@@ -446,6 +446,10 @@ function boot() {
   const objectives = createObjectives({
     spaces, interior: spaces.interior, doors, economy, power, shrines,
     altar, weapons, interacts, director, player,
+    // The jar chain, so the ladder can point at the jar the player still has to
+    // FETCH rather than at the room the jars eventually go in. See the `jars`
+    // rung in ui/objective.js.
+    jars,
   });
 
   const objectivePanel = createObjectivePanel(
@@ -456,6 +460,8 @@ function boot() {
     roomLabel: document.getElementById('map-room'),
     spaces, interior: spaces.interior, doors, interacts, shrines,
     mysterybox, power, economy, director, rig, player,
+    // For the breathing target ring. See `ring()` in ui/minimap.js.
+    jars,
   });
 
   // The map asks the armoury one question - do you own this - and is given a

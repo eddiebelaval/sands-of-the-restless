@@ -88,7 +88,7 @@ const BLOCKS = [
 export function buildQuarry(ctx) {
   const {
     group, M, DENSITY, stone, slabMesh,
-    addCollider, addWallRun, fillMass, addDeck, groundY, rand,
+    addCollider, addWallRun, fillMass, addDeck, groundY, rand, FILL_R,
   } = ctx;
 
   const g = new THREE.Group();
@@ -315,7 +315,26 @@ export function buildQuarry(ctx) {
     collar.rotation.y = b.yaw;
     g.add(collar);
 
-    fillMass(b.x, b.z, b.w, b.d, b.h - 0.2, 0);
+    /*
+     * SEAL TO THE STONE, NOT HALF A RADIUS PAST IT.
+     *
+     * `fillMass` overhangs the footprint it is given by FILL_R/2 on every side,
+     * and its own comment says that is the wrong default "where the stone has a
+     * face the player is meant to walk right up to and past". Four blocks
+     * standing in the middle of a quarry floor are nothing BUT such faces: this
+     * is the space the player runs a circuit in, and the circuit goes around
+     * these.
+     *
+     * Measured before the change: the four blocks show 152 m2 of stone and
+     * sealed 227 - 74.5 m2 of collision with nothing in it, against a quarry
+     * whose largest connected run of open floor was 374 m2. A fifth of the
+     * runnable space was invisible. The owner played it and said the quarry was
+     * a mess to run in.
+     *
+     * The west terrace in courtyard.js has subtracted FILL_R since it was
+     * written, for exactly this reason. This is the same call.
+     */
+    fillMass(b.x, b.z, b.w - FILL_R, b.d - FILL_R, b.h - 0.2, 0);
 
     // A wedge or two abandoned in the cut. Small, and against the block where
     // they cannot be walked into.

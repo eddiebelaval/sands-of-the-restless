@@ -93,7 +93,7 @@ function tint(n, alpha) {
 
 export function createMinimap({
   canvas, roomLabel, spaces, interior, doors, interacts, shrines,
-  mysterybox, power, economy, director, rig, player,
+  mysterybox, power, economy, director, rig, player, jars,
 }) {
   if (!canvas) return { update() {}, paint() {}, get state() { return null; } };
 
@@ -672,11 +672,16 @@ export function createMinimap({
      * outline, and the map reads as four golds crossing from one column to the
      * other over the course of an act.
      */
+    const target = jars && jars.nextTarget
+      ? jars.nextTarget(spaces.roomId ? 'interior' : 'exterior')
+      : null;
+
     for (const rec of fixtures()) {
       if (rec.type !== 'canopic-jar' || !mine(rec)) continue;
       dot(rec.x, rec.z, 2.6,
         rec.taken ? null : HOT,
         rec.taken ? LAPIS_LIT : ink(PIGMENT.linen, 0.9));
+      if (target && target.kind === 'take' && target.id === rec.id) ring(rec.x, rec.z);
     }
 
     for (const rec of fixtures()) {
@@ -692,6 +697,10 @@ export function createMinimap({
       ctx.strokeStyle = full ? ink(PIGMENT.linen, 0.9) : LAPIS_LIT;
       ctx.lineWidth = 1;
       ctx.stroke();
+      // Carrying one, EVERY empty socket is a valid answer - the niche handler
+      // accepts any of them - so every empty socket breathes rather than the map
+      // inventing a preference the puzzle does not have.
+      if (!full && target && target.kind === 'give') ring(rec.x, rec.z);
     }
 
     // --- the Kindling -------------------------------------------------------
@@ -907,6 +916,37 @@ export function createMinimap({
   // frame
   // ---------------------------------------------------------------------------
 
+  /** Seconds, free-running, for the target pulse. */
+  let pulse = 0;
+
+  /**
+   * THE NEXT STEP, BREATHING.
+   *
+   * The owner played the build and could not find two of the four jars. The map
+   * was already drawing them - but a static gold dot among a dozen other gold
+   * marks is a thing you find only if you are already looking for it, and the
+   * objective panel never named the room.
+   *
+   * So the CURRENT target gets a ring that breathes. One at a time, never a
+   * field of them: a map where four things pulse is a map where nothing does.
+   * The ring is drawn OUTSIDE the glyph and never fills it, so the colour rule
+   * the rest of the panel runs on - gold is a thing that is there, lapis is a
+   * thing that is waiting - is not renegotiated by the pulse sitting on top.
+   *
+   * 1.6 seconds is a slow breath rather than a blink. A fast pulse reads as an
+   * alarm, and nothing about fetching a jar is an emergency.
+   */
+  function ring(x, z) {
+    const t = (pulse % 1.6) / 1.6;
+    const grow = Math.sin(t * Math.PI);          // 0 -> 1 -> 0, no sawtooth jump
+    const a = px(x), b = py(z);
+    ctx.beginPath();
+    ctx.arc(a, b, 4.2 + grow * 4.0, 0, Math.PI * 2);
+    ctx.strokeStyle = ink(PIGMENT.linen, 0.10 + (1 - grow) * 0.55);
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+  }
+
   function paint() {
     resize();
     if (!W || !H) return state;
@@ -958,6 +998,9 @@ export function createMinimap({
    * different rate than the game it is describing.
    */
   function update(dt) {
+    // A clock that keeps running through the paint throttle, so the pulse below
+    // breathes at its own rate rather than at the map's refresh rate.
+    pulse += dt;
     since += dt;
     if (since < 1 / HZ) return state;
     since = 0;

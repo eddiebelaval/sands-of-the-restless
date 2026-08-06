@@ -55,7 +55,7 @@ const CROSS_VERB = {
  */
 export function createObjectives({
   spaces, interior, doors, economy, power, shrines, altar,
-  weapons, interacts, director, player,
+  weapons, interacts, director, player, jars,
 }) {
   // ---------------------------------------------------------------------------
   // the graph
@@ -364,10 +364,33 @@ export function createObjectives({
          * The only thing left in the world is the puzzle, so the panel says so.
          */
         if (doors.state.jarsReturned < 4) {
+          // Same correction as the `power` rung below: name the jar and the room
+          // it is in, rather than sending the player to the niches they have
+          // nothing to put in yet.
+          const from2 = here();
+          const rank2 = (j) => {
+            if (!from2 || !j.room) return Number.MAX_SAFE_INTEGER;
+            const r = route(from2, j.room);
+            return r ? r.cost : Number.MAX_SAFE_INTEGER;
+          };
+          const t = jars && jars.nextTarget
+            ? jars.nextTarget(spaces.roomId ? 'interior' : 'exterior', rank2)
+            : null;
+          const detail = `${doors.state.jarsReturned} OF 4 IN THE NICHES`;
+          if (t) {
+            const text = t.kind === 'give'
+              ? `RETURN THE JAR OF ${t.son}`
+              : `FIND THE JAR OF ${t.son}`;
+            if (t.space === 'exterior' && spaces.roomId) {
+              return { id: 'jars', text, detail,
+                where: 'OUTSIDE, AT THE FOOT OF THE PYRAMID', cost: 0, travel: true };
+            }
+            return toward(t.room, { id: 'jars', text, detail, cost: 0 });
+          }
           return toward('embalming-chamber', {
             id: 'jars',
             text: 'RETURN THE SONS OF HORUS',
-            detail: `${doors.state.jarsReturned} OF 4 IN THE NICHES`,
+            detail,
             cost: 0,
           });
         }
@@ -450,6 +473,20 @@ export function createObjectives({
 
     // ---- 4. the machine -----------------------------------------------------
     //
+    // A REORDER WAS TRIED ON 2026-08-05 AND REVERTED, which is worth recording
+    // because the argument for it is good and it is still wrong. `arm` above
+    // needs a wall-bought weapon to be done, so a pistol-only player never
+    // satisfies it and never sees this rung - and the jars gate COMPLETING
+    // World 1 while a wall gun only gates comfort.
+    //
+    // It was reverted anyway. Promoting this rung made the panel read OPEN THE
+    // WAY TO STAR SHAFT at three stages where it used to teach the player that
+    // walls sell guns, which is a documented decision above and one `test/hud.mjs`
+    // asserts at stages d, e and f. And it was not the owner's actual problem:
+    // he knew he needed four jars, he could not find WHERE they were. That is
+    // fixed below by naming the jar and its room, and on the map by the pulse.
+    // Fix the reported defect, not the one the fix made visible.
+    //
     // Everything from here to the end of the map is behind this, and it costs
     // nothing: the price is four trips.
     //
@@ -468,11 +505,77 @@ export function createObjectives({
       id: 'power',
       done: () => power.powered,
       next() {
-        const room = kindlingSlot ? kindlingSlot.room : 'embalming-chamber';
         const n = doors.state.jarsReturned;
-        return toward(room, {
+
+        /*
+         * POINT AT THE JAR, NOT AT THE NICHES.
+         *
+         * This rung used to send the player to the Embalming Chamber for the
+         * whole of the step, because that is where the niches are. It is the
+         * right answer to "where does a jar go" and the wrong answer to "what do
+         * I do now" - a player carrying nothing was being routed to a room they
+         * had no reason to stand in, and the four rooms that actually hold the
+         * jars were never named on any surface in the game.
+         *
+         * The owner played it and could not find two of four. The Star Shaft is
+         * the one that proves the point: a dead end holding a jar and a rope,
+         * which nothing routes a player through by accident.
+         *
+         * `jars.nextTarget()` answers both halves - the niches when carrying,
+         * the next jar when not - and `toward()` turns a room into a name, a
+         * route, and a barrier if the way is shut.
+         */
+        /*
+         * RANKED BY ROUTE, because this file is the only one that owns the graph.
+         *
+         * `route()` walks the room graph and returns a cost that already counts
+         * the gates in the way, so the jar it picks is the one that is genuinely
+         * next rather than the one that is nearest on a straight line across a
+         * map made of locked doors. A jar with no route from here sorts last
+         * instead of being dropped, so the panel still has something to say when
+         * every remaining jar is behind a purchase.
+         */
+        const from = here();
+        const rank = (j) => {
+          if (!from || !j.room) return Number.MAX_SAFE_INTEGER;
+          const r = route(from, j.room);
+          return r ? r.cost : Number.MAX_SAFE_INTEGER;
+        };
+        const target = jars && jars.nextTarget
+          ? jars.nextTarget(spaces.roomId ? 'interior' : 'exterior', rank)
+          : null;
+
+        if (!target) {
+          const room = kindlingSlot ? kindlingSlot.room : 'embalming-chamber';
+          return toward(room, {
+            id: 'jars',
+            text: 'RETURN THE SONS OF HORUS',
+            detail: `${n} OF 4 IN THE NICHES`,
+            cost: 0,
+          });
+        }
+
+        // Named, because "a jar" is a scavenger hunt and "the jar of Hapy" is an
+        // errand. The son's name is already what the prompt and the pill call it.
+        const text = target.kind === 'give'
+          ? `RETURN THE JAR OF ${target.son}`
+          : `FIND THE JAR OF ${target.son}`;
+
+        // A jar in the other space cannot be routed to - the room graph stops at
+        // the doorway - so the panel says which side of it the jar is on rather
+        // than naming a room the player cannot path to from here.
+        if (target.space === 'exterior' && spaces.roomId) {
+          return { id: 'jars', text, detail: `${n} OF 4 IN THE NICHES`,
+            where: 'OUTSIDE, AT THE FOOT OF THE PYRAMID', cost: 0, travel: true };
+        }
+        if (target.space === 'interior' && !spaces.roomId) {
+          return { id: 'jars', text, detail: `${n} OF 4 IN THE NICHES`,
+            where: 'INSIDE THE PYRAMID', cost: 0, travel: true };
+        }
+
+        return toward(target.room, {
           id: 'jars',
-          text: 'RETURN THE SONS OF HORUS',
+          text,
           detail: `${n} OF 4 IN THE NICHES`,
           cost: 0,
         });

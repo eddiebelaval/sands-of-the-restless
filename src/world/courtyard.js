@@ -2732,6 +2732,12 @@ export function buildCourtyard(scene) {
   const act1 = {
     group, M, DENSITY, stone, slabMesh,
     addCollider, addWallRun, fillMass, addDeck, groundY, rand: qrand,
+    // Passed so the authored spaces can seal TO a face rather than half a radius
+    // past it. `fillMass` overhangs its own arguments by FILL_R/2 on every side,
+    // which is the right default for a rough mass in sand and the wrong one for
+    // stone the player is meant to run along - see the note at the builder, and
+    // the west terrace at :736, which has always subtracted it.
+    FILL_R,
   };
 
   const quarry = buildQuarry(act1);

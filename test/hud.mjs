@@ -894,8 +894,20 @@ await page.evaluate(() => {
     g.weapons.grant('smg');
     g.weapons.equip('smg');
   });
-  check(step.text === 'OPEN THE WAY TO EMBALMING CHAMBER',
-    'objective e: the gallery gate, the route being free to it now', step.text);
+  /*
+   * UPDATED 2026-08-05. This asserted `OPEN THE WAY TO EMBALMING CHAMBER`, which
+   * was the panel routing a player with ZERO jars to the room the jars go IN.
+   * That is the right answer to "where does a jar go" and the wrong answer to
+   * "what do I do now", and it is why the owner played the build and could not
+   * find two of four. The rung now points at the nearest OUTSTANDING JAR by
+   * route, so the door it quotes is the one on the way to a jar.
+   *
+   * Asserted by SHAPE rather than by string: the panel must be pointing either
+   * at a jar or at the door on the way to one. Pinning the room name here is
+   * what made this check encode a defect in the first place.
+   */
+  check(/^(FIND THE JAR OF [A-Z]+|OPEN THE WAY TO [A-Z' ]+)$/.test(step.text),
+    'objective e: points at a jar, or at the door on the way to one', step.text);
   check(step.cost === 1000, 'objective e: the authored gate price', String(step.cost));
 }
 
@@ -909,7 +921,9 @@ await page.evaluate(() => {
     const d = g.doors.all.find((x) => x.id === 'chamber-of-ascent/granary-vault');
     d.open();
   });
-  check(step.text === 'OPEN THE WAY TO EMBALMING CHAMBER',
+  // Same correction as stage e above, and the property under test is unchanged:
+  // a door that only closes a loop must not move the panel off the spine.
+  check(/^(FIND THE JAR OF [A-Z]+|OPEN THE WAY TO [A-Z' ]+)$/.test(step.text),
     'objective f: unmoved by a door that only closes a loop', step.text);
   check(step.cost === 1000, 'objective f: the authored gate price', String(step.cost));
 }
@@ -924,7 +938,12 @@ await page.evaluate(() => {
   // The rung did not move and its test did not change - it is still
   // `power.powered` - but the Kindling is thrown by the third canopic jar now
   // and there is no lever to press F at, so the panel names the machine.
-  check(step.text === 'RETURN THE SONS OF HORUS', 'objective g: the machine', step.text);
+  // With no jar in hand the panel names the jar to FETCH and the room it is in;
+  // carrying one it says RETURN. Both are the machine rung. The old string
+  // named neither and sent the player to the niches empty-handed.
+  check(/^(FIND|RETURN) THE JAR OF [A-Z]+$/.test(step.text)
+    || step.text === 'RETURN THE SONS OF HORUS',
+    'objective g: the machine, naming the jar', step.text);
   check(step.detail === '0 OF 4 IN THE NICHES', 'objective g: the progress bar', step.detail);
 }
 

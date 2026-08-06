@@ -79,6 +79,71 @@ remembering - **a window closed too early and a beat that genuinely died produce
 identical evidence.** `litVia` is what tells them apart, and the run reports
 `"cut"`.
 
+### WAYFINDING, AND THE QUARRY'S INVISIBLE STONE - 2026-08-05
+
+The owner played the shipped build: "i cant find 2 of the jars... the outside
+canal and the quarry are so full of obstacles its a mess to run in... next step
+maybe needs to pulse on the map so i can find it."
+
+**THE JAR CHAIN WAS NEVER THE PROBLEM. The guidance was.**
+
+- **The objective pointed at the DESTINATION.** The rung routed to the Embalming
+  Chamber for the whole step, because that is where the niches are - the right
+  answer to "where does a jar go" and the wrong answer to "what do I do now". A
+  player carrying nothing was sent to a room they had no reason to stand in, and
+  the four rooms that hold the jars were never named on any surface in the game.
+  It now names the jar and its room, RANKED BY ROUTE through the room graph, so
+  the door it quotes is the one actually in the way.
+- **The map drew the jars and nothing said which one.** A static gold dot among a
+  dozen gold marks is found only by somebody already looking. The current target
+  now breathes on a 1.6 s cycle, one at a time.
+
+The two he could not find were the **Star Shaft** (a dead end holding a jar and
+a rope, which nothing routes a player through) and the **King's Chamber**.
+
+**A REORDER WAS TRIED AND REVERTED.** `arm` - buy a wall gun - sits above the
+machine and its `done()` needs a wall-bought weapon, so a pistol-only player
+never sees the jars NAMED at all. Promoting the jars broke nine `hud` checks by
+displacing wall-gun onboarding at three stages, which is a documented decision.
+And it was not the reported defect: he knew he needed four jars, he could not
+find WHERE. **Fix the reported defect, not the one the fix made visible.**
+Residual, accepted: a pistol-only player's guidance is the map pulse alone.
+
+**THE QUARRY WAS 74 SQUARE METRES OF COLLISION WITH NO STONE IN IT.**
+
+`fillMass` seals `w + FILL_R` by `d + FILL_R` and overhangs its own arguments by
+FILL_R/2 - 0.675 m - on every side. Its own comment says that is the wrong
+default "where the stone has a face the player is meant to walk right up to and
+past", and the west terrace has subtracted `FILL_R` since it was written. The
+quarry's four free blocks never did: they showed 152 m2 of stone and sealed 227.
+
+    largest connected open floor   374 -> 430 m2   (+15%, zero visual change)
+
+For scale: the entry room the owner already called too small is 544 m2, the
+Great Gallery about 1800. **The measured tell was not clutter, it was being
+stopped two feet short of rock you can see.**
+
+NOT thinned further, deliberately. The rest of the mass is the bedrock face, the
+two spoil banks and the terrace bench - all boundaries - plus the blocks, which
+are SUPPOSED to be obstacles: running around cover is the training mechanic. The
+same file already got this right elsewhere; the bank's decorative rubble carries
+no colliders at all, with the comment "rubble at the foot is rubble the player
+snags on".
+
+**THE SLOT SEALER WAS SUSPECTED AND EXONERATED BY MEASUREMENT**, before any of
+the above. It added 1104 colliders on 08-03 and was the obvious culprit:
+
+    region   BEFORE sealer            AFTER sealer      (open/tight/blocked %)
+    quarry   15.7 / 18.4 / 65.9       15.7 / 18.4 / 65.9
+    canal    36.5 / 16.9 / 46.6       36.5 / 16.7 / 46.8
+
+Identical. It only ever filled gaps too narrow to walk down.
+
+**Verified:** `guide` 8/8 (new - reads the rendered panel and pixel-diffs the
+pulse against a stubbed-target control), `hud`, `jars` 65/65, `economy`, `nav`,
+`stuck-trap` 0 traps. Canal untouched at 705 m2 connected: tight, defensible,
+and not what he was complaining about.
+
 ### THE DEAD ARE SOLID - BUILT 2026-08-03
 
 Owner: "the zombies need to be solid objects so that we can't walk through

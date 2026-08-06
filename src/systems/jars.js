@@ -544,6 +544,75 @@ export function createJars({ interior, courtyard = null, doors, power, audio, no
     jars,
     niches,
 
+    /**
+     * WHERE THE PLAYER SHOULD GO NEXT, AND IT IS NOT ALWAYS THE NICHES.
+     *
+     * The objective panel pointed at the Embalming Chamber for the whole of this
+     * step, because that is where the niches are. It is the right answer to
+     * "where does a jar go" and the wrong answer to "what do I do now": a player
+     * carrying nothing was being sent to a room they had no reason to stand in,
+     * and the four rooms that actually hold the jars were never named on any
+     * surface in the game. The owner played it and could not find two of them.
+     * The Star Shaft is the worst of the four - a dead end that exists to hold a
+     * jar and a rope, so nothing routes a player through it by accident.
+     *
+     * So: carrying one, the target is the niches. Carrying nothing, it is a jar
+     * that is still out there, and the ROOM is what the caller wants.
+     *
+     * PREFERS THE SPACE THE PLAYER IS IN, because sending somebody through a
+     * world swap for jar one when jar two is thirty metres away is technically
+     * correct and reads as the game not knowing where they are. Within a space
+     * it takes them in index order rather than by distance, so the target is
+     * STABLE: a marker that reshuffles as the player walks is a marker they stop
+     * trusting.
+     *
+     * @param {'interior'|'exterior'} [space] where the player is now
+     * @param {(jar:object)=>number} [rank] optional: order outstanding jars, low
+     *        first. ui/objective.js passes route cost; see the note at `pick`.
+     * @returns {{kind:'take'|'give', room:string|null, space:string|null,
+     *            son:string, id:string|null}|null} null when all four are home
+     */
+    nextTarget(space, rank) {
+      if (state.carrying) {
+        const n = niches.find((r) => !r.group.children.some((c) => c.name === 'vessel'));
+        return {
+          kind: 'give',
+          room: (n && n.room) || 'embalming-chamber',
+          space: 'interior',
+          son: sonOf(state.carrying),
+          id: state.carrying.id,
+        };
+      }
+
+      const out = jars.filter((j) => !j.taken && !j.home);
+      if (!out.length) return null;
+
+      const here = space ? out.filter((j) => j.space === space) : [];
+      const pool = here.length ? here : out;
+
+      /*
+       * THE CALLER GETS TO CHOOSE, because this file cannot.
+       *
+       * Ordering by jar index looks stable and is wrong: by index the first
+       * interior jar is Hapy in the Star Shaft at z -219, while Duamutef sits in
+       * the Canopic Crypt at z -205, nearer the way in. The panel sent the
+       * player past the close one to the far one and then quoted the gate on the
+       * wrong route, which `test/hud.mjs` caught at two stages.
+       *
+       * Straight-line distance would be no better: this map is a chain of gates
+       * and the nearest jar as the crow flies can be four purchases away. The
+       * only honest ordering is by ROUTE, and the room graph lives in
+       * ui/objective.js, not here. So `rank` is an optional hook the caller
+       * passes to sort the outstanding jars by whatever it knows; without one
+       * this falls back to index order, which is at least deterministic.
+       */
+      const pick = (typeof rank === 'function'
+        ? pool.slice().sort((a, b) => rank(a) - rank(b))
+        : pool.slice().sort((a, b) => a.index - b.index))[0];
+
+      return { kind: 'take', room: pick.room || null, space: pick.space, son: sonOf(pick), id: pick.id };
+    },
+
     /** Late binding for the notice pill's pacer. See the note on `pacer`. */
     attach(parts) {
       if (parts && parts.pacer) pacer = parts.pacer;
