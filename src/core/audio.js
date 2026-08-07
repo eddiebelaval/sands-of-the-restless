@@ -131,6 +131,19 @@ const DUCK_WINDOW = 0.16;
 const DUCK_FLOOR = 0.34;
 
 /**
+ * The pack-a-punch ring, for a profile that has not declared one.
+ *
+ * A defensive default and nothing more: every profile in REPORTS has a `ring`
+ * block. It is written down rather than left as an inline `??` because the
+ * previous inline fallback WAS the bug - `W.ringRate ?? 1.6` looked like a
+ * default and was in fact the only value the game ever used, on every weapon,
+ * for as long as upgraded weapons have existed. A fallback that nothing falls
+ * back to is a fallback; a fallback everything falls through is a constant with
+ * a disguise on.
+ */
+const DEFAULT_RING = { rate: 2.4, gain: 0.09, ms: 60 };
+
+/**
  * Impulse response recipes. seconds is the tail length, decay is the exponent
  * of the amplitude envelope (higher = faster collapse), damp is a one-pole
  * lowpass coefficient applied down the tail so stone rooms go dark as they
@@ -885,18 +898,42 @@ export function createAudio(options = {}) {
     // --- the pack-a-punch ring ----------------------------------------------
     //
     // Also baked: five inharmonic partials beating against each other, played
-    // back at whatever rate puts them over this weapon. It used to be two
+    // back at whatever rate puts them over THIS weapon. It used to be two
     // detuned triangle oscillators through a highpass, which is four nodes and
     // exactly two partials, and two partials beating is a tremolo rather than
     // struck metal.
+    //
+    // THE PART THAT WAS WRONG, and it was in this line: the rate came from
+    // `W.ringRate`, and no weapon profile has ever had one. The `?? 1.6`
+    // fallback was therefore the only rate that ever played, on all seven
+    // weapons, which put a fixed 1.6 kHz note with a quarter-second decay on
+    // every upgraded gun in the game. On an SMG whose rounds land 66.7 ms apart
+    // that is four of them sounding at once, permanently. The report on it was
+    // "they sound like Christmas bells", which is what a stack of a fixed pitch
+    // struck fifteen times a second is.
+    //
+    // Three things fix it and all three are in REPORTS, per weapon: a rate that
+    // is that gun's own, a shorter bake (see RING_DECAY), and the CEILING
+    // below. `ms` is derived from the weapon's cadence, so the shimmer from one
+    // round is over before the next round leaves the barrel and cannot stack
+    // with itself. The forced decay is scheduled on the ring's own gain rather
+    // than done by stopping the source early, because a buffer cut mid-partial
+    // is a click.
     if (opts.upgraded && ringBuf) {
+      const R = W.ring || DEFAULT_RING;
       const rs = ctx.createBufferSource();
       rs.buffer = ringBuf;
-      rs.playbackRate.value = (W.ringRate ?? 1.6) * pitch * rand(0.97, 1.03);
+      rs.playbackRate.value = R.rate * pitch * rand(0.97, 1.03);
       own(v, rs);
-      const rg = gain(v, 0.16);
+      const rg = gain(v, R.gain);
       rs.connect(rg); rg.connect(v.out);
-      fire(v, rs, t + 0.004, t + 0.004 + ringBuf.duration / rs.playbackRate.value + 0.02);
+
+      const rt = t + 0.004;
+      const life = Math.min(R.ms / 1000, ringBuf.duration / rs.playbackRate.value);
+      rg.gain.setValueAtTime(R.gain, rt);
+      rg.gain.exponentialRampToValueAtTime(0.0005, rt + life);
+      rg.gain.setValueAtTime(0, rt + life + 0.001);
+      fire(v, rs, rt, rt + life + 0.02);
     }
 
     return true;

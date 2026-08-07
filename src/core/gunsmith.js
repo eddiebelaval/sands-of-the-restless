@@ -55,7 +55,10 @@
  *      waveforms, not one waveform detuned.
  *
  * The cost is memory and a one-off bake, both measured rather than estimated:
- * 47 buffers, 5.85 MB of stereo float at 48 kHz, and 88 ms to generate. That
+ * 47 buffers, 5.70 MB of stereo float at 48 kHz, and 88 ms to generate. (5.85
+ * until the upgrade ring's buffer came down from 0.7 s to 0.28 s, which is the
+ * length of the ring that is actually in it rather than the length of the one
+ * that used to be. Re-measured through test/gunlab.html's bakeCost.)  That
  * bake runs inside the same user gesture that starts the AudioContext - the
  * Begin click, while the world is still being built and the player is looking
  * at a title card - and it is reported by audio.stats().bakeMs so that it
@@ -143,6 +146,35 @@ function glideHz(a, b, u) {
  * target is what keeps every variant of the same gun at the same level, so that
  * the per-shot level randomisation is the only level variation there is and it
  * stays as small as it was designed to be.
+ *
+ * ---------------------------------------------------------------------------
+ * `ring`: THE PACK-A-PUNCH SHIMMER, AND WHY IT IS PER WEAPON
+ * ---------------------------------------------------------------------------
+ *
+ * A weapon that has been through the Altar of Ptah gets one extra layer on
+ * every shot: bakeRing()'s five inharmonic partials, played at this rate.
+ * audio.js has always read `W.ringRate` for it. NO PROFILE EVER DEFINED ONE.
+ * Every gun in the armoury therefore played the `?? 1.6` fallback, which is a
+ * fixed 1.6 kHz note bolted onto seven different weapons - another instance of
+ * this project's defining bug: code that was written, ran on every shot, and
+ * did nothing it was written to do. Three fields now, and all three are read:
+ *
+ *   rate   playback rate against a 1000 Hz bake, so it reads as kilohertz.
+ *          Light fast weapons ring higher, heavy ones lower, which is what a
+ *          smaller hotter piece of steel actually does. It is also the field
+ *          that stops an upgraded armoury being a set of handbells: measured
+ *          across five weapons before this, EVERY upgraded gun's loudest tonal
+ *          peak landed between 1556 and 1646 Hz.
+ *
+ *   ms     the HARD ceiling on how long the shimmer may sound, derived from the
+ *          weapon's own cadence rather than chosen: about 55 per cent of
+ *          60/rpm, so one round's ring is finished before the next round leaves
+ *          the barrel. A ring that outlives the interval stacks, and a stack of
+ *          one fixed pitch is a chord.
+ *
+ *   gain   how loud. The automatics get less than the single-shot weapons for
+ *          the same reason: what an LMG hears is not one ring, it is whatever
+ *          is left of the last one plus this one.
  */
 export const REPORTS = {
   /**
@@ -159,6 +191,9 @@ export const REPORTS = {
     tail:  { level: 0.10, ms: 150, openHz: 3000, closeHz: 500 },
     slap:  null,
     mech:  { gain: 0.13, delayMs: [26, 42], rate: [1.05, 1.25] },
+    // MK9, 410 rpm semi -> 146 ms between rounds. 80 is comfortably inside a
+    // player clicking as fast as a player can click.
+    ring: { rate: 2.90, gain: 0.115, ms: 80 },
     send: 0.28, rateJitter: 0.035, levelJitterDb: 1.1,
   },
 
@@ -186,6 +221,9 @@ export const REPORTS = {
     tail:  { level: 0.055, ms: 60, openHz: 3400, closeHz: 800 },
     slap:  null,
     mech:  { gain: 0.045, delayMs: [20, 29], rate: [1.15, 1.35] },
+    // 1500 rpm inside a burst -> 40 ms. The shortest ring in the table, and it
+    // has to be: this weapon's whole identity is three separable cracks.
+    ring: { rate: 3.05, gain: 0.120, ms: 22 },
     send: 0.22, rateJitter: 0.030, levelJitterDb: 0.9,
   },
 
@@ -202,6 +240,9 @@ export const REPORTS = {
     tail:  { level: 0.07, ms: 90, openHz: 3600, closeHz: 700 },
     slap:  null,
     mech:  { gain: 0.15, delayMs: [14, 24], rate: [1.20, 1.45] },
+    // 900 rpm -> 66.7 ms, the fastest weapon in the armoury and the one that
+    // sets RING_DECAY. Highest pitch, shortest life, quietest of the automatics.
+    ring: { rate: 3.15, gain: 0.135, ms: 36 },
     send: 0.24, rateJitter: 0.045, levelJitterDb: 1.4,
   },
 
@@ -220,6 +261,9 @@ export const REPORTS = {
     tail:  { level: 0.20, ms: 300, openHz: 2000, closeHz: 260 },
     slap:  { level: 0.10, ms: [42, 51], lpHz: 1400 },
     mech:  { gain: 0.2, delayMs: [150, 200], rate: [0.62, 0.74] },
+    // 85 rpm -> 706 ms. Nothing to stack against, so the ceiling is the ring's
+    // own decay and the pitch is the lowest here: a big cylinder of steel.
+    ring: { rate: 1.75, gain: 0.150, ms: 130 },
     send: 0.42, rateJitter: 0.030, levelJitterDb: 1.0,
   },
 
@@ -236,6 +280,8 @@ export const REPORTS = {
     tail:  { level: 0.15, ms: 250, openHz: 3200, closeHz: 380 },
     slap:  { level: 0.075, ms: [38, 46], lpHz: 2600 },
     mech:  { gain: 0.14, delayMs: [22, 34], rate: [0.92, 1.10] },
+    // Carbine, 700 rpm -> 85.7 ms.
+    ring: { rate: 2.45, gain: 0.155, ms: 47 },
     send: 0.38, rateJitter: 0.035, levelJitterDb: 1.2,
   },
 
@@ -254,6 +300,17 @@ export const REPORTS = {
     tail:  { level: 0.17, ms: 280, openHz: 2600, closeHz: 300 },
     slap:  { level: 0.07, ms: [44, 53], lpHz: 1900 },
     mech:  { gain: 0.17, delayMs: [16, 26], rate: [0.78, 0.92] },
+    // 620 rpm -> 96.8 ms. Low, because the thing being struck is the heaviest
+    // barrel in the game.
+    //
+    // 0.150 IS A CEILING AND IT WAS MEASURED. At 0.175 this ring becomes the
+    // loudest tonal peak in sustained LMG fire - test/gunfeel.mjs reports the
+    // weapon's peak jumping from 1075 Hz to 2101 Hz, which is the ring's own
+    // fundamental winning - and a shimmer that is the loudest tonal thing in
+    // the sound is the defect this table was rewritten to remove, short decay
+    // or not. This weapon carries the quietest shimmer in the armoury relative
+    // to its own report, and that is the trade its rate of fire buys.
+    ring: { rate: 2.05, gain: 0.150, ms: 53 },
     send: 0.36, rateJitter: 0.040, levelJitterDb: 1.5,
   },
 
@@ -273,6 +330,8 @@ export const REPORTS = {
     tail:  { level: 0.20, ms: 460, openHz: 3000, closeHz: 260 },
     slap:  { level: 0.13, ms: [56, 68], lpHz: 2200 },
     mech:  { gain: 0.2, delayMs: [240, 310], rate: [0.68, 0.80] },
+    // 45 rpm -> 1333 ms. One round, one ring, and it may have the whole decay.
+    ring: { rate: 1.90, gain: 0.160, ms: 150 },
     send: 0.52, rateJitter: 0.025, levelJitterDb: 0.8,
   },
 
@@ -293,6 +352,10 @@ export const REPORTS = {
               ignition: 0.75, d1: 0.0035 },
     tail:   { level: 0.20, ms: 340, openHz: 6000, closeHz: 1200 },
     mech:   { gain: 0.07, delayMs: [40, 60], rate: [1.5, 1.8] },
+    // Sunspear, 55 rpm -> 1091 ms. The highest in the table: it is the one
+    // weapon here that is not a piece of struck steel, and it should not sound
+    // like the other six do.
+    ring: { rate: 3.10, gain: 0.160, ms: 120 },
     send: 0.44, rateJitter: 0.050, levelJitterDb: 1.6,
   },
 };
@@ -671,6 +734,27 @@ export function bakeMechanics(ctx, count = 6) {
 }
 
 /**
+ * The ring's own decay, at the baked pitch, before any weapon's playbackRate.
+ *
+ * 0.42 SECONDS IS WHAT MADE THE UPGRADED GUNS SOUND LIKE BELLS, and the
+ * arithmetic is short enough to write down. The fundamental was baked at
+ * 1000 Hz and every weapon played it at a hardcoded 1.6, so the shimmer was one
+ * fixed note at 1.6 kHz with a 0.42/1.6 = 262 ms decay - on every gun in the
+ * armoury, because the per-weapon `ringRate` that audio.js reads was never
+ * defined in a single profile and the `?? 1.6` fallback was the only value that
+ * ever ran. On an upgraded SMG, whose rounds land 66.7 ms apart, four of those
+ * are sounding at once, permanently, always at the same pitch. That is not a
+ * shimmer over a gunshot. That is a struck bell being struck fifteen times a
+ * second, and measured on sustained fire the gaps between rounds came up 27 dB,
+ * from -45 to -18: there were no gaps left.
+ *
+ * 0.13 s clears in 41 ms at the fastest weapon's rate, which is inside its own
+ * 66.7 ms cadence with room. `ring.ms` in the profile is the hard ceiling on
+ * top of that; see the note there.
+ */
+const RING_DECAY = 0.13;
+
+/**
  * Bake the upgrade ring once, at a nominal pitch, and let playbackRate move it.
  *
  * The pack-a-punch shimmer used to be two live oscillators through a highpass,
@@ -678,10 +762,16 @@ export function bakeMechanics(ctx, count = 6) {
  * nodes and it can be a better sound, because offline there is nothing stopping
  * it from being five inharmonic partials beating against each other instead of
  * two detuned triangles.
+ *
+ * The nominal fundamental is 1000 Hz, so a profile's `ring.rate` reads directly
+ * as kilohertz: the LMG's 2.05 puts its shimmer at 2050 Hz.
  */
 export function bakeRing(ctx) {
   const rate = ctx.sampleRate;
-  const seconds = 0.7;
+  // Long enough to hold the whole decay of the lowest partial and no longer.
+  // At 0.7 s the buffer was five sixths silence, and every shot's BufferSource
+  // was scheduled to run through all of it.
+  const seconds = 0.28;
   const n = Math.ceil(rate * seconds);
   const buf = ctx.createBuffer(2, n, rate);
   const rand = rng(SEED ^ 0x1234abcd);
@@ -693,7 +783,10 @@ export function bakeRing(ctx) {
     const d = buf.getChannelData(ch);
     for (let p = 0; p < partials.length; p++) {
       const hz = 1000 * partials[p] * (1 + (rand() - 0.5) * 0.004 * (ch ? 1 : -1));
-      const decay = 0.42 / (1 + p * 0.5);
+      // The higher partials die faster than they used to, 0.6 against 0.5. On a
+      // real struck bar the top of the spectrum goes first; leaving them long
+      // is what turns a strike into a chime.
+      const decay = RING_DECAY / (1 + p * 0.6);
       const amp = 0.6 / (1 + p * 1.1);
       let ph = rand() * Math.PI * 2;
       for (let i = 0; i < n; i++) {
@@ -701,6 +794,22 @@ export function bakeRing(ctx) {
         ph += 2 * Math.PI * hz / rate;
         d[i] += Math.sin(ph) * amp * Math.exp(-t / decay) * (1 - Math.exp(-t / 0.0015));
       }
+    }
+
+    // THE STRIKE, which the old ring did not have at all.
+    //
+    // Five sine partials with a 1.5 ms rise is a tone that fades in. What makes
+    // a piece of metal read as STRUCK rather than as rung is the six
+    // milliseconds of broadband noise where the two things met, and without it
+    // the ear has nothing to attribute the pitch to and hears a bell. One-pole
+    // highpassed so it sits over the crack rather than inside it.
+    let prev = 0, hp = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / rate;
+      const w = rand() * 2 - 1;
+      hp = 0.86 * (hp + w - prev);
+      prev = w;
+      d[i] += hp * 0.5 * Math.exp(-t / 0.006);
     }
   }
 

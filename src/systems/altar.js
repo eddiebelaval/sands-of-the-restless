@@ -89,6 +89,28 @@ const TRACER_POOL = 28;
 const TRACER_LIFE = 0.075;
 
 /**
+ * How far in FRONT OF THE EYE the streak starts, in metres.
+ *
+ * Any positive number puts the start on the correct pixel - see fire() - so
+ * this is not choosing where the tracer appears to come from. What it chooses
+ * is how much of the world is allowed to occlude the first few centimetres of
+ * it: the streak is depth-tested, so a start point half a metre out is behind
+ * the wall a player is standing against and the near end of the streak
+ * disappears into it, which is correct and is what a muzzle inside a doorway
+ * looks like. 0.6 is roughly where the barrel is anyway.
+ */
+const TRACER_START = 0.6;
+
+/**
+ * Where the muzzle is when the viewmodel cannot say: slightly right of centre
+ * and a little over half way down, which is where a hip-held weapon's crown
+ * sits. Only reachable if a round is fired with no weapon built, which the
+ * weapon code does not allow; it exists so this function cannot produce the
+ * degenerate origin it was written to replace.
+ */
+const FALLBACK_NDC = { x: 0.09, y: -0.52 };
+
+/**
  * How long the machine works, in seconds of SIMULATED time.
  *
  * Black Ops 2's Pack-a-Punch cycle is a shade over five seconds and the number
@@ -216,27 +238,75 @@ export function createAltar({ scene, camera, weapons, viewmodel, economy, audio,
   let highFidelity = true;
 
   const origin = new THREE.Vector3();
-  const offset = new THREE.Vector3();
+  const eye = new THREE.Vector3();
+  const ndc = new THREE.Vector3();
+  const aim = new THREE.Vector3();
 
   /**
-   * Draw a streak from roughly the muzzle to where the round landed.
+   * Draw a streak from the muzzle to where the round landed.
    *
-   * "Roughly" is correct and not a shortcut. The hitscan itself is cast from the
-   * centre of the screen, because the viewmodel lives in its own scene at its
-   * own scale and its barrel is nowhere near where the world thinks it is. A
-   * tracer drawn from the camera origin would leave the screen as a dot; drawn
-   * from a hand's width down and right of the eye it reads as coming out of the
-   * weapon, which is the only thing it has to do.
+   * ---------------------------------------------------------------------------
+   * WHAT THIS REPLACED, AND WHY IT CAME OUT OF THE BOTTOM RIGHT OF THE SCREEN
+   * ---------------------------------------------------------------------------
+   *
+   * The first version of this took the camera's world position and added
+   * (0.22, -0.16, 0) rotated into camera space - a hand's width down and right
+   * of the eye - and called that "roughly the muzzle". The z of that offset is
+   * ZERO, which puts the start point exactly on the eye plane: 0.00 metres in
+   * front of a camera whose near plane is at 0.05. Measured in the running
+   * game, that point projects to an NDC of 4.7e13, -5.9e13. It is not near the
+   * edge of the screen, it is at infinity past the bottom right corner, and
+   * what the player sees is the near-plane clip of a line running from there to
+   * the impact - a streak entering frame from under the right hand and flying
+   * up and left. Which is exactly what was reported.
+   *
+   * A hardcoded offset could not have worked in any case. The gun is not a
+   * fixed distance down and right of the eye; it sways, it kicks, it comes to
+   * the eye when the player aims, and on seven weapons the crown sits anywhere
+   * from 200mm to 744mm in front of the hand.
+   *
+   * ---------------------------------------------------------------------------
+   * WHAT IT DOES NOW
+   * ---------------------------------------------------------------------------
+   *
+   * The viewmodel is asked where its muzzle is ON THE SCREEN - see
+   * viewmodel.muzzleNdc, which projects the flash group through the viewmodel's
+   * own camera - and the streak starts on that pixel, TRACER_START metres in
+   * front of the eye.
+   *
+   * Screen space is the right currency and it is worth being explicit about
+   * why. There is no world position for the muzzle to be had: the weapon is a
+   * prop in a second scene at its own scale in front of its own 55-degree
+   * camera, and the world is drawn at 75. The two spaces share exactly one
+   * thing - the pixels - so the pixel is what gets matched. A streak that
+   * leaves the crown of the barrel and lands on the impact point is then true
+   * in the only frame the player ever sees it in.
    */
   function fire(end) {
     if (!highFidelity) return null;
 
-    camera.getWorldPosition(origin);
-    offset.set(0.22, -0.16, 0).applyQuaternion(camera.quaternion);
-    origin.add(offset);
+    camera.getWorldPosition(eye);
+
+    const m = viewmodel?.muzzleNdc?.(ndc);
+    const mx = m ? m.x : FALLBACK_NDC.x;
+    const my = m ? m.y : FALLBACK_NDC.y;
+
+    // The world ray through the muzzle's pixel. unproject() reads the same
+    // matrixWorld the hitscan's raycaster read a few lines earlier in
+    // weapons.js, so the two ends of this streak are measured against one
+    // camera pose rather than two.
+    aim.set(mx, my, 0.5).unproject(camera).sub(eye);
+    if (aim.lengthSq() < 1e-12) return null;
+    aim.normalize();
 
     const t = tracers[cursor];
     cursor = (cursor + 1) % TRACER_POOL;
+
+    // Never start further out than half way to the impact: a round that lands
+    // on the muzzle of the gun that fired it is a contact shot, and a streak
+    // starting past it would point backwards.
+    const reach = eye.distanceTo(end);
+    origin.copy(eye).addScaledVector(aim, Math.min(TRACER_START, reach * 0.5));
 
     const dist = origin.distanceTo(end);
     if (dist < 0.2) return null;

@@ -7,9 +7,71 @@ REFERENCE-ANALYSIS.md.
 
 ## RIGHT NOW, 2026-08-07 19:40 - READ THIS FIRST
 
-### TWO LANES IN FLIGHT. Nothing of either is committed.
+### THE GUN - LANDED 2026-08-07, VERIFIED, UNCOMMITTED
 
-**1. THE GUN, IN A SUBAGENT, STILL RUNNING.** Owner played and reported two
+Owner: "the bullets are coming from the wrong place, and they also sound like
+Christmas bells." Both were real, both were ARMOURY-WIDE rather than one gun, and
+both root causes were verified in the committed code before believing the report.
+
+**THE TRACER STARTED ON THE EYE PLANE.** `altar.js:235` was
+`offset.set(0.22, -0.16, 0)` - **the Z is literally zero**, so the streak began
+0.00 m in front of a camera whose near plane is 0.05. Camera-space z measured 0
+on all three weapons; projected NDC came back 4.5e13 and Infinity. What rendered
+was the near-plane clip of a line from infinity. Painted pixels lying on the
+muzzle-to-impact line: **1% / 6% / 7% before, 92% / 96% / 100% after.**
+
+Fixed in SCREEN SPACE, which is the only currency the two scenes share - the
+viewmodel is a prop in a second stage at 55 deg FOV and the world is drawn at 75,
+so there IS no world position for the muzzle to have. `viewmodel.js` gained
+`muzzleNdc()`; `altar.js` starts the streak on that pixel 0.6 m out.
+
+**THE BELLS WERE A `??` DEFAULT THAT WAS THE ONLY CODE PATH.** `audio.js:895`
+read `(W.ringRate ?? 1.6)` and **no weapon profile has ever defined `ringRate`** -
+verified at HEAD: 1 reader, 0 definers. So every upgraded weapon rang at the same
+1.6 kHz with a 262 ms decay. At the SMG's 900 rpm that is 66.7 ms between rounds,
+so four rings sound at once, permanently, at one pitch. Not a shimmer over a
+gunshot - a bell struck fifteen times a second. Measured: gaps between rounds went
+from -45 dB to -19 dB, and the diff signal peaked at 1594 Hz on all eight
+profiles.
+
+Now `ring: { rate, gain, ms }` per profile, with `ms` DERIVED from cadence (~55%
+of 60/rpm) so a round's ring is over before the next leaves the barrel. Every
+delta now <= +8.3 dB.
+
+**Correction the lane made to my brief:** WADJET ASCENDANT is the upgraded SMG,
+not the LMG (`weapons.js:246`). Did not change the fix - both defects were
+armoury-wide.
+
+`test/gunfeel.mjs`, 17 checks, in `npm test`. **Fails 10 of 17 against the
+reverted build**, which is the only reason its passing means anything. It carries
+a control (a DIFFERENT muzzle per weapon, so "starts on the muzzle" cannot be a
+tautology) and it checks the shimmer is STILL THERE, so the bells cannot be
+"fixed" by deleting the feature. Verified independently: gunfeel 17/17, gun,
+shot, b3ar 22/22 all green.
+
+**NOT HEARD BY ANYONE.** The lane measured that eight profiles are no longer
+bells and that the shimmer survives at -18 to -31 dB. Nobody has listened to any
+of it. The gain balance across the armoury is the part that wants an ear.
+Also unverified: ADS-pose tracers (hip only), and b3ar/shotgun/bolt/sunspear
+tracers visually (mk9, carbine, lmg only). Swiftshader throughout, no real GPU.
+
+**Constraint found rather than designed around:** the LMG cannot carry a louder
+shimmer - at `gain 0.175` its ring becomes the loudest tonal peak in sustained
+fire. It sits at 0.150, the quietest in the armoury.
+
+### PRE-EXISTING FLAKE, NOT FROM THE GUN WORK
+
+`test/headshot.mjs` fails ~40% of runs. VERIFIED as pre-existing and not this
+lane's: `damage.js` and `headshot.mjs` are untouched by it, and line 150 does
+`live.find(...)` - it designates **whatever actor happens to be alive first** as
+boss, then asserts a headshot cannot kill it. When that actor is a scarab (72 hp)
+the mk9's ordinary 42 x 2.6 = 109 kills it and the check fails for reasons that
+have nothing to do with the boss exemption. Shambler (240) and husk (136) pass.
+The assertion is variant-dependent; the exemption itself works.
+
+### ONE LANE STILL OPEN. Nothing of it is committed.
+
+**1. (LANDED - see the gun section above.)** Formerly: Owner played and reported two
 defects on the WADJET ASCENDANT (upgraded wall LMG, so base weapon `lmg`/APIS):
 **the tracer comes out of the wrong place** - in his screenshot it leaves the
 LOWER-RIGHT of the screen, well below and right of the viewmodel muzzle, and

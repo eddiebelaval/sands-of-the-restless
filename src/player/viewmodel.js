@@ -6691,6 +6691,36 @@ export function createViewmodel(host, materials) {
     /** Optional: build the environment before the first frame instead of on it. */
     prepare(renderer) { if (!envBuilt) buildEnvironment(renderer); },
 
+    /**
+     * WHERE THE MUZZLE IS ON THE SCREEN, this frame, in normalised device
+     * coordinates. Null when the hands are empty.
+     *
+     * The Altar's tracers need this and nothing else in the game does, so it is
+     * worth saying exactly what it is and what it is not.
+     *
+     * It is NOT a world position, and it cannot be. The weapon lives in this
+     * module's own scene, at its own scale, in front of its own 55-degree
+     * camera which has no relation to the 75-degree camera the world is drawn
+     * with. There is no point in the courtyard that is "the muzzle": the barrel
+     * is a prop hanging in a second stage. What DOES exist, and is the only
+     * thing a streak leaving the gun actually needs, is the PIXEL the crown is
+     * drawn on - and that is a projection through this scene's camera, taken
+     * here because this is the only file that has that camera.
+     *
+     * `flash` is the anchor rather than `model.muzzle` because the flash group
+     * is parked on the muzzle at attach() and is then carried by the same group
+     * that carries sway, kick, breathe and the ADS blend. Reading the authored
+     * offset instead would give the muzzle of a weapon standing still, which is
+     * the one pose it is never in on the frame a round leaves it.
+     */
+    muzzleNdc(out) {
+      if (!model) return null;
+      syncProjection();
+      flash.getWorldPosition(out);
+      out.project(vmCamera);
+      return out;
+    },
+
     /** For the harness and for tuning: the built model of the active weapon. */
     get model() { return model; },
     get weapons() { return Object.keys(WEAPONS); },
