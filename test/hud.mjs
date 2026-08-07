@@ -949,7 +949,23 @@ await page.evaluate(() => {
 
 // h. the map wakes. Shrines become the next thing that exists.
 {
-  const { step } = await stage('powered', () => window.__SANDS__.power.throwSwitch());
+  /*
+   * THE MACHINE IS LIT BY THE THIRD JAR, so a fixture that throws the switch and
+   * leaves the counter at zero is a state the game cannot produce. It used to
+   * pass anyway because the machine rung's `done()` asked `power.powered`; as of
+   * 2026-08-05 it asks whether all four sons are home, because the rung's own
+   * text is RETURN THE SONS OF HORUS and the fourth jar is what opens the room
+   * World 1 ends in. Lighting the switch without the jars left the panel
+   * offering wall guns while the chain was unfinished - the owner played it and
+   * asked whether buying a gun was part of finishing the game.
+   *
+   * So the fixture now completes the chain it is pretending to have completed.
+   */
+  const { step } = await stage('powered', () => {
+    const g = window.__SANDS__;
+    g.power.throwSwitch();
+    g.doors.state.jarsReturned = 4;
+  });
   check(step.text.startsWith('TAKE THE SHRINE OF '), 'objective h: a boon', step.text);
   check(step.stage === 'boon', 'objective h: on the boon rung', step.stage);
 }

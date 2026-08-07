@@ -1,11 +1,129 @@
 # STATE - where this build actually is
 
-Last updated 2026-08-01. Read this before continuing; it is the handoff note,
+Last updated 2026-08-07. Read this before continuing; it is the handoff note,
 not documentation. Architecture lives in README.md, the visual research in
 RESEARCH-VISUALS.md, and the teardown of the reference project in
 REFERENCE-ANALYSIS.md.
 
-## RIGHT NOW, 2026-08-02 23:30
+## RIGHT NOW, 2026-08-07 19:40 - READ THIS FIRST
+
+### TWO LANES IN FLIGHT. Nothing of either is committed.
+
+**1. THE GUN, IN A SUBAGENT, STILL RUNNING.** Owner played and reported two
+defects on the WADJET ASCENDANT (upgraded wall LMG, so base weapon `lmg`/APIS):
+**the tracer comes out of the wrong place** - in his screenshot it leaves the
+LOWER-RIGHT of the screen, well below and right of the viewmodel muzzle, and
+travels up-left to the impact - and **it sounds like Christmas bells**, i.e.
+bright ringing resonant content instead of a broadband percussive crack.
+Its files, currently dirty: `core/audio.js`, `core/gunsmith.js`,
+`player/viewmodel.js`, `systems/altar.js`, and a new `test/gunfeel.mjs`.
+DO NOT EDIT THOSE until it reports. It was told: measure audio through the real
+graph in an OfflineAudioContext by AUTOCORRELATION not loudest bin, always
+against a control gun that sounds right, and never commit.
+
+**2. MY OWN, FINISHED AND VERIFIED, UNCOMMITTED:** `ui/objective.js` +
+`test/hud.mjs`. See the ladder section below.
+
+### THE OBJECTIVE LADDER - TWO REAL BUGS FIXED 2026-08-07
+
+Owner, after finishing the chain: "the instructions after I get all the jars in
+are telling me to buy guns and is buying a gun part of finishing this game?"
+**It is not. Nothing below the chain is required to finish World 1.**
+
+- **THE FOURTH JAR WAS INVISIBLE.** The machine rung's `done()` read
+  `power.powered`, and the machine lights on the THIRD jar. The moment it lit,
+  the panel stopped mentioning the chain and offered a wall gun with one jar
+  still out there. Its text said RETURN THE SONS OF HORUS; its test asked "is the
+  building lit". Now `done()` is `jarsReturned >= 4`.
+- **THE LAST REQUIRED ACT WAS NEVER NAMED.** At wave 25 with Set alive the panel
+  offered shrines. New `endgame` rung says PUT SET DOWN / THE LAST OF THE FIVE,
+  and the bottom `survive` fallback now names the finish line - SURVIVE TO WAVE
+  25 / WAVE n OF 25 - which is the ONLY place the run's length appears anywhere.
+
+**THE PRINCIPLE THAT SETTLED IT, after one flip-flop: A REQUIRED ACT OUTRANKS THE
+SHOPS, A PASSIVE WAIT DOES NOT.** The first version fired SURVIVE TO WAVE 25 from
+the fourth jar onward and hid the shrines and Altar for twenty waves while
+offering nothing actionable. Buying a boon IS how you reach wave 25.
+
+**STILL THE OWNER'S CALL, and he has not answered it:** at four jars mid-run with
+gold the panel says TAKE THE SHRINE OF PTAH. Defensible, and still a shop where he
+asked for a requirement. One line to flip if he wants SURVIVE there instead.
+
+Verified: `hud` 213 ok / 0 failed, `guide` 12/12. `hud`'s 'powered' fixture had to
+be corrected - it threw the switch while leaving the counter at 0, a state the
+game cannot produce, and 11 checks depended on that impossible state.
+
+### THE ROOM WITH NOTHING IN IT - REPORTED, NOT FIXED
+
+Owner: "I opened this crypt, and in the crypt there was nothing to do. I didn't
+see a button to press. There's no engagement, no reason to even be in that room."
+
+Measured, both candidates are bare:
+- **Canopic Crypt**: propSlots EMPTY, interacts EMPTY. Once its jar is taken it
+  is a room bought for ~1000 gold that contains nothing.
+- **SERDAB**: 5 propSlots, **ZERO interacts**. This is the room World 1 ENDS in,
+  opened by the fourth jar, and its entire contents are BUILD 5 - ten rock-cut
+  statues, the archaeologist with her back to the door, the cartouche lighting
+  one glyph at a time. **None of it is built.** The ending only fires at wave 25,
+  so before that the player walks into an empty box.
+
+**This is not a missing button, it is the game's final scene being unwritten.**
+Largest remaining item after BUILD 2 (the expedition camp). Owner has not said
+which comes first.
+
+### THE HISTORY SCRUB - DONE LOCALLY, NOT PUSHED, AND IT NEARLY WENT VERY WRONG
+
+`claude-settings` history is rewritten and verified in
+`~/Development/.backups/scrub-2026-08-07/work` (a --mirror clone of GitHub).
+Verified bundle of the true remote beside it. **The force-push has NOT happened
+and needs the owner.**
+
+    AIza (Maps)   3 -> 0 blobs      commits 185 -> 185
+    xai- (Grok)   5 -> 0 blobs      refs     10 -> 10
+    KALSHI id     1 -> 0 blobs
+
+**THE NEAR MISS, now a memory** (`feedback-clone-from-the-remote-before-rewriting-history`):
+the first scratch clone was taken from the LOCAL submodule, which was pinned at
+2026-05-29 with 84 commits against the remote's 185. `git fetch origin` inside it
+reported success and did nothing, because origin there pointed back at the same
+local path. Force-pushing it would have destroyed months of history. The only
+tell was one line reading `HEAD is now at ... 2026-05-29`.
+
+Also: verify a rewrite by SCANNING BLOBS, never `git log -S`. Pickaxe counts
+add/remove events and matched the placeholders just inserted - it reported 2 and
+1 survivors that did not exist.
+
+**ORDERING TRAP:** the local submodule was repaired to `dbbd745` (36 commits
+forward, off a January pin). If the scrub is force-pushed, that SHA dies and the
+repair must be redone. Push the scrub FIRST, then repair once.
+
+### SECURITY, STILL OPEN AND ON A CLOCK
+
+- **`claude-settings#5` MERGED 08-07.** `origin/main` carries zero plaintext.
+  Four values, not the two the runbook listed - the Kalshi key ID and a private
+  key path were in there too.
+- **NOTHING IS ROTATED. The Maps key and the Grok key still work**, and are still
+  in every clone's history until the force-push lands. Scrubbing reduces
+  exposure; only rotation closes it.
+- **`rlza`**: the runbook calls it "no live surface" and that is WRONG.
+  `id8-workshops/site/profesa/index.html` uses its legacy ANON key for
+  `workshop_comments` on a live page. Update it to the new `sb_publishable_` and
+  REDEPLOY **before** disabling legacy JWT, or comments break - disabling kills
+  anon and service_role together.
+- Owner must also confirm RLS is enabled on `workshop_comments`; no MCP access to
+  that project to check it.
+
+### THE 2AM EOD BOT - FIXED 2026-08-07, committed at ~/Development 64257cf
+
+Skips any repo whose newest change is under 45 minutes old. Signal is the newest
+mtime among files GIT ALREADY REPORTS as changed, not the newest file anywhere -
+a dev server writing node_modules would otherwise make every repo look busy and
+silently disable the sweep. **Deliberately NOT "skip repos with uncommitted src/"**,
+which was the first idea and would have gutted the script's whole purpose.
+Only ONE of the two incidents was a defect: 08-03 captured a mid-experiment tree;
+08-06 captured finished work four hours idle, which is the stated design.
+
+## Earlier, 2026-08-06, 2026-08-02 23:30
 
 Everything below "Run it" is history. This is where the work actually is.
 

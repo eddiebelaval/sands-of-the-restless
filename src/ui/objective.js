@@ -404,6 +404,67 @@ export function createObjectives({
       },
     },
 
+    /**
+     * ---- 0b. THE CHAIN IS DONE AND THE RUN IS NOT ---------------------------
+     *
+     * THE PANEL USED TO ANSWER "WHAT IS LEFT" WITH A SHOPPING LIST.
+     *
+     * The machine rung's `done()` is `power.powered`, which is TRUE at three
+     * jars. So from the moment the third son goes home - and certainly with all
+     * four in - every rung below became eligible and the panel read BUY THE APIS
+     * LMG OFF THE WALL, then TAKE THE SHRINE OF PTAH. The owner played it,
+     * returned all four jars, and asked the only sane question: "is buying a gun
+     * part of finishing this game?"
+     *
+     * It is not. Nothing below this rung is required to finish World 1. They are
+     * all comfort, and a panel that offers comfort while the player is asking
+     * what is left is a panel that lies by omission.
+     *
+     * What is actually left, once four jars are home, is ONE thing: the run has
+     * to reach its end. `director` concludes on Set's death at FINAL_WAVE, and
+     * only then does the Serdab rung above take over. This fills the gap between
+     * those two facts, and it is the honest answer rather than the useful one -
+     * there is no shortcut to sell here, which is exactly why the ladder had
+     * nothing to say.
+     *
+     * Skipped entirely until the chain is complete, so it never competes with
+     * the jars, and skipped once the run concludes, so it never competes with
+     * the chapel.
+     */
+    {
+      id: 'endgame',
+      /*
+       * ONLY THE LAST ACT OUTRANKS THE SHOPS, and the distinction is the whole
+       * design of this rung.
+       *
+       * The first version fired the moment four jars were home and said SURVIVE
+       * TO WAVE 25 until the run ended. That is true, useless, and it hid the
+       * shrines and the Altar for twenty waves - the panel would have offered
+       * nothing actionable for most of the run. The owner's complaint was that
+       * shopping crowded out completion guidance, NOT that shopping should stop
+       * existing: buying a boon IS how you reach wave 25.
+       *
+       * So a REQUIRED ACT outranks the shops and a PASSIVE WAIT does not.
+       * Standing on the final wave with the god still up is an act - it is the
+       * last thing the player has to do - and it belongs here. Grinding towards
+       * that wave is a wait, and it lives at the bottom of the ladder with the
+       * other fallback, where it fills the panel only when there is nothing to
+       * buy. See the `survive` rung.
+       */
+      done: () => {
+        if (!director || director.state.concluded) return true;
+        if (doors.state.jarsReturned < 4) return true;
+        const st = director.stats ? director.stats() : null;
+        return director.state.wave < ((st && st.finalWave) || 25);
+      },
+      next() {
+        return {
+          id: 'endgame', text: 'PUT SET DOWN',
+          detail: 'THE LAST OF THE FIVE', where: null, cost: 0,
+        };
+      },
+    },
+
     // ---- 1. the doorway -----------------------------------------------------
     {
       id: 'doorway',
@@ -503,7 +564,18 @@ export function createObjectives({
     // chapel's own refusal uses eight rooms further down.
     {
       id: 'power',
-      done: () => power.powered,
+      /*
+       * DONE AT FOUR JARS, NOT AT THE MACHINE LIGHTING.
+       *
+       * This read `power.powered`, which is TRUE at THREE jars - the third son
+       * is what throws the Kindling. So the moment the machine lit, this rung
+       * went quiet and the panel stopped mentioning the fourth jar at all,
+       * handing the player a wall gun instead. The rung's own text is RETURN THE
+       * SONS OF HORUS; its test was "is the building lit". Two different facts,
+       * and the chain is not finished until all four are home - the fourth is
+       * what opens the room World 1 ends in.
+       */
+      done: () => doors.state.jarsReturned >= 4,
       next() {
         const n = doors.state.jarsReturned;
 
@@ -694,8 +766,16 @@ export function createObjectives({
 
     return {
       id: 'survive',
-      text: 'SURVIVE',
-      detail: `WAVE ${director ? director.state.wave : 1}`,
+      /*
+       * The fallback, and now it names the FINISH LINE rather than only the
+       * current wave. "SURVIVE / WAVE 12" tells a player where they are;
+       * "SURVIVE TO WAVE 25 / WAVE 12 OF 25" tells them how much is left, which
+       * is the question somebody who has just finished the jar chain is actually
+       * asking. It costs one string and it is the only place the run's length is
+       * stated on any surface in the game.
+       */
+      text: `SURVIVE TO WAVE ${(director && director.stats && director.stats().finalWave) || 25}`,
+      detail: `WAVE ${director ? director.state.wave : 1} OF ${(director && director.stats && director.stats().finalWave) || 25}`,
       where: here() ? roomName(here()).toUpperCase() : null,
       cost: 0,
     };
