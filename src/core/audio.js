@@ -921,16 +921,47 @@ export function createAudio(options = {}) {
     // is a click.
     if (opts.upgraded && ringBuf) {
       const R = W.ring || DEFAULT_RING;
+
+      /**
+       * THE TIER IS A PARAMETER OF THE RING, NOT THREE COPIES OF IT.
+       *
+       * When the Altar started taking a weapon three times this was the one
+       * place that could quietly undo the fix above. The handbell bug was a
+       * FIXED rate across every weapon stacking on itself; the cure was a rate
+       * that is each gun's own plus a life shorter than its own cadence. Three
+       * hand-tuned ring blocks per weapon would have been twenty-four numbers
+       * with no rule connecting them, and the half that drifted would have been
+       * the half nobody was listening to.
+       *
+       * So a tier scales the weapon's OWN ring by a fixed ladder:
+       *
+       *   `ms` DOES NOT MOVE. It is derived from the weapon's cadence so the
+       *   shimmer from one round is over before the next round leaves the
+       *   barrel. That is the entire anti-stacking guarantee and a tier has no
+       *   business touching it. This is the load-bearing line of the block.
+       *
+       *   `rate` steps up 12 per cent a tier, which is close enough to a
+       *   semitone to read as the same bell cast smaller rather than as a
+       *   different object.
+       *
+       *   `gain` steps 18 per cent, which is under 1.5 dB - present, and nowhere
+       *   near the ceiling the note above describes.
+       */
+      const tier = Math.max(1, Math.min(3, opts.tier || 1));
+      const rate = R.rate * (1 + 0.12 * (tier - 1));
+      const rgain = R.gain * (1 + 0.18 * (tier - 1));
+
       const rs = ctx.createBufferSource();
       rs.buffer = ringBuf;
-      rs.playbackRate.value = R.rate * pitch * rand(0.97, 1.03);
+      rs.playbackRate.value = rate * pitch * rand(0.97, 1.03);
       own(v, rs);
-      const rg = gain(v, R.gain);
+      const rg = gain(v, rgain);
       rs.connect(rg); rg.connect(v.out);
 
       const rt = t + 0.004;
+      // R.ms, never scaled by tier. See above.
       const life = Math.min(R.ms / 1000, ringBuf.duration / rs.playbackRate.value);
-      rg.gain.setValueAtTime(R.gain, rt);
+      rg.gain.setValueAtTime(rgain, rt);
       rg.gain.exponentialRampToValueAtTime(0.0005, rt + life);
       rg.gain.setValueAtTime(0, rt + life + 0.001);
       fire(v, rs, rt, rt + life + 0.02);

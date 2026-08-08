@@ -5478,7 +5478,7 @@ export function createViewmodel(host, materials) {
 
     current = w;
     model = m;
-    if (gilded.has(id)) gild(m);
+    if (gilded.has(id)) gild(m, gilded.get(id));
     group.add(m.root);
 
     // Park the flash on this weapon's muzzle and size it to the calibre.
@@ -5515,10 +5515,24 @@ export function createViewmodel(host, materials) {
   // eight materials rather than compiling a program per weapon.
   // -------------------------------------------------------------------------
 
-  /** Weapon ids that have been through the Altar. */
-  const gilded = new Set();
+  /**
+   * Weapon ids that have been through the Altar, and WHICH PASS each is on.
+   *
+   * A Map rather than a Set since the Altar started taking a weapon three
+   * times: "has this been upgraded" and "what does it look like now" stopped
+   * being the same question the moment there was more than one answer.
+   */
+  const gilded = new Map();
 
-  let gildMap = null;
+  /**
+   * One material map per tier, built on first use and kept.
+   *
+   * Keyed rather than single, because the maps are CACHES of cloned materials -
+   * see recolour - and rebuilding one per upgrade would leave the old clones
+   * attached to meshes that had already been gilded, which is a leak that only
+   * shows up after the third pass.
+   */
+  const gildMaps = new Map();
 
   /**
    * Clone a base material and re-tint it, keeping every map, normal scale and
@@ -5542,37 +5556,98 @@ export function createViewmodel(host, materials) {
     return m;
   }
 
-  function buildGildMap() {
+  /**
+   * THE THREE FINISHES, AND WHY THEY ARE LAPIS, CARNELIAN AND GOLD.
+   *
+   * The owner asked for three passes through the Altar told apart by COLOUR and
+   * not by name: "you don't need new names because all the guns can just be a
+   * new color... maybe we end in gold, shiny gold is the final one."
+   *
+   * Lapis, carnelian and gold are the actual Egyptian jewellery triad, so the
+   * progression sits inside the world's own material vocabulary rather than
+   * being a colour ramp bolted onto it. They are also the three most separable
+   * choices at a glance in rooms lit by two point lights, which is the only test
+   * that matters when the weapon sits at the bottom of the frame in a firefight.
+   *
+   * WHAT MOVES BETWEEN TIERS IS ONLY THE PALETTE. This table does not re-pose,
+   * re-proportion or re-model anything; it swaps which MATERIAL a body mesh
+   * points at, exactly as it did when there was one tier. These models are the
+   * one part of the project the owner has said outright that he likes.
+   *
+   * TIER TWO DIFFERS IN VALUE AND NOT ONLY IN HUE. At a glance across a gallery
+   * hue is the first thing the eye loses and value is the last, so two tiers
+   * separated only by hue would read as the same weapon in every dark room on
+   * this map.
+   *
+   * THE INLAY INVERTS AT TIER THREE, which is the whole trick of it. At tiers
+   * one and two the gold lives only in the 1mm wear strips along each chamfer,
+   * and that is what makes the silhouette read as chased metal rather than as a
+   * painted slab. At tier three the gold takes the BODY, so the inlay has to
+   * become brighter to keep the chasing legible: electrum, nearly white, with
+   * the darkest seams of the three under it. The final weapon becomes the thing
+   * that was only ever hinted at along its own edges.
+   */
+  const TIER_FINISH = [
+    // TIER 1 - LAPIS. Unchanged from the single upgraded state that shipped, so
+    // a player who never buys a second pass sees exactly the weapon they had.
+    {
+      metal:   { color: 0x1d3068, metalness: 0.86, roughness: 0.40, env: 0.34, emissive: 0x07102c, glow: 0.35 },
+      dark:    { color: 0x121f45, metalness: 0.88, roughness: 0.52, env: 0.30, emissive: 0x050a1c, glow: 0.30 },
+      edge:    { color: 0xe0b45c, metalness: 0.98, roughness: 0.18, env: 0.45, emissive: 0x40290a, glow: 0.45 },
+      seam:    { color: 0x070b1c, metalness: 0.72, roughness: 0.50, env: 0.14 },
+      poly:    { color: 0x18203a, metalness: 0.10, roughness: 0.88, env: 0.12 },
+      housing: { color: 0x1b2b57, metalness: 0.88, roughness: 0.52, env: 0.26 },
+      wood:    { color: 0x7d5c22, metalness: 0.20, roughness: 0.60, env: 0.20 },
+    },
+    // TIER 2 - CARNELIAN.
+    {
+      metal:   { color: 0x8c2f1d, metalness: 0.88, roughness: 0.36, env: 0.36, emissive: 0x2c0a04, glow: 0.35 },
+      dark:    { color: 0x521508, metalness: 0.90, roughness: 0.50, env: 0.32, emissive: 0x1a0603, glow: 0.30 },
+      edge:    { color: 0xe8bf68, metalness: 0.98, roughness: 0.16, env: 0.48, emissive: 0x4a2f0c, glow: 0.48 },
+      seam:    { color: 0x1a0705, metalness: 0.72, roughness: 0.50, env: 0.14 },
+      poly:    { color: 0x3a1c14, metalness: 0.10, roughness: 0.88, env: 0.12 },
+      housing: { color: 0x6b2415, metalness: 0.88, roughness: 0.50, env: 0.28 },
+      wood:    { color: 0x7d5c22, metalness: 0.20, roughness: 0.60, env: 0.20 },
+    },
+    // TIER 3 - GOLD. Roughness drops across the board: this is the only tier
+    // meant to throw a highlight the player catches from the corner of the eye.
+    {
+      metal:   { color: 0xd9a441, metalness: 0.99, roughness: 0.16, env: 0.55, emissive: 0x4a3208, glow: 0.42 },
+      dark:    { color: 0x8f6a22, metalness: 0.98, roughness: 0.30, env: 0.46, emissive: 0x2c1e05, glow: 0.34 },
+      edge:    { color: 0xf7e6b0, metalness: 1.00, roughness: 0.10, env: 0.62, emissive: 0x6a5a24, glow: 0.55 },
+      seam:    { color: 0x120b02, metalness: 0.72, roughness: 0.48, env: 0.14 },
+      poly:    { color: 0x3d3016, metalness: 0.12, roughness: 0.86, env: 0.14 },
+      housing: { color: 0xa87c2c, metalness: 0.94, roughness: 0.34, env: 0.42 },
+      wood:    { color: 0x8a6526, metalness: 0.22, roughness: 0.56, env: 0.22 },
+    },
+  ];
+
+  /**
+   * @param {number} tier 1..MAX. Anything outside CLAMPS rather than throwing: a
+   *   weapon carrying a bad tier should look wrong, not take down the frame it
+   *   is being drawn in.
+   */
+  function buildGildMap(tier = 1) {
+    const F = TIER_FINISH[Math.min(TIER_FINISH.length, Math.max(1, tier | 0)) - 1];
     return new Map([
-      // Receiver, frame, every large body panel: lapis.
-      [P.metal, recolour(P.metal, {
-        color: 0x1d3068, metalness: 0.86, roughness: 0.40, env: 0.34,
-        emissive: 0x07102c, glow: 0.35,
-      })],
-      // Barrels, bolt carriers, phosphate parts: the deeper lapis, so the
-      // weapon still has a value ladder and does not read as one blue slab.
-      [P.dark, recolour(P.dark, {
-        color: 0x121f45, metalness: 0.88, roughness: 0.52, env: 0.30,
-        emissive: 0x050a1c, glow: 0.30,
-      })],
-      // The wear strips along every chamfer become the gold inlay. These are
-      // the 1mm slivers that already catch the key light, so putting the gold
-      // here is what makes the whole silhouette read as chased metal rather
-      // than as a repaint.
-      [P.edge, recolour(P.edge, {
-        color: 0xe0b45c, metalness: 0.98, roughness: 0.18, env: 0.45,
-        emissive: 0x40290a, glow: 0.45,
-      })],
-      // Seams and port cuts go almost black, so the inlay has an edge to sit
+      // Receiver, frame, every large body panel: the tier's own body colour.
+      [P.metal, recolour(P.metal, F.metal)],
+      // Barrels, bolt carriers, phosphate parts: the deeper shade, so the weapon
+      // keeps a value ladder and never reads as one flat slab.
+      [P.dark, recolour(P.dark, F.dark)],
+      // The wear strips along every chamfer. At tiers one and two these are the
+      // 1mm slivers of gold inlay that already catch the key light, which is
+      // what makes the silhouette read as chased metal rather than a repaint.
+      // At tier three the body IS gold and these go to electrum instead.
+      [P.edge, recolour(P.edge, F.edge)],
+      // Seams and port cuts go nearly black, so the inlay has an edge to sit
       // against.
-      [P.seam, recolour(P.seam, { color: 0x070b1c, metalness: 0.72, roughness: 0.50, env: 0.14 })],
-      // Grips and furniture: lapis, but matte, because a polymer grip that
-      // shines like the receiver stops reading as something you can hold.
-      [P.poly, recolour(P.poly, { color: 0x18203a, metalness: 0.10, roughness: 0.88, env: 0.12 })],
-      [P.housing, recolour(P.housing, {
-        color: 0x1b2b57, metalness: 0.88, roughness: 0.52, env: 0.26,
-      })],
-      [P.wood, recolour(P.wood, { color: 0x7d5c22, metalness: 0.20, roughness: 0.60, env: 0.20 })],
+      [P.seam, recolour(P.seam, F.seam)],
+      // Grips and furniture: the body colour, but matte, because a polymer grip
+      // that shines like the receiver stops reading as something you can hold.
+      [P.poly, recolour(P.poly, F.poly)],
+      [P.housing, recolour(P.housing, F.housing)],
+      [P.wood, recolour(P.wood, F.wood)],
     ]);
   }
 
@@ -5582,11 +5657,34 @@ export function createViewmodel(host, materials) {
    * Idempotent by construction: the gilded materials are values in the map and
    * never keys, so a second pass finds nothing to change.
    */
-  function gild(m) {
-    if (!gildMap) gildMap = buildGildMap();
+  function gild(m, tier = 1) {
+    let map = gildMaps.get(tier);
+    if (!map) { map = buildGildMap(tier); gildMaps.set(tier, map); }
     m.root.traverse((o) => {
       if (!o.isMesh) return;
-      const next = gildMap.get(o.material);
+
+      /**
+       * MAPPED FROM THE MESH'S ORIGINAL MATERIAL, REMEMBERED ON FIRST TOUCH.
+       *
+       * The note this replaces said the pass was "idempotent by construction:
+       * the gilded materials are values in the map and never keys, so a second
+       * pass finds nothing to change." That was true, it was the right property
+       * while a weapon could go through the Altar once, and it is exactly the
+       * bug the moment it can go through three times: the second call finds
+       * every mesh already pointing at a tier-one clone, which is a key in no
+       * map, and silently does nothing.
+       *
+       * Caught by test/tiers.mjs, which measures the mean colour of the
+       * viewmodel rather than reading the palette table back. Tier three
+       * rendered lapis. A test that compared hex literals would have agreed with
+       * the table and shipped a gold tier nobody could see.
+       *
+       * `gildBase` is written once and never overwritten, so it is always the
+       * factory material, and re-gilding to any tier - including back down - is
+       * a lookup rather than a repair.
+       */
+      if (o.userData.gildBase === undefined) o.userData.gildBase = o.material;
+      const next = map.get(o.userData.gildBase);
       if (next) o.material = next;
     });
   }
@@ -5600,11 +5698,12 @@ export function createViewmodel(host, materials) {
    * but a silent no-op on a weapon the mystery box hands over later would be a
    * bug with no symptom until somebody paid 5000 gold for nothing.
    */
-  function upgradeFinish(id) {
+  function upgradeFinish(id, tier = 1) {
     if (!WEAPONS[id]) return false;
-    gilded.add(id);
+    const t = Math.max(1, tier | 0);
+    gilded.set(id, t);
     const m = built.get(id);
-    if (m) gild(m);
+    if (m) gild(m, t);
     return true;
   }
 
@@ -5659,7 +5758,7 @@ export function createViewmodel(host, materials) {
     });
     for (const l of limbs) l.parent && l.parent.remove(l);
 
-    if (gilded.has(id)) gild(m);
+    if (gilded.has(id)) gild(m, gilded.get(id));
 
     m.root.traverse((o) => {
       if (!o.isMesh) return;
@@ -6672,6 +6771,8 @@ export function createViewmodel(host, materials) {
     /** The Altar of Ptah's cosmetic half. Finish only: see the note above. */
     upgradeFinish,
     isGilded(id) { return gilded.has(id); },
+    /** Which finish a weapon is wearing. 0 for one that has never been gilded. */
+    finishTier(id) { return gilded.get(id) || 0; },
 
     /** The Altar of Ptah's ritual: the weapon leaves the hands, and is shown. */
     stow,

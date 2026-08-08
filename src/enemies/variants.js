@@ -427,6 +427,218 @@ function animateGoldScarab(rig, spec, s) {
 }
 
 // ---------------------------------------------------------------------------
+// the censer: a humanoid that carries one thing the roster has never carried
+// ---------------------------------------------------------------------------
+
+/**
+ * The censer, and it is the whole silhouette.
+ *
+ * THE ONE RULE AT THE TOP OF THIS FILE applies here in its original form, unlike
+ * the gold scarab, which was the deliberate exception. This body has to be
+ * telling at twenty metres before its colour or its behaviour is available, and
+ * a thin mummy is a mummy. So it carries a bronze bowl on a half-metre chain off
+ * one hand, hanging BELOW the fist and OUTSIDE the leg line, with a coal in it.
+ * Nothing else in the game has a mass that is detached from the body outline,
+ * and a swinging offset blob is the one shape a horde silhouette cannot fake.
+ *
+ * SIZE, BY THE SAME ARITHMETIC THE VENT WAS SIZED BY. At the fifteen metres an
+ * enemy is fought at, a metre is about 47 px in a 1000 px frame. The bowl at
+ * 0.30 m across the actor's own 1.02 scale is 30.6 cm, or about 14 px, which is
+ * the same on-screen size as the gold scarab's vent and for the same reason: it
+ * is the thing the player is meant to find in the frame. The coal inside it is
+ * 19 cm, about 9 px, and it is emissive, so it is the part that survives fog.
+ *
+ * The chain is 0.50 m so the bowl hangs half a metre under the hand. With the
+ * forearm hanging off a shoulder at 0.50 of body height that puts the bowl at
+ * roughly knee height and, through the arm splay, clear of the thigh - which is
+ * what makes it part of the OUTLINE rather than a detail drawn over the torso.
+ * A 0.25 m chain was tried on paper and rejected for the same reason the
+ * shambler's rags were moved outboard: a mass inside the silhouette does not
+ * change the silhouette.
+ */
+const CGEO = new Map();
+
+function censerGeometry(P) {
+  let out = CGEO.get(P);
+  if (out) return out;
+
+  const T = WRAP_TILES;
+  const chain = P.censerChain;
+  const bowl = P.censerBowl;
+  const bowlH = P.censerBowlH;
+  out = {};
+
+  {
+    // Not a rendered chain. Three thousand links at 9 px is a grey smear, so
+    // this is one thin bar on the dark material, which at range reads as the
+    // gap between the hand and the bowl - and the gap is the information.
+    const p = parts(T);
+    p.box(0.035, chain, 0.035, { y: -chain * 0.5, chamfer: 0 });
+    out.chain = p.build();
+  }
+  {
+    // Wide at the rim, tapering hard to the base, with a lid slab over it. The
+    // taper is what stops it reading as a bucket: a censer is a cup on a stem.
+    const p = parts(T);
+    p.box(bowl, bowlH, bowl,
+      { y: -chain - bowlH * 0.5, top: 1.0, bottom: 0.42 });
+    p.box(bowl * 0.82, 0.045, bowl * 0.82,
+      { y: -chain + 0.03, top: 0.7, bottom: 1.0 });
+    out.bowl = p.build();
+  }
+  {
+    // The coal sits ABOVE the rim rather than down in the cup. Inside it, the
+    // bowl walls occlude it from every angle except straight down, which is the
+    // one angle the player never has.
+    const p = parts(T);
+    p.box(bowl * 0.62, 0.05, bowl * 0.62, { y: -chain + 0.075, chamfer: 0 });
+    out.coal = p.build();
+  }
+
+  CGEO.set(P, out);
+  return out;
+}
+
+/**
+ * The humanoid, plus the thing in its hand.
+ *
+ * Built on buildHumanoid and then hung off, rather than forked, for the reason
+ * buildGoldScarab wraps buildScarab: everything that makes this body different
+ * is three meshes and a group, and a second copy of the leg rig to get them
+ * would be two hundred lines of duplication to add one pivot.
+ *
+ * THE ARM IT HANGS FROM IS THE LEAD ARM, not a fixed side. buildHumanoid derives
+ * `lead` per instance from the same random stream the asymmetry uses, and the
+ * lead shoulder is the one that sits further out and further forward, so the
+ * censer hangs off the wide side of the body. Picking side -1 outright would put
+ * it against the near shoulder on half the instances and lose the clearance the
+ * whole design is about.
+ */
+function buildCenser(spec, mats, actor) {
+  const rig = buildHumanoid(spec, mats, actor);
+  const G = censerGeometry(spec.proportions);
+
+  const arm = rig.arms.find((a) => a.side === (rig.lead || 1)) || rig.arms[0];
+  if (!arm) {
+    throw new Error('censer: buildHumanoid no longer returns an arm list to hang a censer from');
+  }
+
+  // The hand end of the forearm. buildHumanoid parents the forearm to `elbow`
+  // and the member runs from 0 down to -foreL in that frame, so this is the
+  // fist, not the wrist, without the builder having to publish a hand joint.
+  const pivot = new THREE.Group();
+  pivot.position.y = -spec.proportions.foreL;
+  arm.elbow.add(pivot);
+
+  const hang = (g, mat) => {
+    const m = new THREE.Mesh(g, mat);
+    m.userData.enemy = actor;
+    // 'body', not 'head'. This variant does not move the crit anywhere - that
+    // is the gold scarab's idea and it is already in the game. A censer bowl
+    // that paid the 100 bounty would be a second lesson competing with the one
+    // this enemy exists to teach.
+    m.userData.region = 'body';
+    m.castShadow = true;
+    pivot.add(m);
+    // Pushed into rig.meshes because that array is driven, not a manifest: the
+    // spawn path re-shows every mesh in it and setFidelity rewrites castShadow
+    // across it. A mesh outside it is a mesh that stays hidden after the first
+    // death. Same trap the gold scarab's vent had to avoid.
+    rig.meshes.push(m);
+    rig.triangles += g.attributes.position.count / 3;
+    return m;
+  };
+
+  hang(G.chain, mats.wrapDark);
+  hang(G.bowl, mats.accent);
+  const coal = hang(G.coal, mats.eye);
+
+  rig.censer = pivot;
+  rig.censerArm = arm;
+  /**
+   * The coal's material, kept by reference so the animator does not have to go
+   * looking for it every frame.
+   *
+   * IT IS mats.eye, WHICH IS ALSO THE SKULL'S SOCKETS, and that is deliberate
+   * rather than a collision. makeMaterials builds one set per actor, so
+   * brightening this brightens the coal AND the two sockets on this one body:
+   * the whole enemy lights up as its ground charges, which is a bigger and more
+   * findable read than a single 9 px ember, and it costs one property write.
+   */
+  rig.coalMat = coal.material;
+
+  /**
+   * How far along this body's ground charge is, 0 to 1, written by the DIRECTOR.
+   *
+   * The one field on this rig that nothing in enemies/ sets. The mechanic lives
+   * in director.js because it is a question about the player's ground and the
+   * stone between - see the block there - and the only thing the body owes it is
+   * a place to show it. Initialised here so the animator never reads undefined
+   * off a pooled actor that has not been driven yet.
+   */
+  rig.smoulder = 0;
+
+  return rig;
+}
+
+/** Socket brightness at rest. makeMaterials builds mats.eye at exactly this. */
+const COAL_DIM = 0.9;
+
+/**
+ * And at a full charge.
+ *
+ * 3.4 is a factor of 3.8 over the resting value, and the factor is the number
+ * that was chosen rather than the absolute: the fog and the two point lights in
+ * the interior flatten small absolute differences, and anything under about
+ * triple was indistinguishable from the flicker the rest of the roster's sockets
+ * already have. It is high, and the file's own warning about a 2.4 emissive
+ * reading as a machine visor is the reason it is confined to a 19 cm coal and
+ * two recessed squares rather than put on a bar across the face, and the reason
+ * it is TRANSIENT: at rest this body is the dimmest thing in the roster.
+ */
+const COAL_LIT = 3.4;
+
+/**
+ * The walk, plus a censer that lags the hand carrying it.
+ *
+ * A censer on a chain is a pendulum with a moving pivot, and the single cue that
+ * separates one from a lamp bolted to a fist is that it does NOT arrive when the
+ * hand does. So the pivot cancels most of the arm's own rotation - which leaves
+ * the bowl hanging plumb, the way gravity leaves it - and keeps 15 per cent,
+ * which is the part that reads as the chain dragging the bowl after the swing.
+ *
+ * SUBTRACTING THE ARM RATHER THAN AUTHORING A POSE IS THE WHOLE TRICK, and it is
+ * why this animator does not have to know what animateHumanoid did. The wind-up
+ * raises both arms to WINDUP_ARM and the strike drops them through; both are
+ * read back off the joints here, so the censer swings up on the telegraph and
+ * scythes down through the follow-through for free, and it will keep doing so if
+ * those poses are ever retuned.
+ */
+function animateCenser(rig, spec, s) {
+  animateHumanoid(rig, spec, s);
+
+  const arm = rig.censerArm;
+  const pivot = rig.censer;
+
+  // How far the hand has swung, in the torso's frame. The shoulder and the
+  // elbow both rotate about x and the pivot inherits both.
+  const carried = arm.shoulder.rotation.x + arm.elbow.rotation.x;
+
+  // Its own slow pendulum on top, at 0.45 of the stride clock so it is visibly
+  // NOT on the beat of the legs. A censer swinging in time with the feet reads
+  // as one rigid body with a lump on it.
+  const sway = Math.sin(s.phase * 0.45) * 0.20;
+
+  pivot.rotation.x = -carried * 0.85 + sway;
+  // Plumb sideways as well, so the splay that holds the bowl clear of the thigh
+  // does not also tip it. The lateral sway is a quarter of the fore-aft one:
+  // a hanging censer swings along the arc the arm swept, not across it.
+  pivot.rotation.z = -arm.shoulder.rotation.z + sway * 0.25;
+
+  rig.coalMat.emissiveIntensity = COAL_DIM + (COAL_LIT - COAL_DIM) * (rig.smoulder || 0);
+}
+
+// ---------------------------------------------------------------------------
 // the table
 // ---------------------------------------------------------------------------
 
@@ -844,6 +1056,266 @@ export const GOLD_SCARAB = extend(SCARAB, {
   animate: animateGoldScarab,
 });
 
+/**
+ * The Censer: the enemy that stops coming, and charges rent on the spot you
+ * chose to stand.
+ *
+ * THE PROBLEM IT IS BUILT AGAINST, and it is the other half of the gold
+ * scarab's. That variant assumed the player's answer by wave fifteen is to
+ * backpedal in a circle and hold fire, and it broke the "hold fire" half by
+ * putting the only soft panel on the back. What it does not touch is the answer
+ * a player falls back on the moment a wave gets big: STOP CIRCLING, put a corner
+ * or a doorway behind you, cover one approach, and let the horde come down one
+ * lane. That works because every body in this game walks at the player and
+ * therefore arrives in the one direction the player is already looking, so
+ * holding an angle converts a room fight into a corridor fight for free.
+ *
+ * A Censer refuses the trade twice over.
+ *
+ *   IT DOES NOT ARRIVE. Its attackRange is 9.0, and enemies/mummy.js stops any
+ *   body once it is inside 0.85 of its own reach - 0.85 x (9.0 x 1.02 + 0.42) is
+ *   8.16 m - and freezes it again for the whole of every wind-up and swing, which
+ *   begin at the full 9.60 m. So it creeps in during its cooldowns and settles in
+ *   that 1.44 m band: measured against a pinned player it holds at 8.9 m, while a
+ *   shambler released from the same 14 m closes to 1.75. It is the first thing in
+ *   the roster that will not walk into the lane the player is covering, which
+ *   means it cannot be answered by aiming down that lane.
+ *
+ *   AND STANDING STILL IN ITS SIGHT COSTS HEALTH. Everything above is posture;
+ *   the mechanic is in director.js, because it is a question about the player's
+ *   ground and about the stone between here and there, and neither of those is
+ *   something a spec can express. The short version: ground a Censer can see,
+ *   that the player has not left, begins to smoulder, and standing in it costs a
+ *   small tick on a slow clock. Give up the spot, or break the line, and it goes
+ *   out instantly. The full argument and every number is on updateCensers().
+ *
+ * SO IT IS NOT A BULLET SPONGE AND IT IS DELIBERATELY NOT DANGEROUS. It deals no
+ * contact damage at all (see `damage` below), and it is the SOFTEST humanoid in
+ * the game at 130. Killing one is easy. The point is where you have to be
+ * standing to do it: it is at eight metres, in the open, off your corner, in the
+ * direction you were not covering. The cost of the answer is the position, and
+ * the position was the thing the player was defending.
+ *
+ * The key is `censer` rather than `priest` for the same reason the gold scarab's
+ * is `goldscarab`: it is read at exactly three call sites, all of them the
+ * director's tables, and it should say what the thing is without anyone opening
+ * this file.
+ */
+export const CENSER = extend(MUMMY, {
+  id: 'censer',
+  name: 'The Censer',
+
+  // UNDER the shambler's 150, and the lowest of any humanoid here. TTK against a
+  // body is health over weapon damage, so this costs 0.87 of a shambler's rounds
+  // with any gun on the table - the cheapest kill in a late wave. That is the
+  // design and not a mercy: an enemy whose whole threat is that you have to walk
+  // to it must be worth walking to, and a Censer that took gold-scarab rounds to
+  // put down would make ignoring it the correct play.
+  health: 130,
+  // Between the Bound's 1.32 and the shambler's 2.25, and it wants to be the
+  // LAST body to arrive. At 1.85 it crosses the 13 m minimum spawn band in seven
+  // seconds while the shamblers ahead of it take five and the husks two and a
+  // half, so by the time it plants, the player is already committed to a spot -
+  // which is the state this enemy is written against.
+  speed: 1.85,
+  accel: 5.0,
+  // The shambler's, unchanged, and it has to be at least that. This body's
+  // threat is a LINE, so a Censer that could not keep its face on a moving
+  // player would be answered by walking round it, which is the gold scarab's
+  // counter-play and not this one's.
+  turn: 3.2,
+
+  /**
+   * ZERO, AND IT IS THE POINT RATHER THAN AN OMISSION.
+   *
+   * systems/damage.js returns at `amount <= 0` before it touches health, trauma
+   * or the red wash, so the attack block in mummy.js runs its whole wind-up,
+   * swing and cooldown on this body and lands nothing. That is exactly what is
+   * wanted: the swing is a TELEGRAPH, not an attack. It costs one no-op call per
+   * cycle per Censer and it buys the arm pose, the audible swipe, and a two and
+   * a half second metronome the player can read across a room, out of machinery
+   * that already exists rather than out of a second damage path.
+   *
+   * A body that hits for nothing in melee is also the honest read of what this
+   * thing is. Walk up to a Censer and it cannot touch you; it just keeps
+   * swinging, at a spot you are no longer standing on.
+   */
+  damage: 0,
+  /**
+   * NINE METRES, AND IT IS A STANDOFF RANGE RATHER THAN A REACH.
+   *
+   * mummy.js zeroes a body's desired speed at 0.85 of `attackRange x scale +
+   * playerRadius`, which here is 8.16 m, and re-opens it the moment the player
+   * gets further away - so this number is not how far the thing can hit, it is
+   * the ring it holds. Eight metres is chosen against the director's own
+   * SPAWN_NEAR of 13: it is comfortably inside the distance a wave arrives from,
+   * so a Censer plants in the room rather than in the doorway it came through,
+   * and it is outside the 2.3 m the Bound reaches, so a player fighting the
+   * horde in front of them is not incidentally standing next to it.
+   */
+  attackRange: 9.0,
+  /**
+   * ONE SWING IS 2.40 SECONDS, WHICH IS THE SMOULDER'S FILL TIME.
+   *
+   * 0.95 + 0.55 + 0.90. The period is deliberately the same as CENSER_FILL in
+   * director.js so the visible swing runs at the rate the floor charges at, and
+   * a player who has learned "one full swing is one tick" is right about the
+   * cost of standing still.
+   *
+   * THEY ARE NOT LOCKED TOGETHER AND THIS IS NOT CLAIMING THEY ARE. The swing
+   * runs whatever the player does; the charge only runs while the player holds
+   * their ground, so the two drift apart the moment anybody moves. It is a rhyme
+   * for the player's benefit, not a coupling, and wiring them would mean the
+   * director reaching into an actor's attack clock to do it.
+   */
+  windup: 0.95,
+  strikeTime: 0.55,
+  cooldown: 0.90,
+  // Lighter than the shambler's 1.0. This is the one enemy the player reads at a
+  // fixed eight metres while it is standing perfectly still, and at that range a
+  // flinch is the only motion on the body: a Bound's 0.25 here would make rounds
+  // landing on it look like rounds passing through it.
+  staggerTake: 1.3,
+
+  // Tall and thin. Height comes out at 2.10 x 1.02 = 2.14 m against the
+  // shambler's 1.88 and the Bound's 2.54, so it is the second tallest thing in
+  // the horde - and paired with a chest two thirds the shambler's width it is
+  // the only body here whose outline is a vertical line.
+  scale: 1.02,
+  height: 2.10,
+  // Narrower than the shambler's 0.42, because the body is narrower. It also
+  // keeps a planted Censer from becoming a pillar the horde queues behind.
+  radius: 0.36,
+  // The humanoids', untouched. A Censer stands still in a moving crowd, so its
+  // separation is the only thing stopping the wave from walking through it, and
+  // a smaller one would have shamblers clipping the body the player is aiming at.
+  sepRadius: 1.05,
+  // Below the shambler's 1.0 and above the Bound's 0.62. The groan that opens
+  // every wind-up is this enemy's off-screen tell, and it has to be tellable
+  // from the bodies actually in front of the player.
+  voicePitch: 0.80,
+
+  palette: {
+    /**
+     * DARKER THAN THE SHAMBLER, ON THE GOLD SCARAB'S ARGUMENT AND NOT ON A WHIM.
+     *
+     * The coal is the read on this body, so it has to be the only bright mass on
+     * it. 0x6e6455 is 0.71 of the shambler's 0x9a8a6e per channel, which is a
+     * shade under one stop - NOT the two-stop overshoot the base linen was
+     * corrected back from, and the internal value RANGE that the note on the
+     * base palette says is the thing that reads at distance is preserved
+     * exactly: wrapDark sits at 0.55 of wrap here against the shambler's 0.59,
+     * so this body still has a lit half to lose into a crease.
+     */
+    wrap: 0x6e6455,
+    wrapDark: 0x3d382e,
+    deep: 0x1c1a15,
+    /**
+     * PALE GREEN, WHICH IS THE ONE HUE THE ROSTER HAS NOT USED.
+     *
+     * Shambler amber 0xffae3c, husk ember 0xff5a18, scarab orange 0xd06a12,
+     * Bound blue 0x6ab4ff, gold scarab cyan 0x63e0ff. Five enemies across two
+     * families of warm and cold, and green is unclaimed - so a green light in a
+     * chamber is unambiguous the first time it is seen, which matters more here
+     * than on any other variant because the coal is both the identity cue AND
+     * the state readout. It is burning natron, and it is the same colour as the
+     * thing the player will shortly be standing in.
+     */
+    eye: 0x8fe07a,
+    // Tarnished bronze rather than the shambler's gilding. Crisper than the
+    // linen and duller than the Bound's 0.88 / 0.34 ceremonial gold: this is a
+    // working censer carried by a servant, not grave goods.
+    accent: 0x7d6a3a,
+    accentMetal: 0.75,
+    accentRough: 0.42,
+  },
+
+  proportions: {
+    // hipY is not free: it must equal thighL + shinL or the feet leave the sand.
+    // Both legs are longer than the shambler's 0.44 / 0.48, which is where the
+    // height goes - a tall enemy built by scaling the whole body up reads as a
+    // shambler seen from closer.
+    hipY: 1.04, hipW: 0.28, bodyD: 0.21,
+    legX: 0.11, legW: 0.13, thighL: 0.50, shinL: 0.54,
+    // A chest 0.36 against the shambler's 0.46. The taper in the builder runs
+    // 1.0 at the shoulder to 0.66 at the waist either way, so a narrow chest
+    // narrows the whole trunk rather than just the top of it.
+    torsoY: 0.14, chestW: 0.36, chestH: 0.62,
+    // Shoulders in as well, to 0.24. buildHumanoid puts a deltoid over the joint
+    // and the span comes out about 2.77 x shoulderX, so 0.665 here; the head at
+    // 0.195 is 29 per cent of it, which sits inside the quarter-to-a-third band
+    // the base spec's note says reads as a person. Dropping the shoulders
+    // without dropping the skull is how a thin body becomes a bobblehead.
+    shoulderX: 0.24, shoulderY: 0.50, armW: 0.115, upperL: 0.42, foreL: 0.44,
+    headY: 0.66, headW: 0.195, headH: 0.26, headD: 0.235,
+
+    // What hangs off the hand. See censerGeometry for why each is this size.
+    censerChain: 0.50,
+    censerBowl: 0.30,
+    censerBowlH: 0.26,
+
+    tatterRest: 0.34,
+    // TWO, both long, both off the shoulders, and no hem. The shambler's hem
+    // breaks the two-legs-in-a-box outline, which is the right fix for a body
+    // whose problem is that it is a box; this body's outline is a vertical line
+    // and a hem across the hips would widen exactly the thing that makes it
+    // readable. So the wraps fall the full length of the trunk instead, and the
+    // silhouette they make is a stick with a bright bowl swinging off it.
+    tatters: [
+      { on: 'torso', x: -0.20, y: 0.30, z: -0.16, w: 0.22, h: 1.12, yaw: 0.44, cut: 1, swing: 0.5, out: 0.22 },
+      { on: 'torso', x: 0.20, y: 0.28, z: -0.16, w: 0.20, h: 1.04, yaw: -0.40, cut: 2, swing: 0.5, out: 0.20 },
+    ],
+  },
+
+  gait: {
+    // A multiplier on the derived cadence, not the cadence. 1.0 means no foot
+    // slip; see strideRate in mummy.js.
+    rate: 1.0,
+    // Shorter than the shambler's 0.62 on legs that are 13 per cent longer, so
+    // it covers its 1.85 m/s in small deliberate steps rather than in strides.
+    // A slow body taking long strides reads as heavy; this one is a procession.
+    stride: 0.58,
+    // Almost nothing. Both hands are occupied - one carrying, one steadying -
+    // and an arm swing on this body would throw the censer around on a rig that
+    // is trying to sell it as a pendulum with weight in it.
+    armSwing: 0.10,
+    // Held low and only just forward. The shambler's -0.95 is the arms-out
+    // undead pose and it is the one silhouette this body must not share, because
+    // an outstretched arm puts the hand - and therefore the censer - inside the
+    // torso outline from head on, which is the angle the player has most.
+    armReach: -0.30,
+    armSplay: 0.34,
+    // POSITIVE, unlike every other humanoid in the file. The animator applies
+    // -elbowBend, so this folds the forearms up and forward into a carrying
+    // pose, which is what puts the fist out past the thigh and hangs the bowl in
+    // clear air.
+    elbowBend: 0.55,
+    /**
+     * THE ONLY BODY IN THE GAME THAT IS NOT HUNCHED.
+     *
+     * Negative lean hunches the chest forward over the hips: the shambler runs
+     * -0.24, the husk -0.46, the Bound -0.05. A small POSITIVE value stands this
+     * one up and arches it slightly back, and at the twenty metres where the
+     * censer is still a smudge, upright against a field of stooped bodies is the
+     * cue that arrives first. Kept to 0.04 because past about a tenth of a radian
+     * it stops reading as bearing and starts reading as a fall.
+     */
+    lean: 0.04,
+    sway: 0.06,
+    hipTwist: 0.05,
+    bob: 0.04,
+    headLoll: 0.06,
+    // Chin UP, which on this rig is a positive droop. Every other humanoid here
+    // shuffles toward the player with its head down; this one watches. That is
+    // literally correct for the only enemy whose threat is its line of sight,
+    // and it is a second silhouette cue on the same axis as the lean.
+    headDroop: 0.10,
+  },
+
+  build: buildCenser,
+  animate: animateCenser,
+});
+
 /** Every variant the director may draw from, base included. */
 export const VARIANTS = {
   shambler: MUMMY,
@@ -851,6 +1323,7 @@ export const VARIANTS = {
   bound: BOUND,
   scarab: SCARAB,
   goldscarab: GOLD_SCARAB,
+  censer: CENSER,
 };
 
 /**
@@ -876,6 +1349,25 @@ export const UNLOCK = {
   // point of this enemy is that the head is not the crit, so it needs to arrive
   // well clear of the waves that were teaching the opposite lesson.
   goldscarab: 15,
+  /**
+   * TWENTY, and it is the same argument the entry above makes, continued.
+   *
+   * The shipped schedule was 1, 4, 6, 10 and then nothing for fifteen waves of a
+   * twenty-five wave run. The gold scarab put an introduction at 15; this puts
+   * one at 20, which keeps the five-wave spacing the table now has from wave ten
+   * onward, and lands it on a boss wave for the same reason 15 did - the first
+   * Censer walks out on a wave the player is already braced for, so a new body in
+   * the frame is a development rather than an ambush.
+   *
+   * IT MUST COME AFTER THE GOLD SCARAB AND NOT BEFORE. Both of these teach the
+   * same sentence in two different axes: the gold scarab says keep moving AROUND
+   * a body, this one says keep moving OFF a spot. Taught in that order the second
+   * reads as the general case of the first. Taught in the other order the player
+   * meets an enemy that punishes standing still, learns to circle harder, and is
+   * then handed an enemy that punishes circling - which is a contradiction rather
+   * than an escalation.
+   */
+  censer: 20,
 };
 
 export { buildHumanoid, animateHumanoid };

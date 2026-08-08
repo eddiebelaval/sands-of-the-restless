@@ -69,7 +69,11 @@ const FINAL_WAVE = 25;
 
 /** Pool depth per variant. Deeper than the cap so crumbling corpses never
  * starve the wave behind them. */
-const POOL = { shambler: 16, husk: 10, bound: 6, scarab: 12, goldscarab: 8 };
+// The Censer's 6 is the Bound's, and for the same arithmetic: it opens on a
+// weight of 0.28 against a table summing to about 2.9 at wave twenty, so under a
+// LIVE_CAP of 24 roughly three are on the floor at once, and the pool has to be
+// deeper than that or a crumbling body starves the wave behind it.
+const POOL = { shambler: 16, husk: 10, bound: 6, scarab: 12, goldscarab: 8, censer: 6 };
 
 /**
  * Seconds of quiet between waves, and the shorter first one - a player who has
@@ -89,6 +93,78 @@ const SPAWN_FAR = 55;
 
 /** Half-angle of the cone counted as "the player is looking at this". */
 const VIEW_COS = Math.cos(0.95);   // about 54 degrees off the view axis
+
+// ---------------------------------------------------------------------------
+// the smoulder: what a Censer does to the ground the player is standing on
+// ---------------------------------------------------------------------------
+
+/**
+ * How far a Censer's line reaches.
+ *
+ * 15 m, and the two numbers it is set against are both in this file. It has to
+ * be comfortably past the 8.16 m the variant plants at, or the enemy would turn
+ * itself off by arriving; and it has to be well short of SPAWN_FAR at 55, or a
+ * Censer that has just been put down at the far end of the courtyard would be
+ * taxing a player it is nine pixels tall to. Fifteen is also the range the rest
+ * of this project's notes measure legibility at, which is the right bar: a thing
+ * the player cannot pick out of the frame should not be charging them rent.
+ */
+const CENSER_SIGHT = 15;
+
+/**
+ * How far the player has to move to put it out.
+ *
+ * 2.2 m. It is set against the player's own body rather than against a feel: the
+ * controller's RADIUS is 0.42, so this is two and a half body widths, which is
+ * more than aiming wobble and more than a strafe inside a doorway, and cannot be
+ * paid for by shuffling on the spot. It is also 0.41 s of the 5.4 m/s walk, so
+ * the price of clearing it is under half a second - this is meant to move the
+ * player, not to punish them.
+ *
+ * A LOWER NUMBER WAS THE FIRST INSTINCT AND IT IS WRONG. At half a metre the
+ * mechanic is defeated by the small involuntary movement a player makes while
+ * tracking a target, so it would fire almost never and, when it did, would look
+ * like a bug. The whole idea is that GIVING UP THE SPOT is what clears it, and a
+ * spot has to be big enough to be a spot.
+ */
+const CENSER_BREAK = 2.2;
+
+/**
+ * Seconds of standing still per tick, with one Censer on you.
+ *
+ * 2.4, and the number it is measured against is the shambler's full attack
+ * cycle: windup 0.52 plus strike 0.42 plus cooldown 1.35 is 2.29 s. So a player
+ * who has stopped moving in order to trade with one melee body gets that entire
+ * exchange for free before the floor bills them for it. Anything shorter and the
+ * mechanic fires during a legitimate stand-and-shoot; anything much longer and a
+ * player can hold a corner through a whole wave and never notice it.
+ */
+const CENSER_FILL = 2.4;
+
+/**
+ * What one tick costs.
+ *
+ * 7 of the player's 100, against the scarab's 6 bite and the shambler's 16 swing
+ * - deliberately the smallest recurring cost in the game, because it is the only
+ * damage in it that cannot be avoided by aiming. At one Censer that is 2.9 per
+ * second against a shambler's 7.0, so standing in the smoulder is under half the
+ * price of standing in front of one shambler. It is RENT, not a hit: it does not
+ * kill a player who is paying attention, it makes a position stop being free.
+ */
+const CENSER_TICK = 7;
+
+/**
+ * How many Censers can stack on the same ground.
+ *
+ * Three, so the fourth in the room is a body to kill rather than more damage.
+ * The charge scales with how many have you, because killing three of four has to
+ * do something visible, and it is capped because 24 live actors on a 0.28 weight
+ * can put five or six in one room late on: at that point the tick would arrive
+ * every half second, which is burst damage, and burst is exactly what this
+ * mechanic exists not to be. Three is 8.75 per second, which is a room the
+ * player has to leave and can still leave.
+ */
+const CENSER_STACK = 3;
 
 // ---------------------------------------------------------------------------
 // spatial hash
@@ -859,12 +935,32 @@ export function createDirector({
      * late wave rather than the sentence.
      */
     const gold0 = unlockAt('goldscarab');
+    /**
+     * The Censer opens FATTER than the gold scarab, and that is a design call
+     * rather than a convenience.
+     *
+     * 0.28 against the gold scarab's 0.12, which is about a tenth of a late wave
+     * either side of two or three bodies. The gold scarab is an elite: one is an
+     * event, four is a different and much worse fight. A Censer is not an elite -
+     * it deals no contact damage, it is the softest humanoid in the game, and a
+     * lone one is answered by walking eight metres and shooting it. What makes it
+     * a mechanic is COVERAGE: with one, a player who gives up their corner has
+     * solved the wave; with three spread round the room, every corner is somebody
+     * seen from somewhere, and the player has to keep moving rather than relocate
+     * once. Below about a quarter weight the enemy is a curiosity.
+     *
+     * Ramped from its own unlock wave like the husk and the Bound, not from the
+     * literal 20, so a shifted tier gets a variant that eases in from its first
+     * appearance rather than one that arrives part-way up its ramp.
+     */
+    const censer0 = unlockAt('censer');
     const weight = {
       shambler: 1.0,
       scarab: wave >= unlockAt('scarab') ? 0.30 + Math.min(0.35, wave * 0.012) : 0,
       husk: wave >= husk0 ? 0.25 + Math.min(0.55, (wave - husk0) * 0.035) : 0,
       bound: wave >= bound0 ? 0.10 + Math.min(0.30, (wave - bound0) * 0.02) : 0,
       goldscarab: wave >= gold0 ? 0.12 + Math.min(0.20, (wave - gold0) * 0.02) : 0,
+      censer: wave >= censer0 ? 0.28 + Math.min(0.24, (wave - censer0) * 0.03) : 0,
     };
 
     let sum = 0;
@@ -1000,6 +1096,18 @@ export function createDirector({
     for (let i = live.length - 1; i >= 0; i--) retire(live[i], i);
     bosses.effects.clear();
     state.boss = null;
+
+    // The fire goes out with the bodies that were laying it. This is the one
+    // place all three teardowns pass through - reset(), forceWave() and a space
+    // change - so a charge cannot survive a death, a skipped wave, or a walk
+    // through the pyramid door into a room where nothing can see the player.
+    // See updateCensers(); `censerTicks` is a run counter and is cleared in
+    // reset() with state.killed, not here.
+    smoulder = 0;
+    censerSeeing = 0;
+    censerSeen.length = 0;
+    smoulderX = player.position.x;
+    smoulderZ = player.position.z;
   }
 
   // --- state ----------------------------------------------------------------
@@ -1372,6 +1480,153 @@ export function createDirector({
   retarget();
   lastSpace = spaces.active;
 
+  // --- the smoulder ---------------------------------------------------------
+
+  /**
+   * Where the fire is being laid, how far along it is, and how many are laying it.
+   *
+   * ONE anchor for the player rather than one per Censer, and that is the design
+   * and not a shortcut. The question the mechanic asks is "has the player left
+   * the spot", which is a fact about the player; giving each Censer its own
+   * anchor would mean a player standing still with three of them on him has three
+   * independent clocks running out of phase, and the tick would arrive as an
+   * arrhythmic trickle nobody could learn a rule from. One clock, running faster
+   * the more of them can see you, is a rule.
+   */
+  let smoulderX = 0;
+  let smoulderZ = 0;
+  let smoulder = 0;
+  let censerSeeing = 0;
+  let censerTicks = 0;
+  /** Scratch, reused. This runs every frame; a fresh array here would not. */
+  const censerSeen = [];
+
+  /**
+   * A CENSER MAKES THE GROUND UNDER A STATIONARY PLAYER EXPENSIVE.
+   *
+   * WHY THIS LIVES IN THE DIRECTOR AND NOT IN A SPEC. Everything a variant can
+   * say about itself is in enemies/variants.js and it is all a number on one
+   * body: health, reach, cadence, what it looks like. This mechanic is not about
+   * the body at all. It is about the PLAYER'S ground, how long they have held it,
+   * and whether there is stone between it and anything that can see it - three
+   * facts that live in this file and nowhere else, next to the collider grid and
+   * the line sampler that already answer the third one. A spec field could not
+   * express it and a new module would have had to be handed the grid, the player
+   * and the live list, which is this object's entire contents.
+   *
+   * There is precedent in this same function: the farewell hold reaches across
+   * every live actor once a frame and re-aims it. The director is where a rule
+   * that is about the whole field rather than about one body belongs.
+   *
+   * THE RULE, in the form the player has to learn it:
+   *
+   *   Ground that a Censer can SEE, and that you have not LEFT, starts to burn.
+   *   Standing in it costs 7 every 2.4 seconds. Move 2.2 m, or put stone between
+   *   you and it, and it goes out at once.
+   *
+   * WHICH HABIT THIS IS AIMED AT. By wave twenty the player's answer to a big
+   * wave is to stop circling and hold an angle: back into a corner or a doorway,
+   * cover the one approach, let the horde come down a lane. It works because
+   * every other body in the game walks at the player and therefore arrives from
+   * the direction the player is already looking. This is the first thing in the
+   * roster that does not reward being looked at. It plants at eight metres and
+   * refuses to enter the lane, and it charges for the lane's one requirement,
+   * which is that the player stay in it.
+   *
+   * THE LINE IS THE FILE'S OWN, deliberately. `obstruction()` is a straight-line
+   * sampler that already exists here to keep the spawn search off the far side of
+   * the colonnade, and it answers precisely the question a censer's sightline
+   * asks: is there stone in the way. Reusing it means the smoulder and the
+   * placement search cannot ever disagree about what "in the way" means, and it
+   * costs at most 13 clearance queries per Censer that is in range - a handful
+   * against the horde's own avoidance probes, and zero on the twenty of twenty-
+   * five waves where no Censer exists.
+   *
+   * A CLEAN LINE MEANS EXACTLY ZERO. obstruction() SCORES rather than vetoes,
+   * which is right for the spawn search - a partial obstruction should cost a
+   * candidate points, not disqualify it. Here it is a yes or no, and it has to be
+   * the strict one: half a wall is cover, and a mechanic that fired through half
+   * a wall would teach the player that stone does not work.
+   */
+  function updateCensers(dt) {
+    censerSeen.length = 0;
+
+    let nearest = null;
+    let nearestD = Infinity;
+
+    for (let i = 0; i < live.length; i++) {
+      const a = live[i];
+      if (a.variant !== 'censer') continue;
+
+      // Cleared FIRST and on every Censer, including the ones that fail the
+      // tests below. The rig field drives an emissive on a POOLED body, so a
+      // Censer that dies mid-charge and comes back four waves later would spawn
+      // lit if the only writer were the branch that sets it.
+      if (a.rig) a.rig.smoulder = 0;
+      if (!a.live || a.dying) continue;
+
+      const dx = a.position.x - player.position.x;
+      const dz = a.position.z - player.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d > CENSER_SIGHT) continue;
+      if (obstruction(a.position.x, a.position.z) > 0) continue;
+
+      censerSeen.push(a);
+      if (d < nearestD) { nearestD = d; nearest = a; }
+    }
+
+    censerSeeing = censerSeen.length;
+
+    // Nobody has the player. The anchor follows them, so the first frame one
+    // DOES arrive starts a fresh clock wherever they happen to be standing
+    // rather than resuming one from wherever they were three rooms ago.
+    if (!censerSeen.length) {
+      smoulder = 0;
+      smoulderX = player.position.x;
+      smoulderZ = player.position.z;
+      return;
+    }
+
+    const moved = Math.hypot(player.position.x - smoulderX, player.position.z - smoulderZ);
+    if (moved > CENSER_BREAK) {
+      smoulderX = player.position.x;
+      smoulderZ = player.position.z;
+      smoulder = 0;
+    } else {
+      smoulder += dt * Math.min(CENSER_STACK, censerSeen.length) / CENSER_FILL;
+    }
+
+    // Every Censer with the player shows the SAME charge, because they are all
+    // feeding one fire. A player who can see three coals at three different
+    // brightnesses would reasonably conclude there are three separate threats.
+    const k = Math.min(1, smoulder);
+    for (let i = 0; i < censerSeen.length; i++) {
+      const a = censerSeen[i];
+      if (a.rig) a.rig.smoulder = k;
+    }
+
+    if (smoulder < 1) return;
+
+    /**
+     * THE TICK, AND IT IS THE LAST THING THIS FUNCTION DOES, WHICH IS DELIBERATE.
+     *
+     * `damagePlayer` can take the player's last point, which runs fell(), which
+     * runs the death path, which runs `director.reset()`, which runs clearLive()
+     * and truncates `live` under whoever is iterating it. That is the same
+     * reentrancy the actor loop below guards with a generation counter, and the
+     * cheapest way not to need a guard here is to have nothing left to do: the
+     * state is already written, `censerSeen` is not touched again, and the caller
+     * returns straight into the emitter loop, which tests `a.live` per slot.
+     *
+     * The subtraction is before the call for the same reason. clearLive() zeroes
+     * the charge anyway, so ordering them the other way would be a write into a
+     * record the reset had already cleaned.
+     */
+    smoulder -= 1;
+    censerTicks++;
+    ctx.combat.damagePlayer(CENSER_TICK, nearest.position.x, nearest.position.z);
+  }
+
   // --- frame ----------------------------------------------------------------
 
   function update(dt, elapsed) {
@@ -1597,6 +1852,21 @@ export function createDirector({
       farewellT -= dt;
     }
 
+    /*
+     * --- the smoulder, after the actors and after the hold --------------------
+     *
+     * AFTER THE ACTOR LOOP because the positions it measures are this frame's:
+     * a Censer that just walked into a doorway should be judged on where it
+     * ended the frame, not where it began one.
+     *
+     * AND SKIPPED WHILE THE ROOM IS HELD, which is the same rule the actor loop
+     * applies one block up. For that one second every living thing has stopped
+     * and turned to face the sealed chapel, and a fire laid by a body that has
+     * stopped attending to the player would be the one thing in the room still
+     * playing the game.
+     */
+    if (!holding) updateCensers(dt);
+
     // --- positional audio ----------------------------------------------------
     // The handles read matrixWorld, and these dummies are not in the scene
     // graph, so they are driven by hand. One matrix write per live actor is
@@ -1750,6 +2020,10 @@ export function createDirector({
       state.killed = 0;
       state.concluded = false;
       farewellT = 0;
+      // A run counter, like state.killed, so it is cleared where state.killed is
+      // and NOT in clearLive(): a forced wave in the middle of a run should not
+      // silently reset a total the harness or a future HUD is reading.
+      censerTicks = 0;
     },
 
     setFidelity(high) {
@@ -1859,6 +2133,33 @@ export function createDirector({
         // wave that never ends. Counted for the same reason as flowCollapsed:
         // once while crossing a threshold is noise, a steady climb is the bug.
         reachUnknown: reachUnknownCount,
+
+        /**
+         * The smoulder, from the system that owns it.
+         *
+         * Reported for the same reason the flow field's stats are: a claim about
+         * behaviour that cannot be read from outside the page is not a claim
+         * worth making, and this one is invisible by construction - the whole
+         * mechanic is a number, a distance and a line of sight. `seeing` is the
+         * only way a harness can tell "the line was blocked" from "the enemy was
+         * not there", which is the difference between a control that measures
+         * something and one that passes by accident.
+         *
+         * The four constants ride along so a suite asserts against the numbers
+         * the running game is using rather than against a copy of them, which is
+         * the failure mode curve() was written to avoid.
+         */
+        censer: {
+          seeing: censerSeeing,
+          smoulder: +smoulder.toFixed(3),
+          ticks: censerTicks,
+          anchor: { x: +smoulderX.toFixed(2), z: +smoulderZ.toFixed(2) },
+          sight: CENSER_SIGHT,
+          breakAt: CENSER_BREAK,
+          fill: CENSER_FILL,
+          tick: CENSER_TICK,
+          stack: CENSER_STACK,
+        },
       };
     },
 

@@ -347,11 +347,36 @@ export function createAltar({ scene, camera, weapons, viewmodel, economy, audio,
   // price
   // ---------------------------------------------------------------------------
 
+  /**
+   * PRICED ON THE HELD WEAPON'S NEXT TIER, not on how many times this Altar has
+   * been used.
+   *
+   * `state.upgraded === 0 ? first : repeat` was right while a weapon could go
+   * through once: the first pass anywhere was the wall and every later one was
+   * the choice. With three passes it prices the wrong thing - a player who
+   * upgraded a carbine and then walks up holding a fresh LMG would be charged
+   * the repeat price for that gun's FIRST tier, and a player taking one weapon
+   * all the way to gold would pay the same 2000 for the third pass as the
+   * second.
+   *
+   * So the ladder is the weapon's own: 5000, then 7500, then 10000. Rising,
+   * because the third pass is the largest single power step a run can buy and a
+   * flat repeat price would make it the most obvious purchase in the game rather
+   * than a decision about what else that gold was for.
+   *
+   * `cfg.repeat` is still honoured as the tier-two price so an authored Altar
+   * that overrides it keeps working, and tier three is derived from it.
+   */
   function costFor(rec) {
     const cfg = rec.config || {};
     const first = cfg.cost === undefined ? 5000 : cfg.cost;
-    const repeat = cfg.repeat === undefined ? 2000 : cfg.repeat;
-    return state.upgraded === 0 ? first : repeat;
+    const second = cfg.repeat === undefined ? 7500 : cfg.repeat;
+    const third = Math.round(second * 1.34);
+
+    const id = state.held || weapons.state?.current;
+    const tier = (id && weapons.tierOf) ? weapons.tierOf(id) : 0;
+
+    return tier <= 0 ? first : tier === 1 ? second : third;
   }
 
   /**

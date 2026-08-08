@@ -262,12 +262,50 @@ export const NAMES = {
  * because recoil the player sees is the viewmodel's business and this file has
  * no business reaching into it.
  */
-export const UPGRADE = Object.freeze({
-  damage: 2.5,
-  magazine: 2,
-  reserve: 2,
-  spread: 0.70,
-});
+/**
+ * THREE PASSES THROUGH THE ALTAR, AND THEY ARE TOLD APART BY COLOUR.
+ *
+ * The owner asked for a weapon to go through three times and was explicit about
+ * how it should read: "you don't need new names because all the guns can just be
+ * a new color instead of a new name. So don't give it new names. Just have it
+ * changed from the blue to something, maybe we end in gold."
+ *
+ * That is the better design and it removes sixteen naming decisions from the
+ * critical path. A colour reads at a glance in a firefight, which a longer name
+ * in the HUD does not, and it means one player can tell another player's tier by
+ * looking. `displayName` therefore does NOT change between tiers - the finish
+ * carries the whole signal. See buildGildMap in player/viewmodel.js for the
+ * lapis, carnelian and gold it carries it with.
+ *
+ * TIER ONE IS UNTOUCHED, and that is deliberate rather than lazy. Every number
+ * in this game that was ever balanced against "an upgraded weapon" was balanced
+ * against 2.5x - the boss health curve in enemies/boss.js was retuned against it
+ * hours ago, and test/bosstune.mjs asserts the shape of that curve. Moving tier
+ * one would silently invalidate all of it.
+ *
+ * THE CURVE DIMINISHES: 2.5, then 3.4, then 4.2, which is +36 per cent and then
+ * +24. A tier that multiplies as hard as the first one would make the last third
+ * of a run trivial, and the point of the second and third passes is that a
+ * player who keeps feeding one weapon stays competitive as the waves climb - not
+ * that they stop having to aim. Magazine and reserve climb faster than damage on
+ * purpose: by wave twenty the thing that kills a player is a reload.
+ */
+export const UPGRADE_TIERS = Object.freeze([
+  Object.freeze({ damage: 2.5, magazine: 2,   reserve: 2,   spread: 0.70 }),
+  Object.freeze({ damage: 3.4, magazine: 2,   reserve: 2.4, spread: 0.62 }),
+  Object.freeze({ damage: 4.2, magazine: 2.5, reserve: 2.8, spread: 0.55 }),
+]);
+
+/** How many times one weapon may go through the Altar. */
+export const MAX_TIER = UPGRADE_TIERS.length;
+
+/**
+ * The first tier, under its old name.
+ *
+ * Kept as an export because it is what "upgraded" meant for the life of this
+ * game and several suites read it. It is tier one and nothing else.
+ */
+export const UPGRADE = UPGRADE_TIERS[0];
 
 /**
  * The LIVE stats table. This is what damage.js, the HUD, and everything else
@@ -286,6 +324,16 @@ const globalMods = { damage: 1, rpm: 1, spread: 1 };
 
 /** Per-weapon multipliers, from the Altar. */
 const weaponMods = {};
+
+/**
+ * Which pass through the Altar each weapon is on, 1 to MAX_TIER.
+ *
+ * Held apart from `weaponMods` rather than folded into it, because the mods are
+ * a multiplier set and the tier is an IDENTITY. The finish reads off this, and
+ * two tiers could in principle carry the same multiplier for one stat without
+ * being the same tier to look at.
+ */
+const weaponTier = {};
 
 function applyModifiers() {
   for (const id of SLOTS) {
@@ -323,6 +371,9 @@ function applyModifiers() {
     live.burstRpm = b.burstRpm;
 
     live.upgraded = !!w;
+    // 0 when it has never been through. The viewmodel reads this to pick a
+    // finish and the audio reads it to pitch the ring.
+    live.tier = weaponTier[id] || 0;
   }
 }
 
@@ -340,12 +391,46 @@ export function setGlobalModifiers(next = {}) {
   return { ...globalMods };
 }
 
-/** Put a weapon through the Altar. Idempotent: a second call changes nothing. */
+/**
+ * Put a weapon through the Altar for the FIRST time. Idempotent: a second call
+ * changes nothing.
+ *
+ * Left exactly as it was when one upgrade was all there could be, because
+ * several suites and every existing caller depend on both halves of that
+ * contract - "this weapon is now upgraded" and "calling it twice is safe". Tier
+ * two and three go through `upgradeWeapon` below, which is what the Altar
+ * actually calls now.
+ */
 export function markUpgraded(id) {
   if (!BASE_STATS[id] || weaponMods[id]) return false;
-  weaponMods[id] = { ...UPGRADE };
+  weaponTier[id] = 1;
+  weaponMods[id] = { ...UPGRADE_TIERS[0] };
   applyModifiers();
   return true;
+}
+
+/** Which pass this weapon is on. 0 for one that has never been through. */
+export function tierOf(id) {
+  return weaponTier[id] || 0;
+}
+
+/**
+ * Advance a weapon one tier, up to MAX_TIER. Returns the tier it is now on.
+ *
+ * Returns the CURRENT tier rather than a boolean even when nothing changed, so
+ * a caller that is deciding what to charge and what to say never has to ask a
+ * second question to find out where it ended up. The Altar needs exactly that:
+ * it prices the NEXT pass and has to refuse the fourth.
+ */
+export function upgradeWeapon(id) {
+  if (!BASE_STATS[id]) return 0;
+  const cur = weaponTier[id] || 0;
+  if (cur >= MAX_TIER) return cur;
+  const next = cur + 1;
+  weaponTier[id] = next;
+  weaponMods[id] = { ...UPGRADE_TIERS[next - 1] };
+  applyModifiers();
+  return next;
 }
 
 // There is deliberately no resetModifiers(). Every modifier already has an
@@ -535,7 +620,9 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     // The viewmodel owns the kick animation and calls rig.kick() itself.
     viewmodel?.fire();
 
-    audio?.shot?.(s.audio, { upgraded: state.upgraded.has(id) });
+    // The tier pitches the pack-a-punch ring. See the note in core/audio.js:
+    // it scales the weapon's OWN ring rather than selecting one of three.
+    audio?.shot?.(s.audio, { upgraded: state.upgraded.has(id), tier: tierOf(id) });
 
     const spread = ads ? s.spreadAds : s.spreadHip;
     const hits = [];
@@ -766,16 +853,30 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
    * cosmetic and must never be the thing that decides whether the purchase went
    * through.
    */
+  /**
+   * Put the held weapon through the Altar, one tier at a time.
+   *
+   * REFUSES AT MAX_TIER RATHER THAN AT "already upgraded", which is the whole
+   * change. `state.upgraded` stays a Set of everything that has been through at
+   * least once, because that is what the HUD, the tracers and the audio flag all
+   * ask it; the TIER is weapons-level state and `tierOf` answers for it.
+   *
+   * The magazine and reserve are topped to the new maximum on every pass, same
+   * as the first: a player who has just paid for a bigger magazine and been
+   * handed it empty has been charged for a downgrade until they reload.
+   */
   function upgrade(id = state.current) {
     if (!STATS[id] || !state.owned.has(id)) return false;
-    if (state.upgraded.has(id)) return false;
-    if (!markUpgraded(id)) return false;
+    if (tierOf(id) >= MAX_TIER) return false;
+
+    const tier = upgradeWeapon(id);
+    if (!tier) return false;
 
     state.upgraded.add(id);
     ammo[id].mag = STATS[id].magazine;
     ammo[id].reserve = STATS[id].reserve;
 
-    viewmodel?.upgradeFinish?.(id);
+    viewmodel?.upgradeFinish?.(id, tier);
     return true;
   }
 
@@ -898,6 +999,10 @@ export function createWeapons({ camera, viewmodel, rig, audio, world, impacts, t
     grant,
     refillAmmo,
     upgrade,
+    /** Which pass a weapon is on, 0 to MAX_TIER. Read by the Altar to price the
+     * next one and to refuse a fourth. */
+    tierOf,
+    MAX_TIER,
     stow,
     restore,
 
