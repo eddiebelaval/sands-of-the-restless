@@ -273,6 +273,38 @@ export function createDirector({
    */
   const flow = createFlowField();
 
+  /**
+   * THE SECOND FIELD, CARVED FOR A GOD, AND WHY THERE HAS TO BE ONE.
+   *
+   * Until now a god read NO field at all. boss.js says so in its own words -
+   * "it has no local avoidance at all, it steers straight at the player by
+   * design, because a colossus that side-steps scenery reads as timid" - and it
+   * relied on a wedge detector plus a committed detour to get round anything in
+   * the way. That is local steering, and local steering has the one failure no
+   * amount of tuning removes: it cannot see a doorway it is not already facing.
+   * It is the same failure this whole module fixed for the horde, left standing
+   * for the one body the player actually stops to fight.
+   *
+   * It could not be fixed by pointing gods at `flow` instead. That field is
+   * carved with a 0.55 disc and a god is 1.805, so it would hand them routes
+   * through gaps their body cannot enter - confidently, which is worse than the
+   * straight line, because a body walking a wrong route does not trip its own
+   * wedge detector. And it could not be fixed by carving `flow` wider, because
+   * then the HORDE detours around every gap it fits through perfectly well.
+   *
+   * Two fields over one grid is the only shape that lets each body class read a
+   * route its own size.
+   *
+   * THIS ONLY BECAME POSSIBLE ONCE THE MAP HAD GOD-SIZED ROUTES. A god-width
+   * carve used to reach 3.3 per cent of the interior, so this field would have
+   * been empty and every god would have fallen straight back to the line.
+   * `test/godfield.mjs` is the gate that says it is not empty, and it is the
+   * gate that has to stay green for this field to be worth flooding.
+   */
+  const GOD_PAD = 1.805;      // boss.js: spec.radius 0.95 x spec.scale 1.9
+  const GOD_BODY_H = 3.9;     // boss.js: spec.height 2.05 x spec.scale 1.9
+  const flowHeavy = createFlowField({ pad: GOD_PAD, bodyH: GOD_BODY_H, name: 'god' });
+
   // --- the pool -------------------------------------------------------------
   const pools = {};
   let triangles = 0;
@@ -1026,6 +1058,7 @@ export function createDirector({
     walls: null,
     colliderGrid: grid,
     flow,
+    flowHeavy,
     live,
     combat,
     impacts,
@@ -1197,6 +1230,11 @@ export function createDirector({
   let flowAge = 0;
   let flowX = 0, flowZ = 0;
   let flowCollapsed = 0;
+  // Heavy floods that reached almost nothing. Counted separately because it
+  // means something different: a collapsed god field silently returns a boss to
+  // walking the straight line into stone, which is the exact behaviour the
+  // second field was added to end.
+  let heavyCollapsed = 0;
 
   function updateFlow(dt) {
     flowAge += dt;
@@ -1228,6 +1266,37 @@ export function createDirector({
     if (built && flow.stats().visited < FLOW_MIN_VISITED) {
       flowCollapsed++;
       flow.invalidate();
+    }
+
+    /**
+     * THE GOD'S FIELD, FLOODED ONLY WHILE THERE IS A GOD.
+     *
+     * A second flood is a second full pass over the grid, and for twenty of
+     * every twenty-five waves there is no body on the map wide enough to read
+     * it. Gating on `state.boss` is what keeps this from being a permanent tax
+     * on a module whose whole cost story is that it must never be the reason a
+     * frame is late.
+     *
+     * It rides the SAME throttle as the horde's field rather than carrying its
+     * own. Two fields drifting out of step would have a god steering to where
+     * the player was a second before the horde thinks they are, and a boss that
+     * lags the horde it summoned reads as a bug even when both are correct.
+     *
+     * Invalidated the moment the god dies, so nothing can read a stale god
+     * field into the next wave - and so the cost really does go back to zero.
+     */
+    if (state.boss && state.boss.live) {
+      const heavy = flowHeavy.rebuild(ctx, px, pz, player.position.y - PLAYER_CONSTANTS.EYE_HEIGHT);
+      // Same honesty check the horde's field gets. A collapsed heavy field is
+      // the case that matters most: it puts a god back on the straight line,
+      // which is exactly the behaviour this field exists to replace, and it
+      // would do it silently.
+      if (heavy && flowHeavy.stats().visited < FLOW_MIN_VISITED) {
+        heavyCollapsed++;
+        flowHeavy.invalidate();
+      }
+    } else if (flowHeavy.valid) {
+      flowHeavy.invalidate();
     }
 
     flowX = px;
@@ -1266,10 +1335,12 @@ export function createDirector({
     // with a live actor in it will pay for the rebuild, and it will pay for one
     // that knows where the player ended up.
     flow.invalidate();
+    flowHeavy.invalidate();
     // And the cached geometry with it. The bounds change on a transition so the
     // grid is reallocated anyway, but retarget() also runs on a barrier
     // relaxation at boot, where the bounds are the same and the stone is not.
     flow.dirty();
+    flowHeavy.dirty();
     flowDirty = true;
   }
 
@@ -1328,6 +1399,7 @@ export function createDirector({
      */
     if (grid.sync(world.colliders)) {
       flow.dirty();
+      flowHeavy.dirty();
       flowDirty = true;
       if (nav) {
         nav = buildWalkComponents(NAV_PAD);
@@ -1737,6 +1809,10 @@ export function createDirector({
         // performance that cannot be read from outside the page is not a claim
         // worth making, which is the same reason the governor is on __SANDS__.
         flow: flow.stats(),
+        // The god field. Only ever flooded while a boss is alive, so a run that
+        // never reached wave five reports it invalid, and that is correct
+        // rather than a failure.
+        flowHeavy: flowHeavy.stats(),
         // Rebuilds this run whose flood reached under FLOW_MIN_VISITED slots.
         // Reported because the whole reason the collapse went a build and a
         // half without being noticed is that nothing counted it: flow.stats()
@@ -1744,6 +1820,7 @@ export function createDirector({
         // while the player stands in a pocket and recovers when he steps out
         // leaves no trace at all in a sample taken afterwards.
         flowCollapsed,
+        heavyCollapsed,
 
         // Spawns attempted inside the interior with no known player room, so
         // the door-graph filter could not run. Non-zero means enemies may have
@@ -1764,6 +1841,9 @@ export function createDirector({
      * what makes the routing testable at the resolution of a single doorway.
      */
     flow,
+
+    /** The god field, for the same reason. See createFlowField above. */
+    flowHeavy,
 
     /**
      * The spawn points this space ACTUALLY offers, as the placement search sees

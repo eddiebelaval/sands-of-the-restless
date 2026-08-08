@@ -34,6 +34,33 @@ import {
 
 const _v = new THREE.Vector3();
 
+/** Scratch for the routed heading, so reading the field allocates nothing. */
+const _route = { x: 0, z: 0 };
+
+/**
+ * HOW LONG A GOD KEEPS WALKING A ROUTE AFTER THE FIELD STOPS ANSWERING.
+ *
+ * The same reasoning as mummy.js's ROUTE_HOLD_S, and the same value. The heavy
+ * field is rebuilt on a throttle and dropped outright the moment the space
+ * changes, so `sample()` returning false for a frame or two is ordinary rather
+ * than exceptional. A heading computed against real geometry half a second ago
+ * describes which way the player is better than a bearing known to point into
+ * a wall, and it costs two floats.
+ */
+const ROUTE_HOLD_S = 0.6;
+
+/**
+ * HOW FAR OUT THE ROUTE IS WORTH MORE THAN THE STRAIGHT LINE, past melee.
+ *
+ * The field measures to where the player WAS at the last rebuild. Over twenty
+ * metres that is nothing; in melee it is the difference between a strike that
+ * lands and one that swings through the air beside them. So the last stretch is
+ * walked on the live position, exactly as the horde does inside its own FADE_M.
+ * Measured from the god's own reach rather than from a flat 2.5 m, because a
+ * colossus swings from three times further out than a shambler.
+ */
+const ROUTE_FADE = 6;
+
 /**
  * Shared crown geometry. Five gods, a dozen shapes, built once.
  *
@@ -586,6 +613,17 @@ function createGod(god, effects) {
     detourSide: 1,
     detourFrom: 0,
     forceSide: 0,
+
+    /**
+     * The last heading the god field gave, and how long ago.
+     *
+     * Held per god rather than per frame so a body carries on round the corner
+     * it was already rounding when the field blinks, instead of turning square
+     * into the wall it was walking past. See ROUTE_HOLD_S. Zeroed on spawn like
+     * every other mutable on this record: a pooled god re-entering the map must
+     * not steer on a route measured in the space it died in.
+     */
+    routeX: 0, routeZ: 0, routeAge: 0,
   };
   actor.st = st;
 
@@ -653,6 +691,9 @@ function createGod(god, effects) {
     st.deathT = 0;
     st.flared = false;
     st.wedge = st.detour = st.detourFrom = st.forceSide = 0;
+    // The remembered route goes with them. A god pooled from the courtyard and
+    // re-spawned inside must not carry a heading measured 110 units away.
+    st.routeX = st.routeZ = st.routeAge = 0;
     st.detourSide = 1;
 
     st.feetY = groundAt(ctx, x, z, undefined);
@@ -916,6 +957,64 @@ function createGod(god, effects) {
       // separation the horde makes between where it is going and where it is
       // looking, and for the same reason.
       let dx = tx / dist, dz = tz / dist;
+
+      /**
+       * AND NOW A ROUTE, WHICH A GOD HAS NEVER HAD.
+       *
+       * The comment on `wedge` above says this body "has no local avoidance at
+       * all - it steers straight at the player by design". That was true, it was
+       * the right call for one open courtyard, and it stopped being right when
+       * the map became a room graph: local steering cannot see a doorway it is
+       * not already facing, which is the whole reason enemies/flow.js exists for
+       * the horde. A god was the one body still walking the bearing into stone,
+       * and it is the body the player stops and stands still to fight.
+       *
+       * It reads `ctx.flowHeavy`, NOT `ctx.flow`. The horde's field is carved
+       * with a 0.55 disc and this body is 1.805, so that field would hand it
+       * routes through gaps it cannot enter - confidently, which is worse than a
+       * straight line, because a body walking a wrong route does not trip its
+       * own wedge detector. See the note on the second field in director.js.
+       *
+       * THE ROUTE STEERS AND DOES NOT TURN THE HEAD. It is folded into dx/dz,
+       * which is the velocity target, and `wantYaw` below is still built from
+       * the straight line to the player. So a god walking round a colonnade
+       * still faces the thing it is hunting, which is the same separation the
+       * detour already makes and the reason a colossus does not read as timid.
+       *
+       * Everything below this line is untouched. The wedge detector and the
+       * committed detour were tuned against a body grinding on stone, they are
+       * good at that, and they are now the last-metre recovery on top of a
+       * heading worth following rather than the only thing standing between a
+       * god and a wall.
+       */
+      const near = reach;
+      const routed = dist > near
+        && !!ctx.flowHeavy
+        && ctx.flowHeavy.sample(p.x, p.z, st.feetY, _route);
+
+      if (routed) {
+        st.routeX = _route.x;
+        st.routeZ = _route.z;
+        st.routeAge = 0;
+      } else {
+        st.routeAge += dt;
+      }
+
+      // None in melee, all of it past ROUTE_FADE beyond reach, and - when the
+      // route is remembered rather than sampled - decaying to none over
+      // ROUTE_HOLD_S.
+      let k = dist > near ? Math.min(1, (dist - near) / ROUTE_FADE) : 0;
+      if (!routed) k *= Math.max(0, 1 - st.routeAge / ROUTE_HOLD_S);
+
+      if (k > 0 && (routed || st.routeX !== 0 || st.routeZ !== 0)) {
+        const rx = routed ? _route.x : st.routeX;
+        const rz = routed ? _route.z : st.routeZ;
+        dx += (rx - dx) * k;
+        dz += (rz - dz) * k;
+        const rl = Math.hypot(dx, dz) || 1;
+        dx /= rl; dz /= rl;
+      }
+
       if (st.detour > 0) {
         dx += -(tz / dist) * st.detourSide * DETOUR_BIAS;
         dz += (tx / dist) * st.detourSide * DETOUR_BIAS;

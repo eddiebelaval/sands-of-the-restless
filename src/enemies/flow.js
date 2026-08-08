@@ -313,7 +313,35 @@ const LAYERS = 2;
  */
 const SURFACE_TOL = 0.45;
 
-export function createFlowField() {
+/**
+ * @param {{pad?: number, bodyH?: number, name?: string}} [opts]
+ *   The BODY THIS FIELD IS CARVED FOR. Defaults are the shambler's PAD and
+ *   BODY_H, which is what every caller wanted while the horde was the only
+ *   thing being routed.
+ *
+ *   A SECOND INSTANCE AT GOD DIMENSIONS IS THE POINT, and it has to be a second
+ *   instance rather than one field carved wider. Carving the single field at a
+ *   god's 1.805 would make shamblers detour around every gap they fit through
+ *   perfectly well - the horde would walk the long way round its own map to
+ *   respect a body that is not there. Two fields over the same grid is the only
+ *   shape that lets each body class read a route its own size.
+ *
+ *   The cost is one extra flood, and the director only pays it while a god is
+ *   actually alive. See updateFlow there.
+ */
+export function createFlowField(opts = {}) {
+  /**
+   * The disc and the height this instance carves with.
+   *
+   * Held per instance rather than read from the module constants, so the two
+   * fields cannot silently share a carve. `clear()` still DEFAULTS to the
+   * module constants, which is what keeps clearFor() honest for a caller asking
+   * about an arbitrary body.
+   */
+  const padFor = opts.pad ?? PAD;
+  const bodyHFor = opts.bodyH ?? BODY_H;
+  const fieldName = opts.name || 'horde';
+
   // The grid, sized to whichever space is live. Reallocated only when the
   // bounds change, which is once per space transition, never per rebuild.
   let nx = 0, nz = 0, n = 0;
@@ -630,6 +658,44 @@ export function createFlowField() {
       return -1;
     }
 
+    /**
+     * Is this cell somewhere a body could stand, at about this height, TESTING
+     * it if nobody has asked before.
+     *
+     * openSlot() answers the same question from the cache and is what the
+     * corner rule uses, correctly: that rule runs inside the flood, where the
+     * cells it asks about have always just been settled or rejected. The reseed
+     * search runs where nothing has been tested at all, so it needs to be able
+     * to pay for an answer rather than read one.
+     *
+     * Writes its verdict into the same cache the flood fills, because it is the
+     * same verdict measured the same way - and because a cell probed here is
+     * one the flood does not have to test again a moment later.
+     */
+    function probeOpen(i, j, h) {
+      const kb = (j * nx + i) * LAYERS;
+      for (let s = 0; s < LAYERS; s++) {
+        if (mark[kb + s] !== 0 && Math.abs(floor[kb + s] - h) <= SURFACE_TOL) {
+          return mark[kb + s] === 1 ? kb + s : -1;
+        }
+      }
+      const wx = minX + i * STEP, wz = minZ + j * STEP;
+      const nh = ctx.heightAt ? ctx.heightAt(wx, wz, h) : h;
+      // A surface a body could actually get to from where the player is, rather
+      // than any surface that happens to share this x/z. The gallery floor is
+      // six metres under its own bridge and is not a reseed for a player on it.
+      if (!(Math.abs(nh - h) <= DROP)) return -1;
+      for (let s = 0; s < LAYERS; s++) {
+        if (mark[kb + s] === 0) {
+          floor[kb + s] = nh;
+          tested++;
+          mark[kb + s] = clear(wx, wz, nh, ctx, padFor, bodyHFor) ? 1 : 2;
+          return mark[kb + s] === 1 ? kb + s : -1;
+        }
+      }
+      return -1;
+    }
+
     let seed = seedAt(i0, j0, sh);
     if (seed < 0) { stat.valid = false; return false; }
 
@@ -806,7 +872,7 @@ export function createFlowField() {
                 if (ns !== nb) stat.layered++;
                 tested++;
                 floor[ns] = nh;
-                mark[ns] = clear(wx, wz, nh, ctx) ? 1 : 2;
+                mark[ns] = clear(wx, wz, nh, ctx, padFor, bodyHFor) ? 1 : 2;
               }
 
               if (mark[ns] === 2) continue;
@@ -847,7 +913,37 @@ export function createFlowField() {
 
       let alt = -1;
       let bestR = Infinity;
-      for (let r = 1; r <= 4 && alt < 0; r++) {
+      /**
+       * HOW FAR TO LOOK FOR SOMEWHERE TO ROOT THE SECOND ATTEMPT, and why four
+       * cells is right for a shambler and useless for a god.
+       *
+       * The seed is the player's own cell, forced open because a player pressed
+       * into a corner legitimately stands where the carving disc does not fit.
+       * That handles the cell itself and does nothing for the case where every
+       * cell AROUND it is solid too - and how likely that is depends entirely on
+       * how fat the disc is. At 0.55 the player has to be genuinely wedged. At a
+       * god's 1.805 it is the ordinary case: any prop within 1.805 + its own
+       * radius closes the cell, so a player standing near the mystery box, a
+       * brazier or a wall closes every cell for metres around.
+       *
+       * Measured, and it is why this exists: with the search fixed at four
+       * cells, a player standing on the Great Gallery's box spawn at (0, -177)
+       * collapsed the god field to ONE settled slot on every rebuild. Every god
+       * then fell through to the straight line - silently, and indistinguishably
+       * from the build before the field existed, because a collapsed field is
+       * also the cheapest field there is. The run that caught it measured a mean
+       * rebuild of 0.006 ms.
+       *
+       * So the radius scales with the disc. Two body widths past the carve, plus
+       * the original four cells as a floor, which leaves the horde's search
+       * exactly as it was and gives a god about five and a half metres. Seeding
+       * a few metres off the player is not a compromise for a body this size:
+       * the route it wants is the route to the ROOM the player is in, and
+       * boss.js walks the last stretch on the live position anyway - see
+       * ROUTE_FADE there.
+       */
+      const reseedR = Math.max(4, Math.ceil((padFor * 2) / STEP) + 2);
+      for (let r = 1; r <= reseedR && alt < 0; r++) {
         for (let dj = -r; dj <= r; dj++) {
           for (let di = -r; di <= r; di++) {
             if (Math.abs(di) !== r && Math.abs(dj) !== r) continue;
@@ -856,7 +952,17 @@ export function createFlowField() {
             // An OPEN slot near the player's own height. Not merely a slot: the
             // whole failure is that the neighbours are solid, so a candidate
             // that is also solid is not a recovery.
-            const s = openSlot(j * nx + i, sh);
+            //
+            // PROBED RATHER THAN LOOKED UP, and the difference is the whole
+            // recovery. This used to call openSlot(), which reads `mark` - the
+            // cache of verdicts the FLOOD has filled in. On a collapsed flood
+            // the only cells with a verdict are the seed's own neighbours, and
+            // they are solid by definition, since that is what collapsed it.
+            // Every cell further out is untested, reads as unknown, and was
+            // skipped. So the retry could only ever recover to somewhere the
+            // flood had already been, which is exactly the set it failed to
+            // leave: a recovery that cannot recover.
+            const s = probeOpen(i, j, sh);
             if (s < 0) continue;
             const rr = di * di + dj * dj;
             if (rr < bestR) { bestR = rr; alt = s; }
@@ -1154,8 +1260,14 @@ export function createFlowField() {
      * is the one place that already detects exactly that event.
      */
     dirty() { geometryDirty = true; },
+    /** Which body this field is carved for, so a harness can tell them apart. */
+    get carve() { return { name: fieldName, pad: padFor, bodyH: bodyHFor }; },
+
     stats() {
       return {
+        name: fieldName,
+        pad: padFor,
+        bodyH: bodyHFor,
         valid: stat.valid,
         builds: stat.builds,
         cells: stat.cells,
