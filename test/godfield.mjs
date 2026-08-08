@@ -218,6 +218,36 @@ const out = await page.evaluate(async () => {
   }
   const godComp = componentOf(godGrid, gsi, gsj);
 
+  /**
+   * THE FRONTIER: cells a shambler can stand in, touching the god's reached
+   * component, that a god cannot.
+   *
+   * Every probe so far has sampled at whole metres and the field samples at
+   * 0.7, so a pinch one cell wide sits between samples and reads as "nothing
+   * there" - which is exactly what the ramp probe reported while the component
+   * stopped dead on it. These are the actual cells doing the blocking, in world
+   * coordinates, so the next probe can be aimed rather than swept.
+   */
+  const frontier = [];
+  for (let j = 1; j < nz - 1 && frontier.length < 6000; j++) {
+    for (let i = 1; i < nx - 1; i++) {
+      const k = j * nx + i;
+      if (godGrid[k] || !baseGrid[k]) continue;
+      let touches = false;
+      for (let e = 0; e < 4 && !touches; e++) {
+        const nk = (j + [0, 0, 1, -1][e]) * nx + (i + [1, -1, 0, 0][e]);
+        if (godComp[nk]) touches = true;
+      }
+      if (touches) {
+        frontier.push({
+          x: +(minX + i * STEP).toFixed(2),
+          z: +(minZ + j * STEP).toFixed(2),
+          y: +heightGrid[k].toFixed(2),
+        });
+      }
+    }
+  }
+
   const perRoom = [];
   for (const room of g.spaces.interior.rooms) {
     const b2 = room.bounds;
@@ -227,15 +257,27 @@ const out = await page.evaluate(async () => {
     const j0r = Math.max(0, Math.floor((b2.z - b2.d / 2 - minZ) / STEP));
     const j1r = Math.min(nz - 1, Math.ceil((b2.z + b2.d / 2 - minZ) / STEP));
     let base = 0, god = 0, reached = 0;
+    // How FAR into the room the god actually gets. A count says a room is only
+    // part open and does not say which part, and on this map the answer is
+    // always "up to the first pinch", so the frontier is the diagnostic.
+    let rz0 = Infinity, rz1 = -Infinity, rx0 = Infinity, rx1 = -Infinity;
     for (let j = j0r; j <= j1r; j++) {
       for (let i = i0r; i <= i1r; i++) {
         const k = j * nx + i;
         if (baseGrid[k]) base++;
         if (godGrid[k]) god++;
-        if (godComp[k]) reached++;
+        if (godComp[k]) {
+          reached++;
+          const wz = minZ + j * STEP, wx = minX + i * STEP;
+          if (wz < rz0) rz0 = wz; if (wz > rz1) rz1 = wz;
+          if (wx < rx0) rx0 = wx; if (wx > rx1) rx1 = wx;
+        }
       }
     }
-    perRoom.push({ id: room.id, base, god, reached });
+    perRoom.push({
+      id: room.id, base, god, reached,
+      frontier: reached ? `x ${rx0.toFixed(0)}..${rx1.toFixed(0)}  z ${rz0.toFixed(0)}..${rz1.toFixed(0)}` : '',
+    });
   }
 
   /**
@@ -452,7 +494,7 @@ const out = await page.evaluate(async () => {
     baseOpen, godOpen,
     baseReach, godReach,
     godPad: +GOD_PAD.toFixed(3), godH: +GOD_H.toFixed(3),
-    doors, sweep, perRoom,
+    doors, sweep, perRoom, frontier,
   };
 });
 
@@ -494,13 +536,16 @@ for (const d of out.doors) {
   console.log(`    base ${d.baseProfile}`);
 }
 console.log('');
+console.log('frontier cells bounding the reached region, in the Act 3 approach:');
+for (const f of out.frontier.filter((f) => f.z > -160 && f.x > 14)) console.log(`    x ${String(f.x).padStart(7)}  z ${String(f.z).padStart(8)}  floor ${f.y}`);
+console.log('');
 console.log('per room: cells a shambler can stand in, a god can stand in, a god can REACH');
 for (const r of out.perRoom) {
   const flag = r.god > 0 && r.reached === 0 ? '   <- ISLAND' : '';
   console.log(
     `  ${r.id.padEnd(20)}base ${String(r.base).padStart(5)}`
     + `   god ${String(r.god).padStart(5)}`
-    + `   reached ${String(r.reached).padStart(5)}${flag}`,
+    + `   reached ${String(r.reached).padStart(5)}${flag}  ${r.frontier}`,
   );
 }
 console.log('');

@@ -838,7 +838,7 @@ export const ROOMS = [
        */
       {
         to: 'kings-chamber',
-        at: { x: -17, z: -232 },
+        at: { x: -18, z: -232 },
         width: COMBAT_DOOR,
         kind: 'open',
         cost: 0,
@@ -1119,7 +1119,7 @@ export const ROOMS = [
        */
       {
         to: 'kings-chamber',
-        at: { x: 17, z: -232 },
+        at: { x: 18, z: -232 },
         width: COMBAT_DOOR,
         kind: 'open',
         cost: 0,
@@ -1195,7 +1195,29 @@ export const ROOMS = [
   {
     id: 'kings-chamber',
     name: "King's Chamber",
-    bounds: { x: 0, z: -252, w: 40, d: 40 },
+    /**
+     * FORTY-FOUR WIDE, UP FROM FORTY, AND IT IS THE TWO SIDE DOORWAYS' FAULT.
+     *
+     * The west and east doorways into this room measured a god band of 0.38 m
+     * against the 1.89 their authored 5.5 width should give, and `act3probe.mjs`
+     * says why: the opening is not what pinches them, the CORRIDOR between two
+     * different rooms' side walls is.
+     *
+     *   wall(-19.5, -252  1 x 38)   this room's west wall,  ends at z -233
+     *   wall(-14.5, -214  1 x 34)   embalming's east wall,  ends at z -231
+     *
+     * The doorway sits in the 2 m gap between those two wall ENDS, so a body
+     * with a 1.805 m disc touches both corners at once. Free span was x -19..-15,
+     * exactly 4.0 m, and 4.0 - 3.61 = 0.39. A shambler's 0.55 never reaches
+     * either corner, which is why this was invisible until a god walked it.
+     *
+     * Embalming cannot grow east - it shares its x -14 wall with the canopic
+     * crypt. This room can grow, because it is the only Act 3 room at z -272..
+     * -232 and shares plan area with nothing. At 44 the free span is 6.0 m,
+     * which is 2.39 of god band and three field cells, and the arena stays
+     * symmetric because both sides gain the same two metres.
+     */
+    bounds: { x: 0, z: -252, w: 44, d: 40 },
     // Level with all three rooms that open onto it, and that is not a choice.
     // gallery -> embalming -> kings -> crypt -> gallery is a cycle, and a cycle
     // whose elevation changes once does not close. Every room in Act 3 is on

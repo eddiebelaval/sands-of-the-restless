@@ -1025,6 +1025,40 @@ const UNDERCROFT_MIN = 2.0;
 /** How long each step of the fill is. Shorter is a closer fit and more boxes. */
 const UNDERCROFT_STEP = 1.0;
 
+/**
+ * HOW FAR UPHILL A BODY STANDING ON THE RAMP CAN REACH INTO THIS FILL.
+ *
+ * The widest body in the game, which is a god at radius 1.805, plus a little.
+ * Repeated here rather than imported for exactly the reason UNDERCROFT_MIN is
+ * repeated: this module is the geometry and it must not start importing the
+ * horde. If the widest body grows, this grows with it, and this comment is the
+ * note that says so.
+ *
+ * WHAT IT IS FOR, and it is not the wedge. Each step's top used to be one
+ * RAMP_T below the walking surface at its own shallow end, which is exactly the
+ * slab's underside and reads as obviously correct. It is correct for a POINT
+ * and wrong for a DISC. `clear()` skips a wall only when `floorY >= w.y1`, so a
+ * body standing further down the slope - whose feet are lower - finds that step
+ * live, and if the step is inside its radius it is judged to be standing in
+ * stone. Blocking therefore begins the moment
+ *
+ *     gradient > RAMP_T / body radius
+ *
+ * which for a god is 0.7 / 1.805 = 0.388, and EVERY descent on this map is
+ * steeper than that. Measured on the west Act 3 ramp: at z -207.6 a god's floor
+ * is -4.044 and the step 2.1 m uphill tops out at -4.030. Fourteen millimetres,
+ * across the full 8 m width of the ramp, one field cell deep - which severed
+ * every Act 3 room from the rest of the map for anything god-sized. A shambler
+ * at 0.55 never reaches far enough uphill to notice.
+ *
+ * So the clearance is taken from how far a body can REACH rather than from how
+ * thick the slab is, and the two are only the same on a shallow ramp. The cost
+ * is a slot between the fill and the slab of (reach x gradient) - RAMP_T, which
+ * on these ramps is 14 cm: far too little for anything to path into, and it is
+ * under a ramp where the headroom rule already refuses bodies anyway.
+ */
+const UNDERCROFT_REACH = 1.9;
+
 function fillUndercroft(ctx, r, alongZ, run, rise) {
   const { M, group, walls, base } = ctx;
 
@@ -1040,11 +1074,13 @@ function fillUndercroft(ctx, r, alongZ, run, rise) {
   const hi = alongZ ? r.z + r.d / 2 : r.x + r.w / 2;
 
   for (let d = 0; d < run; d += UNDERCROFT_STEP) {
-    // The slab's underside at the shallow end of the step, which is the least
-    // clearance this step offers. One RAMP_T below the walking surface, which is
-    // the same "one ramp thickness" the stone under a descent doorway is held to
-    // in buildShell. Stop once a body fits under the slab.
-    const topY = floorY + d * grad - RAMP_T;
+    // Held below the walking surface by whichever is deeper: one ramp thickness,
+    // which is the slab itself and the same figure the stone under a descent
+    // doorway uses in buildShell, or the drop a body's own reach covers on this
+    // gradient. See UNDERCROFT_REACH - the second term is what stops a wide body
+    // standing downhill from being judged to be inside a step uphill of it.
+    // Stop once a body fits under the slab.
+    const topY = floorY + d * grad - Math.max(RAMP_T, UNDERCROFT_REACH * grad);
     if (topY - floorY >= UNDERCROFT_MIN) break;
 
     const seg = Math.min(UNDERCROFT_STEP, run - d);

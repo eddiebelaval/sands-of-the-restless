@@ -16,7 +16,22 @@
 import { chromium } from 'playwright';
 import { resolveChrome } from './chrome.mjs';
 
-const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+const BASE = process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+
+/**
+ * Where to look, so this is reusable rather than a one-off.
+ *
+ *   node test/act3probe.mjs "-17,0,17" -228 -238 0
+ *
+ * xs, then the z range, then the height the floor sampler is asked FROM. That
+ * last one matters and is not cosmetic: a descent's surface near the doorway is
+ * at the sill, not at the room base, so asking from the base reports a floor six
+ * metres under the body's feet. Defaults are the gallery-side Act 3 approach.
+ */
+const XS = (process.argv[2] || '-20,0,20').split(',').map(Number);
+const Z_FROM = Number(process.argv[3] ?? -196);
+const Z_TO = Number(process.argv[4] ?? -210);
+const FROM_Y = Number(process.argv[5] ?? 0);
 
 const browser = await chromium.launch({
   executablePath: resolveChrome(),
@@ -30,7 +45,7 @@ await page.waitForFunction(() => !!window.__SANDS__, null, { timeout: 60000 });
 await page.evaluate(() => window.__SANDS__.start && window.__SANDS__.start());
 await page.waitForTimeout(1200);
 
-const out = await page.evaluate(async () => {
+const out = await page.evaluate(async ({ XS, Z_FROM, Z_TO, FROM_Y }) => {
   const g = window.__SANDS__;
   for (const d of g.doors.all) {
     if (d.open) d.open();
@@ -45,14 +60,14 @@ const out = await page.evaluate(async () => {
   // The band the approach profiles put the obstruction in, on the gallery side
   // of the west, centre and east Act 3 doorways.
   const rows = [];
-  for (const x of [-20, 0, 20]) {
-    for (let z = -196; z >= -210.001; z -= 1) {
+  for (const x of XS) {
+    for (let z = Z_FROM; z >= Z_TO - 0.001; z -= 1) {
       // Asked from the THRESHOLD height, not the room base. These approaches are
       // descent ramps running from the doorway sill at absolute 0 down to an Act
       // 3 floor at -6, so a body entering the door is on the ramp, not on the
       // room's floor, and sampling at the base would ask about a surface six
       // metres under its feet.
-      const floorY = ctx.heightAt(x, z, 0);
+      const floorY = ctx.heightAt(x, z, FROM_Y);
       const top = ctx.heightAt(x, z);
 
       const walls = [];
@@ -87,7 +102,7 @@ const out = await page.evaluate(async () => {
     }
   }
   return { rows };
-});
+}, { XS, Z_FROM, Z_TO, FROM_Y });
 
 for (const r of out.rows) {
   const bits = [];
