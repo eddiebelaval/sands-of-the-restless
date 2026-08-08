@@ -38,6 +38,9 @@ import * as THREE from 'three';
 import { parts, tornStrip } from './anatomy.js';
 import { linenMaps, compensate, WRAP_TILES } from './wraps.js';
 import { contactShadow } from './contact.js';
+import {
+  createCrawl, resetCrawl, crawlSteer, crawlTick, crawlKilled, crawlDeathFall,
+} from './wallcrawl.js';
 
 /**
  * Shared geometry, keyed by the PROPORTIONS RECORD ITSELF rather than by a
@@ -581,8 +584,17 @@ const DETOUR_REACH = 5;           // how many probes, so 15 m of wall
  */
 const ROUTE_HOLD_S = 0.66;
 
-/** Is a disc of this radius free of the world at this point? */
-function pointClear(x, z, pad, feetY, ctx) {
+/**
+ * Is a disc of this radius free of the world at this point?
+ *
+ * Exported so the wall crawler can ask the SAME question rather than carry a
+ * second copy of the base/head rules above. It is handed to crawlTick as an
+ * argument instead of being imported there, because wallcrawl.js is imported by
+ * this file and an import cycle between two modules that both run at load time
+ * is a trap nobody would find until the day one of them grows a top-level
+ * constant that reads the other.
+ */
+export function pointClear(x, z, pad, feetY, ctx) {
   if (ctx.walls) {
     const head = feetY + ctx.actorHeight;
     for (const w of ctx.walls) {
@@ -1876,8 +1888,25 @@ export function createEnemy(spec, index) {
     routeX: 0,
     routeZ: 0,
     routeAge: ROUTE_HOLD_S,
+
+    /**
+     * The surface this body is on, for the one variant that has a choice.
+     *
+     * NULL ON EVERYTHING ELSE, and that is the whole containment strategy for
+     * this feature. Four places below branch on it and every one of them is a
+     * branch not taken for a shambler, a husk, a Bound or an ordinary scarab:
+     * their movement, their gravity, their wedge escape and their facing are
+     * the code that was here before, reached by the same path, in the same
+     * order. A variant opts in with `wallCrawl: true` in its spec and nothing
+     * else in the file knows which variant that is.
+     */
+    crawl: spec.wallCrawl ? createCrawl() : null,
   };
   actor.st = st;
+  // Published so the harness can read which surface a body is on without
+  // reaching into `st`, and so a future HUD or debug overlay has one name for
+  // it. Nothing in src/ reads it back.
+  actor.crawl = st.crawl;
 
   const anim = {
     phase: 0, speed: 0, windup: 0, strike: 0,
@@ -1932,6 +1961,10 @@ export function createEnemy(spec, index) {
     st.detourSide = 1;
     st.routeX = st.routeZ = 0;
     st.routeAge = ROUTE_HOLD_S;
+    st.grounded = true;
+    // A pooled body that died clinging to a ceiling must not come back still
+    // thinking it is up there.
+    if (st.crawl) resetCrawl(st.crawl);
 
     st.feetY = groundAt(ctx, x, z, undefined);
     rig.group.position.set(x, st.feetY, z);
@@ -2125,6 +2158,17 @@ export function createEnemy(spec, index) {
     actor.dying = true;
     st.deathT = 0;
     st.vx = st.vz = 0;
+
+    // SHOT OFF THE CEILING, IT COMES DOWN. A gilded beetle that dies clinging
+    // upside down and then crumbles in mid-air is a kill the player cannot
+    // read, and this is the one path where nothing else would drop it: update()
+    // hands a dying actor straight to updateDeath, so crawlTick never runs
+    // again after this line.
+    if (st.crawl) {
+      crawlKilled(st.crawl, st, rig,
+        actor.radius * spec.scale,
+        (spec.proportions.rideHeight || 0.3) * baseScale);
+    }
 
     // Topple AWAY from the shot, around the horizontal axis perpendicular to
     // it. A corpse that always falls forward is a corpse that fell over; one
@@ -2345,6 +2389,21 @@ export function createEnemy(spec, index) {
      * with no field - the courtyard while the horde is still queueing, or a body
      * standing on the wrong storey - this is the code that was here before.
      */
+    /**
+     * AND ONE VARIANT IS NOT WALKING AT THE PLAYER AT ALL.
+     *
+     * A wall crawler that has chosen a wall is walking at the WALL, and it has
+     * to be inserted here rather than anywhere else in this function: after the
+     * flow blend, because the field's answer is the thing being overruled, and
+     * before the route is held aside, because a crawler that wedges on the way
+     * to its wall should detour off the heading it was actually walking. Every
+     * local rule below - separation, avoid(), the committed detour - still runs
+     * on top of it unchanged.
+     *
+     * One branch, not taken by any variant without a `crawl` record.
+     */
+    if (st.crawl) crawlSteer(st.crawl, _dir, pos);
+
     const routeX = _dir.x, routeZ = _dir.z;
 
     // Separation. Without it a horde converges to one point and reads as a
@@ -2381,11 +2440,38 @@ export function createEnemy(spec, index) {
     const dl = Math.hypot(_dir.x, _dir.z) || 1;
     _dir.x /= dl; _dir.z /= dl;
 
+    /**
+     * --- surface -------------------------------------------------------------
+     *
+     * WHICH WAY IS DOWN, for the one variant that does not always answer +Y.
+     *
+     * Everything from here to the end of the facing block assumes two things
+     * that are true of every other body in the game and are not true of a gold
+     * scarab on a ceiling: that gravity pulls it toward `groundAt`, and that its
+     * whole orientation is a yaw. So the crawler is asked FIRST, and what it
+     * answers is not "where am I" but "am I driving", and the three blocks that
+     * would fight it each take one branch on the answer.
+     *
+     * pointClear is handed in rather than imported over there. See the note on
+     * its export for why.
+     */
+    const crawl = st.crawl;
+    const off = crawl ? crawlTick(crawl, dt, ctx, actor, st, spec, rig, dist, pointClear) : false;
+
     // --- attack -------------------------------------------------------------
     const reach = spec.attackRange * spec.scale + ctx.playerRadius;
     st.cooldown = Math.max(0, st.cooldown - dt);
 
-    if (st.strike > 0) {
+    if (off) {
+      // NOTHING BITES FROM A CEILING. `dist` is horizontal, so a crawler
+      // sixteen metres straight up a gallery reads as inside its own 1.6 m
+      // reach and would land its 14 damage through the roof. Letting go IS the
+      // attack from up there, and the wind-up would be a telegraph for a swing
+      // that never had anywhere to land.
+      st.windup = 0;
+      st.strike = 0;
+      st.struck = false;
+    } else if (st.strike > 0) {
       st.strike = Math.max(0, st.strike - dt / spec.strikeTime);
       // The blow lands at the top of the swing, not at the start of the
       // wind-up. An ability that fires without a readable moment is just
@@ -2409,101 +2495,134 @@ export function createEnemy(spec, index) {
     }
 
     // --- move ---------------------------------------------------------------
-    // Committed while striking: a shambler that keeps walking through its own
-    // swing has no weight to it.
-    const busy = st.windup > 0 || st.strike > 0;
-    const want = busy || dist <= reach * 0.85
-      ? 0
-      : spec.speed * st.speedScale * (1 - st.stagger * 0.85);
+    let speed;
 
-    const accel = spec.accel * dt;
-    st.vx += (_dir.x * want - st.vx) * Math.min(1, accel);
-    st.vz += (_dir.z * want - st.vz) * Math.min(1, accel);
-
-    const wasX = pos.x, wasZ = pos.z;
-    pos.x += st.vx * dt;
-    pos.z += st.vz * dt;
-
-    // --- ground and gravity -------------------------------------------------
-    const floor = groundAt(ctx, pos.x, pos.z, st.feetY);
-    st.feetY += st.vy * dt;
-    if (st.feetY <= floor) {
-      st.feetY = floor;
-      st.vy = 0;
-      st.grounded = true;
+    if (off) {
+      /**
+       * THE CRAWLER OWNS THE BODY WHILE IT IS OFF THE FLOOR.
+       *
+       * Not "some of the movement is different": every line in the else branch
+       * is written against a floor. The steering integrates a horizontal
+       * velocity, gravity pulls toward `groundAt`, resolveAgainstWorld pushes a
+       * cylinder out of stone along the axis of least penetration, and the wedge
+       * detector calls covering no ground a fault. On a wall, covering no
+       * horizontal ground is the normal state of climbing, and the correct
+       * response to being inside a wall is to be stuck to it.
+       *
+       * So the crawl has already written the position, the height and the whole
+       * orientation, and all this branch owes the rest of the function is the
+       * surface speed the walk cycle runs on.
+       */
+      speed = crawl.speed;
     } else {
-      st.vy -= 24 * dt;
-      st.grounded = false;
-    }
+      // Committed while striking: a shambler that keeps walking through its own
+      // swing has no weight to it.
+      const busy = st.windup > 0 || st.strike > 0;
+      const want = busy || dist <= reach * 0.85
+        ? 0
+        : spec.speed * st.speedScale * (1 - st.stagger * 0.85);
 
-    resolveAgainstWorld(pos, actor.radius * spec.scale, st.feetY, ctx);
-    pos.y = st.feetY;
+      const accel = spec.accel * dt;
+      st.vx += (_dir.x * want - st.vx) * Math.min(1, accel);
+      st.vz += (_dir.z * want - st.vz) * Math.min(1, accel);
 
-    // --- wedged? ------------------------------------------------------------
-    //
-    // Measured on DISPLACEMENT, not on whether resolveAgainstWorld touched
-    // something. Touching is normal: the horde grinds past pillars and along
-    // walls constantly and arrives perfectly well. The thing that ends a round
-    // is holding a heading and covering no ground, and that is one subtraction.
-    {
-      const moved = Math.hypot(pos.x - wasX, pos.z - wasZ);
-      const wanted = Math.hypot(st.vx, st.vz) * dt;
+      const wasX = pos.x, wasZ = pos.z;
+      pos.x += st.vx * dt;
+      pos.z += st.vz * dt;
 
-      if (st.detour > 0) {
-        st.detour -= dt;
-        if (st.detour <= 0) {
-          // A hand that bought nothing does not get a second turn. Without
-          // this an actor can commit to the long way round a sixty-metre wall
-          // forever, which is the same round-never-ends symptom with a longer
-          // period.
-          st.forceSide = dist > st.detourFrom - 0.75 ? -st.detourSide : 0;
-          st.wedge = 0;
-        }
+      // --- ground and gravity -----------------------------------------------
+      // This is also the fall after a crawler lets go: detach() hands the body
+      // back with st.feetY set to the height it let go at and st.vy at zero, so
+      // there is one integrator for falling bodies rather than two.
+      const floor = groundAt(ctx, pos.x, pos.z, st.feetY);
+      st.feetY += st.vy * dt;
+      if (st.feetY <= floor) {
+        st.feetY = floor;
+        st.vy = 0;
+        st.grounded = true;
       } else {
-        if (wanted > 1e-3 && moved < wanted * 0.45) st.wedge += dt;
-        else st.wedge = Math.max(0, st.wedge - dt * 2.5);
+        st.vy -= 24 * dt;
+        st.grounded = false;
+      }
 
-        /**
-         * THE WEDGE ESCAPE IS LEFT ALONE, AND THAT WAS TESTED RATHER THAN
-         * ASSUMED.
-         *
-         * It is tempting to switch this off when the field has supplied a
-         * heading, on the argument that a detour is a guess - pickDetourSide's
-         * own comment says "Not pathfinding, and it does not need to be" - while
-         * the field has flooded the whole floor, and that DETOUR_BIAS of 1.7
-         * against the heading's 1.0 means the guess does not blend with the
-         * route, it overrules it for a committed 2.4 seconds.
-         *
-         * That was built and measured, and it changed nothing: 24 of 31 arrived
-         * either way, on the same seven failures. The detour was not what was
-         * holding those actors. So it stays, because it is a measured escape
-         * from a measured local minimum in avoid() that this change does not
-         * touch, and removing a safety net that is demonstrably not the problem
-         * buys nothing and risks a case the probe does not cover.
-         */
-        if (st.wedge >= WEDGE_TRIP) {
-          st.detourSide = st.forceSide
-            || pickDetourSide(pos, routeX, routeZ, actor.radius * spec.scale, st.feetY, ctx);
-          st.forceSide = 0;
-          st.detour = DETOUR_S;
-          st.detourFrom = dist;
-          st.wedge = 0;
+      resolveAgainstWorld(pos, actor.radius * spec.scale, st.feetY, ctx);
+      pos.y = st.feetY;
+
+      // --- wedged? ----------------------------------------------------------
+      //
+      // Measured on DISPLACEMENT, not on whether resolveAgainstWorld touched
+      // something. Touching is normal: the horde grinds past pillars and along
+      // walls constantly and arrives perfectly well. The thing that ends a round
+      // is holding a heading and covering no ground, and that is one subtraction.
+      {
+        const moved = Math.hypot(pos.x - wasX, pos.z - wasZ);
+        const wanted = Math.hypot(st.vx, st.vz) * dt;
+
+        if (st.detour > 0) {
+          st.detour -= dt;
+          if (st.detour <= 0) {
+            // A hand that bought nothing does not get a second turn. Without
+            // this an actor can commit to the long way round a sixty-metre wall
+            // forever, which is the same round-never-ends symptom with a longer
+            // period.
+            st.forceSide = dist > st.detourFrom - 0.75 ? -st.detourSide : 0;
+            st.wedge = 0;
+          }
+        } else {
+          if (wanted > 1e-3 && moved < wanted * 0.45) st.wedge += dt;
+          else st.wedge = Math.max(0, st.wedge - dt * 2.5);
+
+          /**
+           * THE WEDGE ESCAPE IS LEFT ALONE, AND THAT WAS TESTED RATHER THAN
+           * ASSUMED.
+           *
+           * It is tempting to switch this off when the field has supplied a
+           * heading, on the argument that a detour is a guess - pickDetourSide's
+           * own comment says "Not pathfinding, and it does not need to be" - while
+           * the field has flooded the whole floor, and that DETOUR_BIAS of 1.7
+           * against the heading's 1.0 means the guess does not blend with the
+           * route, it overrules it for a committed 2.4 seconds.
+           *
+           * That was built and measured, and it changed nothing: 24 of 31 arrived
+           * either way, on the same seven failures. The detour was not what was
+           * holding those actors. So it stays, because it is a measured escape
+           * from a measured local minimum in avoid() that this change does not
+           * touch, and removing a safety net that is demonstrably not the problem
+           * buys nothing and risks a case the probe does not cover.
+           */
+          if (st.wedge >= WEDGE_TRIP) {
+            st.detourSide = st.forceSide
+              || pickDetourSide(pos, routeX, routeZ, actor.radius * spec.scale, st.feetY, ctx);
+            st.forceSide = 0;
+            st.detour = DETOUR_S;
+            st.detourFrom = dist;
+            st.wedge = 0;
+          }
         }
+      }
+
+      speed = Math.hypot(st.vx, st.vz);
+
+      // --- facing -----------------------------------------------------------
+      // Turn toward the player rather than toward the steering direction. An
+      // enemy that faces where it is sliding looks like it is on rails; one that
+      // faces its target while side-stepping a pillar looks like it wants you.
+      //
+      // SKIPPED WHILE A CRAWLER IS RIGHTING ITSELF, and it has to be: this
+      // writes rotation.y and nothing else, so applied to a body whose
+      // quaternion is still half rolled onto a wall it would hold the roll
+      // forever. crawl.owns is the crawler saying it has not handed the
+      // orientation back yet.
+      if (!crawl || !crawl.owns) {
+        const wantYaw = Math.atan2(tx, tz);
+        let d = wantYaw - rig.group.rotation.y;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        rig.group.rotation.y += d * Math.min(1, spec.turn * dt);
       }
     }
 
-    // --- facing -------------------------------------------------------------
-    // Turn toward the player rather than toward the steering direction. An
-    // enemy that faces where it is sliding looks like it is on rails; one that
-    // faces its target while side-stepping a pillar looks like it wants you.
-    const wantYaw = Math.atan2(tx, tz);
-    let d = wantYaw - rig.group.rotation.y;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    rig.group.rotation.y += d * Math.min(1, spec.turn * dt);
-
     // --- animation ----------------------------------------------------------
-    const speed = Math.hypot(st.vx, st.vz);
     // The walk cycle is driven by REAL horizontal velocity, scaled by this
     // instance's own tempo. A staggered enemy's legs slow down with it and one
     // pinned against a pillar stops walking on the spot, which is the whole
@@ -2588,6 +2707,10 @@ export function createEnemy(spec, index) {
     st.deathT += dt;
     const t = st.deathT;
     const dur = st.toppleS || TOPPLE_S;
+
+    // The corpse of something that let go of a wall. No-op for every body that
+    // died standing on the ground, which is every body but one variant's.
+    if (st.crawl) crawlDeathFall(st.crawl, dt, ctx, st, rig);
 
     if (t < dur) {
       // Limbs go slack over the fall. This runs FIRST because every animator

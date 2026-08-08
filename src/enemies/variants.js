@@ -802,6 +802,35 @@ export const GOLD_SCARAB = extend(SCARAB, {
     eye: 0x63e0ff,
   },
 
+  /**
+   * IT DOES NOT STAY ON THE FLOOR, and this flag is the whole of the opt-in.
+   *
+   * THE SECOND HALF OF THE SAME PROBLEM. The block at the top of this record
+   * says the player's one answer by wave fifteen is to backpedal in a circle
+   * and hold fire, and the vent on the back breaks the "hold fire" half. It
+   * leaves the other half alone: every body in the roster still arrives along
+   * the floor, so the player's SEARCH is a horizontal sweep at eye level and
+   * that sweep is still complete. A gold scarab that can be on the wall behind
+   * them or on the ceiling over them is the first thing in the game the sweep
+   * does not find.
+   *
+   * THE SCARAB DOES NOT GET IT, deliberately. The swarm is the wave's floor
+   * pressure and it works because it is a mass flowing round a pillar; six of
+   * them on three different surfaces is not a harder swarm, it is an unreadable
+   * one. This is an elite's trick and it stays the elite's.
+   *
+   * Read only by mummy.js, which allocates a crawl record for any spec carrying
+   * it and takes one untaken branch per frame for every spec that does not. The
+   * behaviour itself is enemies/wallcrawl.js, which is also where the argument
+   * for every number in it lives.
+   *
+   * IT IS FREE ON THE EXTERIOR AND THAT IS CORRECT. `ctx.walls` is only
+   * populated for the interior's room shells; in the courtyard and the quarry
+   * there is nothing to mount and this variant is exactly the enemy it was
+   * before. The trick belongs to the rooms.
+   */
+  wallCrawl: true,
+
   gait: {
     // Slower and longer than the scarab's 2.2 / 0.45. Twice the mass on the same
     // legs does not take the same steps, and the heavier cadence is the cue that
