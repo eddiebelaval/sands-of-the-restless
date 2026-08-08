@@ -353,12 +353,27 @@ results.legs = await page.evaluate(async () => {
 results.fromBelow = await page.evaluate(() => {
   const h = window.__SANDS__.world.heightAt;
   const at = (x, z, f) => +h(x, z, f).toFixed(2);
-  // z -200 is four metres in from each doorway, where the ramp is about 4.5 m
-  // above the floor beneath it.
+  /**
+   * z -200 is four metres in from each doorway, on the ramp.
+   *
+   * THE "ON" PROBE ASKS FROM THE RAMP'S OWN HEIGHT, DERIVED, rather than from a
+   * hardcoded -1.5. That literal was calibrated against a gradient of 6 over 16.
+   * When the three descents gained a 2.5 m threshold landing - so a god's disc
+   * clears the fill under the doorway - the run shortened to 13.5 and the
+   * surface at z -200 rose from -1.50 to -0.67. That is 0.83 above the old
+   * probe's feet, past STEP_UP of 0.65, so the sampler correctly refused it and
+   * answered with the floor six metres down. The map was right and the probe was
+   * stale, which is the failure this file exists to catch in the map.
+   *
+   * Asking from the surface itself tests the invariant that is actually meant -
+   * standing ON the ramp returns the ramp - and it cannot go stale again the
+   * next time a gradient moves.
+   */
+  const onRamp = (x, z) => at(x, z, h(x, z, undefined));
   return {
-    west_on: at(-20, -200, -1.5), west_below: at(-20, -200, -6), west_highest: at(-20, -200, undefined),
-    centre_on: at(0, -200, -1.5), centre_below: at(0, -200, -6), centre_highest: at(0, -200, undefined),
-    east_on: at(20, -200, -1.5), east_below: at(20, -200, -6), east_highest: at(20, -200, undefined),
+    west_on: onRamp(-20, -200), west_below: at(-20, -200, -6), west_highest: at(-20, -200, undefined),
+    centre_on: onRamp(0, -200), centre_below: at(0, -200, -6), centre_highest: at(0, -200, undefined),
+    east_on: onRamp(20, -200), east_below: at(20, -200, -6), east_highest: at(20, -200, undefined),
   };
 });
 

@@ -406,7 +406,35 @@ const out = await page.evaluate(async () => {
         return s;
       }
 
+      /**
+       * WHY a cell is shut to a god, without reimplementing clearance.
+       *
+       * clear() runs four tests and reports one boolean, so a blocked cell says
+       * nothing about what blocked it - and this session has already burned two
+       * wrong hypotheses (doorway width, then a lintel) on exactly that gap.
+       * The tests split cleanly by which dimension they read, so asking the REAL
+       * predicate twice with one dimension collapsed separates them:
+       *
+       *   full radius, negligible height  -> only the lateral tests can fail
+       *   negligible radius, full height  -> only the overhead tests can fail
+       *
+       * 'W' the body is too WIDE here, 'H' too TALL, 'B' both, '#' fits.
+       */
+      function why() {
+        let s = '';
+        for (let t = -8; t <= 8.0001; t += 0.5) {
+          const sx = x + ax * t, sz = z + az * t;
+          const sy = ctx.heightAt ? ctx.heightAt(sx, sz, room.base || 0) : 0;
+          if (flow.clearFor(sx, sz, sy, ctx, GOD_PAD, GOD_H)) { s += '#'; continue; }
+          const wide = !flow.clearFor(sx, sz, sy, ctx, GOD_PAD, 0.3);
+          const tall = !flow.clearFor(sx, sz, sy, ctx, 0.3, GOD_H);
+          s += wide && tall ? 'B' : wide ? 'W' : tall ? 'H' : '?';
+        }
+        return s;
+      }
+
       doors.push({
+        whyProfile: why(),
         godProfile: profile(GOD_PAD, GOD_H),
         baseProfile: profile(BASE_PAD, BASE_H),
         from: room.id, to: p.to, kind: p.kind, nominal: p.width,
@@ -462,6 +490,7 @@ console.log('the doorway is the middle character. where the rows differ, only sm
 for (const d of out.doors) {
   console.log(`  ${d.from} -> ${d.to}`);
   console.log(`    god  ${d.godProfile}`);
+  console.log(`    why  ${d.whyProfile}`);
   console.log(`    base ${d.baseProfile}`);
 }
 console.log('');

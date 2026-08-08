@@ -620,15 +620,37 @@ export const ROOMS = [
     ],
 
     propSlots: [
-      // The columns that carry the upper ledge. Their height stops the abacus
-      // exactly under the slab, and they sit fully inside the ledge footprint
-      // so nothing pokes up through the floor the player walks on.
-      { type: 'colonnade', x: -20, z: -192, rot: 0, config: { height: 5.65 } },
-      { type: 'colonnade', x: -20, z: -184, rot: 0, config: { height: 5.65 } },
-      { type: 'colonnade', x: -20, z: -176, rot: 0, config: { height: 5.65 } },
-      { type: 'colonnade', x: 20, z: -192, rot: 0, config: { height: 5.65 } },
-      { type: 'colonnade', x: 20, z: -184, rot: 0, config: { height: 5.65 } },
-      { type: 'colonnade', x: 20, z: -176, rot: 0, config: { height: 5.65 } },
+      /**
+       * The columns that carry the upper ledge. Their height stops the abacus
+       * exactly under the slab, and they sit fully inside the ledge footprint
+       * so nothing pokes up through the floor the player walks on.
+       *
+       * MOVED OUTBOARD FROM x +/-20 TO x +/-24, because the row's last column
+       * stood in a doorway.
+       *
+       * The gallery's two outer Act 3 doorways are at x +/-20, z -196, and the
+       * column at x -20, z -192 sat four metres in front of one of them on the
+       * same centreline. Its collider is r 1.35, so with a god's 1.805 disc it
+       * owned x -21.35..-18.65 of a 5.5 m opening and left two 1.4 m slots
+       * either side, against a body 3.61 m across. `test/act3probe.mjs` names
+       * it: every sample from z -189 to -195 in front of both outer doorways
+       * reports this one collider and nothing else.
+       *
+       * That is what held ALL of Act 3 - embalming chamber, canopic crypt, star
+       * shaft, King's Chamber and the Serdab - at zero cells reachable by a god
+       * even after the doorways themselves were widened to 5.5.
+       *
+       * x +/-24 keeps all six columns, keeps the row's 8 m rhythm, and keeps
+       * them under the ledge (x -25..-17), which is what they are holding up.
+       * It puts 4 m between a column centre and a doorway centre, against the
+       * 3.155 m a god's disc needs to clear one.
+       */
+      { type: 'colonnade', x: -24, z: -192, rot: 0, config: { height: 5.65 } },
+      { type: 'colonnade', x: -24, z: -184, rot: 0, config: { height: 5.65 } },
+      { type: 'colonnade', x: -24, z: -176, rot: 0, config: { height: 5.65 } },
+      { type: 'colonnade', x: 24, z: -192, rot: 0, config: { height: 5.65 } },
+      { type: 'colonnade', x: 24, z: -184, rot: 0, config: { height: 5.65 } },
+      { type: 'colonnade', x: 24, z: -176, rot: 0, config: { height: 5.65 } },
 
       // And two more carrying the bridge. Thirty-four metres of stone spanning
       // the head of the room with nothing underneath it is not a bridge, it is a
@@ -657,7 +679,12 @@ export const ROOMS = [
 
       { type: 'rubble', x: -5, z: -161, rot: 0.3 },
       { type: 'rubble', x: 6.5, z: -162.5, rot: 2.4 },
-      { type: 'rubble', x: 0, z: -190, rot: 1.2 },
+      // MOVED OFF THE CENTRE DOORWAY'S APPROACH, z -190 -> -183. Its collider is
+      // r 1.68, and at x 0, z -190 it sat six metres in front of the canopic
+      // crypt door on the same centreline - the same defect as the colonnade
+      // above, in the one lane between the two ledges. At z -183 it is still in
+      // the open nave where rubble reads as rubble, and out of the approach.
+      { type: 'rubble', x: 0, z: -183, rot: 1.2 },
       { type: 'urn', x: -14, z: -166, rot: 0.8 },
       { type: 'urn', x: 14, z: -166, rot: 2.0 },
     ],
@@ -776,7 +803,11 @@ export const ROOMS = [
      * overlap rule the gallery's bridge is built to.
      */
     ramps: [
-      { x: -20, z: -204, w: 8, d: 16, y0: 0, y1: 6 },
+      /**
+       * A FLAT LANDING AT THE THRESHOLD, then the descent. See the note below.
+       */
+      { x: -20, z: -197.25, w: 8, d: 2.5, y0: 6, y1: 6 },
+      { x: -20, z: -205.25, w: 8, d: 13.5, y0: 0, y1: 6 },
     ],
 
     portals: [
@@ -923,7 +954,8 @@ export const ROOMS = [
 
     /** THE DESCENT, centre door. Same 16-for-6 as the other two. */
     ramps: [
-      { x: 0, z: -204, w: 8, d: 16, y0: 0, y1: 6 },
+      { x: 0, z: -197.25, w: 8, d: 2.5, y0: 6, y1: 6 },
+      { x: 0, z: -205.25, w: 8, d: 13.5, y0: 0, y1: 6 },
     ],
 
     portals: [
@@ -1009,7 +1041,35 @@ export const ROOMS = [
 
     /** THE DESCENT, east door. Same 16-for-6 as the other two. */
     ramps: [
-      { x: 20, z: -204, w: 8, d: 16, y0: 0, y1: 6 },
+      /**
+       * THE FLAT LANDING IS WHAT LETS A GOD THROUGH THE THRESHOLD.
+       *
+       * All three Act 3 descents used to start sloping on the wall line itself,
+       * and that put a 5 cm interaction between a god and the map.
+       *
+       * `build.js` fills the stone under a descent doorway with a wall whose top
+       * stops RAMP_T (0.7) short of the sill, so the ramp's own falling surface
+       * covers it. `clear()` skips a wall only when `floorY >= w.y1`, so that
+       * fill goes LIVE the moment the ramp surface drops below -0.7, which on a
+       * 0.375 gradient is 1.87 m inside the door. Measured at z -198: floor
+       * -0.75, fill top -0.70.
+       *
+       * From there the body's own radius decides whether it is inside the fill.
+       * A shambler reaches 0.55 and the wall face is 1.0 m away, so it never
+       * touches it. A god reaches 1.805 and is inside it - and the band is only
+       * about 0.44 m deep, which is under one 0.7 m field cell and therefore
+       * exactly enough to break the chain of cells through the door. Every Act 3
+       * room read as unreachable because of a strip narrower than a doorstep.
+       *
+       * 2.5 m of flat at the sill height keeps the feet at 0 for longer than a
+       * god's disc is deep, so `floorY >= w.y1` holds and the fill is never
+       * tested. The descent then runs 6 over 13.5 rather than 6 over 16, which
+       * is 0.444 - still well under the field's own 0.93 limit and under the
+       * player controller's step. It also reads better: a threshold you step
+       * onto and then walk down, rather than a slope starting under the door.
+       */
+      { x: 20, z: -197.25, w: 8, d: 2.5, y0: 6, y1: 6 },
+      { x: 20, z: -205.25, w: 8, d: 13.5, y0: 0, y1: 6 },
     ],
 
     portals: [
