@@ -59,10 +59,11 @@
  * @param {function} [o.onSettings]   opens the pause panel
  * @param {Document} [o.doc]
  */
-export function createStartScreen({ veil, difficulty, onSettings, doc = document }) {
+export function createStartScreen({ veil, difficulty, onSettings, save, doc = document }) {
   const row = veil && veil.querySelector('[data-tiers]');
   const noteEl = veil && veil.querySelector('[data-tier-note]');
   const settingsBtn = veil && veil.querySelector('[data-open-settings]');
+  const recordEl = veil && veil.querySelector('[data-record]');
 
   /** The in-play stamp. Outside the veil - it lives on the ammunition plate. */
   const stampEl = doc.querySelector('[data-difficulty]');
@@ -107,6 +108,92 @@ export function createStartScreen({ veil, difficulty, onSettings, doc = document
 
   difficulty.subscribe(refresh);
 
+  /**
+   * mm:ss, because a clear time is minutes and nobody reads 878 seconds.
+   *
+   * Not padded on the minutes: a 9-minute clear reading "09:14" implies a
+   * tens-of-minutes column that this game will never fill, and the leading zero
+   * is the kind of detail that makes an interface look automatically generated.
+   */
+  function clock(seconds) {
+    const s = Math.max(0, Math.round(seconds));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  /**
+   * WHAT THE TOMB REMEMBERS, and it says nothing at all until there is
+   * something to say.
+   *
+   * Every field is conditional on its own record existing rather than on a
+   * zero, and the whole line hides when none of them do. A first-time player
+   * gets the screen exactly as it was before this existed - which is the point,
+   * because an empty scoreboard on a title screen tells a new player they are
+   * already behind, and this game's first minute is the part of it that works.
+   *
+   * The wording is the tomb's rather than a scoreboard's, which is the register
+   * the death card already set when it chose ERASED over "deaths": the surface
+   * speaks as the thing doing the erasing. DEEPEST is the furthest a run ever
+   * got, and it is only worth saying while the player has never finished - once
+   * they have, every clear is wave 25 and the interesting number becomes time.
+   */
+  function paintRecord() {
+    if (!recordEl || !save) return null;
+
+    const deepest = save.getRecord('deepestWave', 0);
+    const clears = save.getRecord('clears', 0);
+    const fastest = save.getRecord('fastestClear', 0);
+    const erased = save.getRecord('erased', 0);
+    const richest = save.getRecord('richestRun', 0);
+
+    /** {label, value, tail} triples rather than markup. See the build below. */
+    const bits = [];
+    if (clears > 0) {
+      bits.push(['Descended', String(clears), '']);
+      if (fastest > 0) bits.push(['Fastest', clock(fastest), '']);
+    } else if (deepest > 0) {
+      // Only before the first clear. After it, "deepest 25" is true of every
+      // finished run and says nothing about this player.
+      bits.push(['Deepest', `Wave ${deepest}`, '']);
+    }
+    if (richest > 0) bits.push(['Richest', String(richest), 'gold']);
+    if (erased > 0) bits.push(['Erased', String(erased), '']);
+
+    if (!bits.length) { recordEl.hidden = true; recordEl.textContent = ''; return null; }
+
+    /**
+     * BUILT AS NODES, NOT AS AN innerHTML STRING.
+     *
+     * Every value here is a number that core/save.js has already validated as
+     * finite and non-negative, so there is nothing in it that could carry
+     * markup. That is an argument for why this is safe TODAY, and it is an
+     * argument that lives in a different file: it holds only for as long as
+     * that validator keeps its current shape, and this save comes off
+     * localStorage, which save.js itself describes as untrusted input in the
+     * same way a query string is.
+     *
+     * Text nodes cost nothing and are correct regardless of what any other file
+     * does later, so the safety is a property of this code rather than a
+     * property of an agreement between two files.
+     *
+     * One span per field so the flex row wraps BETWEEN fields and never inside
+     * one, which is what keeps "Fastest 14:22" from breaking in half on a phone.
+     */
+    recordEl.textContent = '';
+    for (const [label, value, tail] of bits) {
+      const span = doc.createElement('span');
+      span.appendChild(doc.createTextNode(`${label} `));
+      const b = doc.createElement('b');
+      b.textContent = value;
+      span.appendChild(b);
+      if (tail) span.appendChild(doc.createTextNode(` ${tail}`));
+      recordEl.appendChild(span);
+    }
+    recordEl.hidden = false;
+    return { deepest, clears, fastest, erased, richest, fields: bits.length };
+  }
+
+  paintRecord();
+
   if (settingsBtn && onSettings) {
     settingsBtn.addEventListener('click', onSettings);
   }
@@ -114,6 +201,16 @@ export function createStartScreen({ veil, difficulty, onSettings, doc = document
   return {
     buttons,
     refresh,
+
+    /**
+     * Repaint the records line.
+     *
+     * Exposed because the ending card and the death card both write records
+     * while this screen is hidden behind them, and a player who dies, presses
+     * again, and quits to the title should not be shown the history they had
+     * before the run they just finished.
+     */
+    paintRecord,
 
     /**
      * The run has begun: say which tier it is being played on, for as long as

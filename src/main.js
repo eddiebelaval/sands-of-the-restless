@@ -862,6 +862,9 @@ function boot() {
   const startScreen = createStartScreen({
     veil,
     difficulty,
+    // The records line is built from the same save the death and ending cards
+    // write to, so the title screen cannot claim a record the game did not keep.
+    save,
     onSettings: () => pause.open('title'),
   });
 

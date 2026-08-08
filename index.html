@@ -267,6 +267,47 @@
   }
   .keys b { color: var(--gold-mid); font-weight: normal; }
 
+  /* WHAT THE TOMB REMEMBERS.
+
+     Deliberately the keys strip's own treatment rather than a new one: dim
+     label, gold-mid figure, same letterspacing and the same uppercase. This is
+     secondary information on a screen whose primary action is one button, and a
+     records line styled to compete with the cartouche would be the loudest
+     thing on a title screen that already knows what it is about.
+
+     The figures take --gold-mid and NOT --gold-dim for the reason tokens.js
+     records against the subtitle: dim measures 3.70 to one, under the 4.5 floor
+     test/hud.mjs holds every label in this game to, and a number nobody can
+     read is not a record. The labels beside them are allowed to be dimmer
+     because they are the same four words every time and a returning player is
+     reading the numbers. */
+  .record {
+    margin-top: 1.5em;
+    font-size: 11px;
+    letter-spacing: .16em;
+    color: #7d6a4e;
+    text-transform: uppercase;
+    /* Wraps to two lines on a phone rather than scrolling the veil. */
+    display: flex; flex-wrap: wrap; justify-content: center;
+    gap: .35em 0;
+    max-width: min(560px, 74vw);
+  }
+  .record[hidden] { display: none; }
+  .record b { color: var(--gold-mid); font-weight: normal; }
+  /* Each field is one unbreakable unit, so a wrap never splits "Fastest 14:22"
+     down the middle. */
+  .record span { white-space: nowrap; }
+  /* THE SAME MIDDLE DOT THE KEYS STRIP USES, one line above this one. Two
+     adjacent bands of dim uppercase text that separate their fields by
+     different conventions read as two things nobody looked at together. The
+     separator is generated rather than authored so it cannot survive its own
+     field being conditionally dropped - which every field here is. */
+  .record span + span::before {
+    content: '·';
+    color: #5d4f3a;
+    margin: 0 .7em;
+  }
+
   /* The same focus treatment the pause panel gets, and for the same reason
      recorded there: Chrome's default ring is a saturated blue rectangle, which
      on a warm gold interface is the brightest and coldest object on the screen.
@@ -1476,6 +1517,17 @@
        binding changes, including from the Settings button eight lines up. The
        letters a player reads here are now the letters the game is running. -->
   <div class="keys" data-keys></div>
+
+  <!-- WHAT THE TOMB REMEMBERS. Empty markup on purpose, exactly like the keys
+       strip above: the line is built by src/ui/start.js from the same save the
+       death card and the ending card write to, so it cannot claim a record the
+       game did not keep.
+
+       A player with no history sees NOTHING here. No placeholder dashes, no
+       empty labels, no zeroes - a title screen that opens by showing a
+       first-time player an empty scoreboard has told them they are behind
+       before they have pressed anything. -->
+  <div class="record" data-record hidden></div>
 
   <!-- Assets stream in after the game is already playable, so this reports
        progress rather than gating entry on it. -->

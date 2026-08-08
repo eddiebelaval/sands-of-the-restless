@@ -114,14 +114,37 @@ const rec = await page.evaluate(async () => {
   const wave = g.director.state.wave;
   const gold = g.economy ? g.economy.gold : 0;
 
-  g.death.begin ? g.death.begin() : g.combat.killPlayer?.();
-  for (let i = 0; i < 400; i++) g.death.update(dt);
+  /**
+   * THE PLAYER HAS TO ACTUALLY BE DEAD, which is not what the first cut did.
+   *
+   * `death.update` opens with
+   *
+   *     if (phase !== 'restarting' && player.state.health > 0 && !state.pending)
+   *       { standDown(); return; }
+   *
+   * so calling begin() on a living player sets the phase to 'falling' and the
+   * very next frame stands it back down. The first version of this test passed
+   * only when the horde happened to kill the player during the director frames
+   * above, which made it flaky in the worst way available: it reported "an
+   * erasure was recorded (undefined)" and looked exactly like the save being
+   * unwired, on a build where the save was fine.
+   *
+   * Killing the player outright is the honest precondition. A death card is for
+   * a dead player.
+   */
+  g.player.state.health = 0;
+  g.death.begin && g.death.begin();
+  let epitaph = '';
+  for (let i = 0; i < 900 && !epitaph; i++) {
+    g.death.update(dt);
+    epitaph = (g.death.stats && g.death.stats().epitaph) || '';
+  }
   g.save.flush();
 
   return {
     wave, gold,
     records: g.save.records(),
-    cardText: g.death.stats ? g.death.stats().epitaph : null,
+    cardText: epitaph,
     elapsed: Math.round(g.director.state.elapsed),
   };
 });
@@ -160,6 +183,80 @@ await page.reload({ waitUntil: 'load' });
 await boot();
 ok(await page.evaluate(() => window.__SANDS__.save.getFlag('worldTwoEgg')) === true,
   'and survives, which is what World 2\'s Easter egg will stand on');
+
+// ----------------------------------------------------- the records line
+//
+// THE CONTROL IS THE EMPTY CASE, and it is the one worth asserting. A records
+// line that renders "Deepest Wave 0 · Erased 0" for someone who has never
+// played would pass any check that only looks for the numbers to be right.
+{
+  await page.evaluate(() => window.__SANDS__.save.clear());
+  await page.reload({ waitUntil: 'load' });
+  await boot();
+
+  const fresh = await page.evaluate(() => {
+    const el = document.querySelector('[data-record]');
+    return { hidden: el.hidden, text: el.textContent.trim(), boxes: el.getClientRects().length };
+  });
+  ok(fresh.hidden === true, 'a first-time player is shown NO records line');
+  ok(fresh.text === '', 'and it holds no text at all, not even placeholders');
+  ok(fresh.boxes === 0, 'and it occupies no space on the title screen');
+
+  // Now give it a history and reload into it.
+  await page.evaluate(() => {
+    const s = window.__SANDS__.save;
+    s.best('deepestWave', 17);
+    s.best('richestRun', 9250);
+    s.best('erased', 6);
+    s.flush();
+  });
+  await page.reload({ waitUntil: 'load' });
+  await boot();
+
+  const shown = await page.evaluate(() => {
+    const el = document.querySelector('[data-record]');
+    return {
+      hidden: el.hidden,
+      text: el.textContent.replace(/\s+/g, ' ').trim(),
+      fields: el.querySelectorAll('span').length,
+      // Every figure is a <b>, which is what carries the readable colour.
+      figures: [...el.querySelectorAll('b')].map((b) => b.textContent),
+    };
+  });
+
+  console.log('');
+  console.log(`  before a clear:  ${shown.text}`);
+
+  ok(shown.hidden === false, 'a returning player IS shown one');
+  ok(/Deepest/i.test(shown.text) && shown.figures.includes('Wave 17'),
+    'it names the deepest wave reached (17)');
+  ok(shown.figures.includes('6'), 'and the erasure count (6)');
+  ok(shown.figures.includes('9250'), 'and the richest run (9250)');
+  ok(!/Fastest/i.test(shown.text), 'and does NOT claim a clear time before a clear');
+
+  // And after a clear, deepest stops being interesting and time takes over.
+  await page.evaluate(() => {
+    const s = window.__SANDS__.save;
+    s.add('clears', 1);
+    s.least('fastestClear', 878);
+    s.flush();
+  });
+  await page.reload({ waitUntil: 'load' });
+  await boot();
+
+  const cleared = await page.evaluate(() => {
+    const el = document.querySelector('[data-record]');
+    return { text: el.textContent.replace(/\s+/g, ' ').trim(),
+      figures: [...el.querySelectorAll('b')].map((b) => b.textContent) };
+  });
+  console.log(`  after  a clear:  ${cleared.text}`);
+  console.log('');
+
+  ok(cleared.figures.includes('14:38'), 'after a clear it shows the time as mm:ss (878 s = 14:38)');
+  ok(/Descended/i.test(cleared.text), 'and how many times the tomb was cleared');
+  ok(!/Deepest/i.test(cleared.text),
+    'and DROPS deepest wave, which is 25 for everyone who has finished');
+}
 
 // Leave the machine as we found it.
 await page.evaluate(() => window.__SANDS__.save.clear());
