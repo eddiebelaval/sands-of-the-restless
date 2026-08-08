@@ -363,18 +363,54 @@ export const ROOMS = [
     ],
 
     propSlots: [
-      // Two rows of columns down the long axis. The hall is the one room whose
-      // read is entirely rhythm, so the spacing is even and the count is odd.
-      { type: 'colonnade', x: -51, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -44.5, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -38, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -31.5, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -25, z: -145.5, rot: 0 },
-      { type: 'colonnade', x: -51, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -44.5, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -38, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -31.5, z: -152.5, rot: 0 },
-      { type: 'colonnade', x: -25, z: -152.5, rot: 0 },
+      /**
+       * ONE ROW DOWN THE CENTRE, NOT TWO FLANKING AN AISLE.
+       *
+       * The read is still entirely rhythm - even spacing, odd count - and the
+       * rhythm is unchanged. What changed is that there were TEN columns and a
+       * god could not enter this room at all.
+       *
+       * A colonnade collider is r 1.35, so a god's 1.805 disc needs 3.155 m of
+       * clearance from a column centre. Measured against the old layout, every
+       * lane in the room was shut:
+       *
+       *   between adjacent columns, 6.5 apart      3.80 m clear   band 0.19
+       *   between the two rows, 7.0 apart          4.30 m clear   band 0.69
+       *   north wall to the near row               3.65 m clear   band 0.04
+       *   south wall to the far row                3.65 m clear   band 0.04
+       *
+       * Four centimetres. A god could only squeeze past the EAST END of the two
+       * rows, which is why this room reported 152 god-standable cells against
+       * 764 for a shambler and why it was the last pinched room on the map.
+       *
+       * The room is 17 m of inner depth and two rows spend 5.4 m of it on stone
+       * plus an aisle nobody wide can use. One row spends 2.7 m and leaves 7.15 m
+       * of clear floor on each side, which is 3.54 m of god band - five cells,
+       * and a lane a boss can actually be fought in rather than walked past.
+       *
+       * THE ROW SITS AT z -153.5 AND NOT ON THE ROOM'S CENTRELINE, and the first
+       * cut of this change put it on the centreline and broke the map for the
+       * PLAYER. z -149 is not merely the middle of the hall, it is the line
+       * through the chamber-of-ascent doorway on the east wall, so a column at
+       * x -25 stood squarely in the one route every run takes out of the entry
+       * room. `test/kite.mjs` caught it in the leg it exists to measure: the
+       * player corked for 191 of 200 frames at x -26.77, having covered 3 m.
+       *
+       * Which is the same defect as the gallery colonnade standing in front of
+       * the Act 3 doorways, committed while fixing that one. A doorway's
+       * approach is not a place for a column, in any room, for any body.
+       *
+       * At -153.5 the south strip is 2.65 m of clear floor - too tight for a god
+       * and fine for the horde, which needs 1.1 - and everything north of the
+       * row is 11.65 m of open hall. That is the fighting floor, it holds both
+       * doorways and both offering tables, and it is the widest continuous
+       * stretch of god-walkable ground in the entry band.
+       */
+      { type: 'colonnade', x: -51, z: -153.5, rot: 0 },
+      { type: 'colonnade', x: -44.5, z: -153.5, rot: 0 },
+      { type: 'colonnade', x: -38, z: -153.5, rot: 0 },
+      { type: 'colonnade', x: -31.5, z: -153.5, rot: 0 },
+      { type: 'colonnade', x: -25, z: -153.5, rot: 0 },
 
       { type: 'offering-table', x: -48, z: -149, rot: 0 },
       { type: 'offering-table', x: -34, z: -149, rot: 0 },
@@ -485,7 +521,20 @@ export const ROOMS = [
       // holding a piece of the thing they are there to finish.
       { type: 'urn', x: 21.5, z: -145, rot: 0.2 },
       { type: 'urn', x: 23.2, z: -144.2, rot: 1.4 },
-      { type: 'urn', x: 22.4, z: -153.6, rot: 2.6 },
+      /**
+       * MOVED OFF THE GALLERY DOOR'S APPROACH, from x 22.4, z -153.6.
+       *
+       * One urn, collider radius 0.5, sealed this whole room to a god: reached
+       * 9 cells of the 259 it can stand in. The corridor in from the gallery
+       * doorway is 2.14 m of legal centre band - pinched by two wall ends, not
+       * by the 5.5 m opening - and a god must clear this urn by 0.5 + 1.805 =
+       * 2.305 m. One small prop is wider than the corridor it stands in.
+       *
+       * It also sat at the one z where that mattered. A god escapes the south
+       * wall's influence north of z -155.2 and enters this urn's south of
+       * z -155.9, so there was no z at which it was clear of both.
+       */
+      { type: 'urn', x: 28, z: -152, rot: 2.6 },
       { type: 'urn', x: 40, z: -155.5, rot: 0.9 },
       { type: 'urn', x: 41.6, z: -154.2, rot: 2.2 },
       { type: 'pillar', x: 27, z: -145.5, rot: 0 },

@@ -1,4 +1,66 @@
-# RIGHT NOW — 2026-08-08 02:15 — READ THIS FIRST
+# DONE — 2026-08-08 — THE MAP IS OPEN TO A GOD
+
+**Every room a god should be able to reach, it reaches.** `test/godfield.mjs` is
+now a gate rather than a report, and it is green at 22 checks.
+
+```
+  chamber-of-ascent    460 /  463    99%
+  hall-of-offerings    419 /  420   100%
+  granary-vault        255 /  257    99%
+  great-gallery       2143 / 2143   100%
+  embalming-chamber    946 /  956    99%
+  canopic-crypt        847 /  849   100%
+  star-shaft           642 /  682    94%
+  kings-chamber       2187 / 2187   100%
+  serdab                 0 /   67    god-proof BY DESIGN, asserted
+```
+
+Whole-map god reach went **401 cells (3.3%) to 7847 (61.4%)**. The remaining gap
+to the shambler's number is bodies legitimately not fitting in tight corners,
+which is correct rather than a defect.
+
+The causes, in the order they were found, every one measured rather than argued:
+
+| | what it was |
+|---|---|
+| doorways | authored 4.0, which is 0.39 m of god band. Now `COMBAT_DOOR = 5.5` |
+| gallery ramps | mouths sat on the north doorways. Backed 4 m south |
+| gallery colonnade | a pillar 4 m in front of each Act 3 door, on its centreline |
+| Act 3 thresholds | the descent fill went live 1.87 m in. Now a 2.5 m flat landing |
+| King's Chamber doors | two rooms' side walls pinched the corridor to 4.0 m. Room w 40 -> 44 |
+| **the undercroft fill** | **held one RAMP_T below the surface. 14 mm severed all of Act 3** |
+| granary vault | ONE urn, r 0.5, sealed the room. Moved |
+| hall of offerings | a double colonnade with all four lanes shut. Now one row |
+
+**The lesson worth keeping.** Every single cause was a body-radius interaction
+invisible at shambler scale: a 0.55 disc never reaches what a 1.805 disc does.
+The map was authored correctly for the horde and none of it was correct for a
+god. Fourteen millimetres of ramp fill is the extreme case and it was not an
+outlier - it was the same mistake as the urn.
+
+**Do not put anything in a doorway's approach.** That defect was found in the
+gallery, then committed again by hand in the hall of offerings twelve edits
+later, where `test/kite.mjs` caught the player corked for 191 of 200 frames.
+
+## The second flood, finally
+
+It is now worth building and it was not before. `sample()` still hands gods a
+route carved for a 0.55 x 2.0 body, so they are steered into cells they cannot
+occupy even though a route their body fits now exists. It must be a SECOND
+field, not a wider single one, or shamblers detour around gaps they fit through.
+Start from `flow.clearFor`, which is already the parameterised predicate.
+
+Also still open: boss health and damage, untouched deliberately - the exploit had
+to close first or it only makes the free kill longer. Two new late-wave enemy
+variants (the Gold Scarab is one; one more was asked for). The colour tiers.
+Story. World 2.
+
+Suites green: nav, interior, descent, kite, enemies, variantspawn, jars,
+economy, e2e, godfield.
+
+---
+
+# RIGHT NOW — 2026-08-08 02:15 — READ THIS FIRST (superseded above)
 
 Everything below is pushed, built and verified live at
 `https://eddiebelaval.github.io/sands-of-the-restless/`. `origin/main` and

@@ -566,3 +566,45 @@ for (const d of sealed) console.log(`  SEALED  ${d.from} -> ${d.to}  (god band $
 if (errors.length) { console.log(''); for (const e of errors.slice(0, 5)) console.log(`  err ${e}`); }
 
 await browser.close();
+
+/**
+ * THE CHECKS, so this stops being a report and starts being a gate.
+ *
+ * Everything above was written to DIAGNOSE, and that job is done: the map went
+ * from a god reaching 3.3 per cent of it to 61. What these assert is that it
+ * STAYS that way, because every cause found on the way here was one prop, or one
+ * wall end, or fourteen millimetres of ramp fill - and any of them comes back the
+ * next time someone places an urn.
+ *
+ * THE SERDAB IS ASSERTED UNREACHABLE, not excused. Its 2.4 m puzzle door is
+ * deliberately too small for a god and it is the only room with no spawn points,
+ * which is what lets the ending happen in it. A god following the player in
+ * there would be the regression.
+ */
+console.log('');
+let pass = 0, fail = 0;
+const ok = (c, m) => { if (c) { pass++; console.log(`PASS  ${m}`); } else { fail++; console.log(`FAIL  ${m}`); } };
+
+// The control. If a shambler cannot cross its own map, this file is broken
+// rather than the map.
+ok(out.baseReach > 10000, `CONTROL: a shambler reaches the map (${out.baseReach} cells)`);
+
+for (const r of out.perRoom) {
+  if (r.id === 'serdab') continue;
+  const pct = r.god ? (r.reached / r.god) * 100 : 0;
+  ok(pct >= 90, `${r.id} is open to a god (${r.reached}/${r.god}, ${pct.toFixed(0)}%)`);
+}
+
+const serdabRoom = out.perRoom.find((r) => r.id === 'serdab');
+ok(!!serdabRoom && serdabRoom.reached === 0, 'the Serdab stays god-proof, which is the design');
+
+ok(sealed.length === 0, `every combat doorway admits a god (${combat.length} doorways)`);
+for (const d of combat) {
+  ok(d.cellsInGodBand >= 2,
+    `${d.from} -> ${d.to} has room to route (${d.cellsInGodBand} cells, ${d.godBand.toFixed(2)}m)`);
+}
+ok(errors.length === 0, 'no console errors');
+
+console.log('');
+console.log(fail === 0 ? `ALL CHECKS PASSED (${pass})` : `${fail} FAILED of ${pass + fail}`);
+process.exit(fail === 0 ? 0 : 1);
