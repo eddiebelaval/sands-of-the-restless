@@ -59,6 +59,52 @@
  * directly, or half the graph disappears.
  */
 
+/**
+ * HOW WIDE A DOORWAY A GOD HAS TO FIGHT THROUGH, and why it is not 4.
+ *
+ * The owner finished World 1 and reported the bosses as too easy: "the doorways
+ * trap them and basically make it easy to kill them all." That was diagnosed
+ * three ways before it was measured, and the first two diagnoses were wrong.
+ *
+ * It is not width in the sense of "does a god fit" - `test/chokepoint.mjs`
+ * measured every combat portal admitting a god with 9.8cm to spare per side, and
+ * no lintel anywhere on the map. It is not headroom - 4.2m of it against a 3.895m
+ * body. It is that a doorway wide enough to PASS is not wide enough to ROUTE.
+ *
+ * `enemies/flow.js` carves its field with a disc and marks a cell walkable only
+ * where the whole disc fits, so an opening of nominal width W leaves a legal band
+ * of W - 2r for a body of radius r. Measured, and exact to the centimetre against
+ * that model - there is no wall overhang, the nominal width IS the clear span:
+ *
+ *   shambler, r 0.55   ->  4.0 - 1.10 = 2.90m of band
+ *   god,      r 1.805  ->  4.0 - 3.61 = 0.39m of band
+ *
+ * The field's STEP is 0.7, chosen with the explicit argument that 2.90m is "four
+ * cells across the gap, which is enough that no doorway can be closed by sampling
+ * luck". At 0.39m it is HALF A CELL, and `test/godfield.mjs` measured what that
+ * costs: of the 12,138 cells a shambler can reach from the Great Gallery, a god
+ * could reach 401. Three point three per cent. Six of ten combat doorways held no
+ * cell a god could stand in at all.
+ *
+ * WHY THE ANSWER IS GEOMETRY AND NOT A TIGHTER COLLIDER. The same file swept the
+ * god's collider from 0.95 down to 0.62 and found a cliff, not a curve: 0.70
+ * reaches 8.9% of the map and 0.66 reaches 73.6%. A seven-centimetre change
+ * flipping connectivity eightfold is grid phase, not clearance - the whole map's
+ * connectivity was hanging on one or two cells inside two doorways. Any fix that
+ * lands on that cliff is luck. 0.66 is also the floor: the god's widest visible
+ * geometry is 0.659 local, so a collider under it puts the shoulder plates
+ * through stone.
+ *
+ * So the band has to be several cells wide by construction rather than by
+ * accident, and the only lever that does that is the opening itself.
+ *
+ * NOT A UNIVERSAL WIDTH. The Serdab's 2.4m puzzle door is deliberately left
+ * god-proof - it is the only room with no spawn points, which is what lets the
+ * ending happen in it, and a god following the player in there would be a
+ * regression rather than a fix.
+ */
+const COMBAT_DOOR = 5.5;
+
 /** Where the courtyard's sealed doorway lands. The 1000g gate into the map. */
 export const ENTRY = {
   to: 'chamber-of-ascent',
@@ -157,8 +203,8 @@ export const ROOMS = [
        * 750 to close instead of 1500, and it is still something the player buys
        * rather than something they are given.
        */
-      { to: 'hall-of-offerings', at: { x: -18, z: -149 }, width: 4.0, kind: 'open', cost: 0 },
-      { to: 'granary-vault', at: { x: 18, z: -149 }, width: 4.0, kind: 'debris', cost: 750 },
+      { to: 'hall-of-offerings', at: { x: -18, z: -149 }, width: COMBAT_DOOR, kind: 'open', cost: 0 },
+      { to: 'granary-vault', at: { x: 18, z: -149 }, width: COMBAT_DOOR, kind: 'debris', cost: 750 },
     ],
 
     // Spread to the new width. All three stay in the southern half, away from
@@ -306,7 +352,7 @@ export const ROOMS = [
        * the opening and 1.75 m of hall wall east of it. That is the same order of
        * margin the Act 3 loop doorways carry at x -17.
        */
-      { to: 'great-gallery', at: { x: -22, z: -158 }, width: 4.5, kind: 'open', cost: 0 },
+      { to: 'great-gallery', at: { x: -22, z: -158 }, width: COMBAT_DOOR, kind: 'open', cost: 0 },
     ],
 
     spawnPoints: [
@@ -422,7 +468,7 @@ export const ROOMS = [
       // this portal: the opening is cut from the gallery's north wall as well as
       // from this room's south wall, and the gallery has not moved. 22 leaves
       // 1.75 m of pier on each side.
-      { to: 'great-gallery', at: { x: 22, z: -158 }, width: 4.5, kind: 'open', cost: 0 },
+      { to: 'great-gallery', at: { x: 22, z: -158 }, width: COMBAT_DOOR, kind: 'open', cost: 0 },
     ],
 
     spawnPoints: [
@@ -480,8 +526,14 @@ export const ROOMS = [
      */
     levels: [0, 6],
     ramps: [
-      { x: -21, z: -183.5, w: 8, d: 23, y0: 6, y1: 6 },
-      { x: 21, z: -183.5, w: 8, d: 23, y0: 6, y1: 6 },
+      /**
+       * NINETEEN DEEP RATHER THAN TWENTY-THREE, to make room for the ramps
+       * below to back away from the north doorways. See the note on those.
+       * The ledge still runs from the bridge at the south end to the head of
+       * its ramp, which is the whole of what it has to do.
+       */
+      { x: -21, z: -185.5, w: 8, d: 19, y0: 6, y1: 6 },
+      { x: 21, z: -185.5, w: 8, d: 19, y0: 6, y1: 6 },
 
       /**
        * THE BRIDGE, and the highest-value single geometry change in the map.
@@ -517,14 +569,46 @@ export const ROOMS = [
        */
       { x: 0, z: -191.5, w: 34, d: 7, y0: 6, y1: 6 },
 
-      { x: -21, z: -166, w: 8, d: 12, y0: 6, y1: 0 },
-      { x: 21, z: -166, w: 8, d: 12, y0: 6, y1: 0 },
+      /**
+       * THE RAMP FEET BACKED FOUR METRES SOUTH, OFF THE NORTH DOORWAYS.
+       *
+       * The owner played World 1 and said the gallery's ramp mouths sit hard
+       * against its doorways: "the ramp entrances need to back up away from the
+       * doorway because the doorway is blocked by the entrance to the ramps."
+       * He was right, and the reason is a rule that only bites at god scale.
+       *
+       * `enemies/flow.js` clear() refuses a cell whose overhead surface sits
+       * between CLIMB (0.65) and the body's own height - the headroom clause
+       * that stops the horde routing through the crawlspace under a slab. Under
+       * a ramp descending at 0.5 that makes the unusable band a function of how
+       * TALL the body is, and the two bodies on this map are very different:
+       *
+       *   shambler, 2.0 tall   blocked z -161.3 to -164.0
+       *   god,      3.895 tall blocked z -161.3 to -167.8
+       *
+       * A taller body is shut out of a LONGER stretch of the same ramp. With the
+       * feet at z -160 that left 3.3 m of clear floor between the gallery's north
+       * wall and the start of the blocked band, against a god 3.61 m across, and
+       * the doorways at x +/-22 sit inside the ramps' own x footprint of -25..-17
+       * so there is no way round. Measured in `test/godfield.mjs`: a god entering
+       * the gallery could reach EIGHT of its 1911 standable cells.
+       *
+       * The doorway cannot move instead. The gallery is x -26..26 and the two
+       * rooms north of it are x -56..-18 and 18..44, so the rooms only touch
+       * across eight metres, essentially all of it under a ramp.
+       *
+       * Backing the feet to z -164 opens that strip to 7.3 m, which is a god plus
+       * 3.7 m of margin. The gradient is untouched at 6 over 12: this moves the
+       * ramps, it does not make them steeper.
+       */
+      { x: -21, z: -170, w: 8, d: 12, y0: 6, y1: 0 },
+      { x: 21, z: -170, w: 8, d: 12, y0: 6, y1: 0 },
     ],
 
     portals: [
-      { to: 'embalming-chamber', at: { x: -20, z: -196 }, width: 4.0, kind: 'gate', cost: 1000 },
-      { to: 'canopic-crypt', at: { x: 0, z: -196 }, width: 4.0, kind: 'gate', cost: 1000 },
-      { to: 'star-shaft', at: { x: 20, z: -196 }, width: 4.0, kind: 'gate', cost: 1250 },
+      { to: 'embalming-chamber', at: { x: -20, z: -196 }, width: COMBAT_DOOR, kind: 'gate', cost: 1000 },
+      { to: 'canopic-crypt', at: { x: 0, z: -196 }, width: COMBAT_DOOR, kind: 'gate', cost: 1000 },
+      { to: 'star-shaft', at: { x: 20, z: -196 }, width: COMBAT_DOOR, kind: 'gate', cost: 1250 },
     ],
 
     spawnPoints: [
@@ -724,7 +808,7 @@ export const ROOMS = [
       {
         to: 'kings-chamber',
         at: { x: -17, z: -232 },
-        width: 4.0,
+        width: COMBAT_DOOR,
         kind: 'open',
         cost: 0,
         onHard: { kind: 'debris', cost: 1250 },
@@ -845,7 +929,7 @@ export const ROOMS = [
     portals: [
       // No price. The gate is the power switch two rooms away, which is the
       // whole point of the embalming chamber existing.
-      { to: 'kings-chamber', at: { x: 0, z: -232 }, width: 5.0, kind: 'power', cost: 0 },
+      { to: 'kings-chamber', at: { x: 0, z: -232 }, width: COMBAT_DOOR, kind: 'power', cost: 0 },
     ],
 
     spawnPoints: [
@@ -976,7 +1060,7 @@ export const ROOMS = [
       {
         to: 'kings-chamber',
         at: { x: 17, z: -232 },
-        width: 4.0,
+        width: COMBAT_DOOR,
         kind: 'open',
         cost: 0,
         onHard: { kind: 'debris', cost: 1250 },
