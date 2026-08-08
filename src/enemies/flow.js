@@ -392,16 +392,22 @@ export function createFlowField() {
    * horde through rubble and then watch it grind on the rubble, which is the
    * failure this file exists to end, arriving by a different road.
    */
-  function clear(x, z, floorY, ctx) {
+  /**
+   * @param {number} [pad]    body radius to test clearance for. Defaults to PAD,
+   *                          which is the shambler's, and which every caller used
+   *                          implicitly until gods turned out to be 3.28x wider.
+   * @param {number} [bodyH]  body height. Defaults to BODY_H.
+   */
+  function clear(x, z, floorY, ctx, pad = PAD, bodyH = BODY_H) {
     if (ctx.walls) {
-      const head = floorY + BODY_H;
+      const head = floorY + bodyH;
       for (const w of ctx.walls) {
         if (head <= w.y0 || floorY >= w.y1) continue;
-        if (Math.abs(x - w.x) < w.w / 2 + PAD && Math.abs(z - w.z) < w.d / 2 + PAD) return false;
+        if (Math.abs(x - w.x) < w.w / 2 + pad && Math.abs(z - w.z) < w.d / 2 + pad) return false;
       }
     }
 
-    const near = ctx.colliderGrid.near(x, z, PAD);
+    const near = ctx.colliderGrid.near(x, z, pad);
     const list = ctx.colliderGrid.out;
     for (let i = 0; i < near; i++) {
       const c = list[i];
@@ -421,10 +427,10 @@ export function createFlowField() {
        * walk straight through - and the two have to agree, or the map has one
        * shape for the player and another for the horde.
        */
-      if (base - floorY > BODY_H) continue;
+      if (base - floorY > bodyH) continue;
 
       const dx = x - c.x, dz = z - c.z;
-      const want = c.r + PAD;
+      const want = c.r + pad;
       if (dx * dx + dz * dz < want * want) return false;
     }
 
@@ -466,7 +472,7 @@ export function createFlowField() {
      */
     if (ctx.heightAt) {
       const top = ctx.heightAt(x, z);
-      if (top > floorY + CLIMB && top - floorY < BODY_H) return false;
+      if (top > floorY + CLIMB && top - floorY < bodyH) return false;
     }
 
     return true;
@@ -1107,6 +1113,28 @@ export function createFlowField() {
     rebuild,
     sample,
     costAt,
+
+    /**
+     * Would a body of THIS size stand here, as opposed to the 0.55 x 2.0 one the
+     * field is carved for.
+     *
+     * The field marks a cell walkable if a shambler fits. A god is radius 1.805
+     * and height 3.89 - 3.28x wider and 1.95x taller - so `sample()` hands gods a
+     * direction into cells their body cannot occupy: they walk in,
+     * resolveAgainstWorld pushes them out, and the field says go that way again.
+     * Grinding in a doorway under fire is what the owner reported as "the
+     * doorways trap them and make it easy to kill them all".
+     *
+     * This is the QUERY half and deliberately not the whole fix. It lets a
+     * caller - and a harness - ask the question honestly against the SAME
+     * predicate the flood uses, rather than reimplementing clearance beside it.
+     * Giving gods a genuinely different ROUTE needs a second flood over this
+     * grid carved at these numbers, which is the next change.
+     */
+    clearFor(x, z, floorY, ctx, radius, height) {
+      return clear(x, z, floorY, ctx, radius, height);
+    },
+
     get valid() { return stat.valid; },
     /** Metres per cell, so a caller can reason about how stale a field may be. */
     get step() { return STEP; },
