@@ -210,34 +210,81 @@ const GOD_GAIT = {
  * health; everyone else picks from it at random, which is what keeps a
  * two-ability god from becoming a metronome.
  */
+/**
+ * HEALTH IS NOW THE NUMBER THE PLAYER ACTUALLY FIGHTS, not a base to be scaled.
+ *
+ * These used to be multiplied at spawn by `1 + (wave / 5 - 1) * 0.55`, which is
+ * indirection that hides the only figure a designer needs. Each god appears at
+ * exactly ONE wave - there are five gods, bosses land on wave % 5, and
+ * FINAL_WAVE is 25 - so the multiplier had a single value per god and could
+ * never be anything else. Reading the table told you a god's size and not its
+ * difficulty, and the two had drifted a long way apart. The multiplier is gone;
+ * director.js passes 1. It comes back the day an endless mode does.
+ *
+ * TUNED AGAINST MEASURED TIME TO KILL, from `test/bosstune.mjs`, which reads
+ * damage per round out of `combat.applyHits()` - the same call the real hitscan
+ * makes - and divides by the weapon's own rpm. That is a CEILING: it assumes
+ * every round lands, and on the head, which no player manages. A real fight runs
+ * two to three times longer.
+ *
+ * WHAT THE MEASUREMENT FOUND, and the second one is the reason this changed.
+ *
+ * The first boss died in 3.8 seconds of held aim. That is not a boss, and it is
+ * most of what the owner meant by "the big bosses are too easy to kill" once the
+ * doorway exploit is taken out of it.
+ *
+ * And the escalation INVERTED. Ceiling headshot TTK ran 3.8, 8.2, 5.4, 7.9, 13.5
+ * seconds, so the third god was easier than the second - because the Altar sits
+ * between them and triples the player's damage, and health was climbing 55 per
+ * cent a boss against a 250 per cent step in what it was being shot with. The
+ * table was escalating on paper and getting easier in the hands.
+ *
+ * The curve is now monotonic in the thing that matters, which is how long the
+ * fight lasts: roughly 8, 10, 12, 15 and 18 seconds at the ceiling. The jump at
+ * APEP is not a mistake and it is not smooth - it is the Altar, absorbed.
+ */
 export const GODS = [
   {
     id: 'anubis', name: 'ANUBIS', crown: 'jackal',
-    health: 5200, speed: 2.6, damage: 42,
+    // 11,000 against a base carbine: 7.9 s of perfect headshots, 20.5 s of body
+    // fire. The first god the player meets should survive a magazine.
+    health: 11000, speed: 2.6, damage: 42,
     abilities: ['summon', 'charge'],
     palette: { wrap: 0xa2947a, wrapDark: 0x5e5138, deep: 0x2b2318, eye: 0x64d0ff, accent: 0xd8b25c },
   },
   {
     id: 'ammit', name: 'AMMIT', crown: 'crocodile',
-    health: 6800, speed: 2.1, damage: 52,
+    // 13,000 against a base LMG: 10.1 s head, 24.2 s body. Still pre-Altar, so
+    // the step from ANUBIS is modest and lives in health rather than in damage.
+    health: 13000, speed: 2.1, damage: 48,
     abilities: ['slam', 'volley'],
     palette: { wrap: 0x968c6a, wrapDark: 0x504b30, deep: 0x282216, eye: 0xffc14a, accent: 0x9fae5c },
   },
   {
     id: 'apep', name: 'APEP', crown: 'serpent',
-    health: 8200, speed: 2.4, damage: 46,
+    // 38,000, and the jump is the ALTAR rather than the god. By wave 15 an
+    // upgraded LMG does 312 a headshot against 124.8, so absorbing 2.5x is what
+    // keeps the third boss from being easier than the second. 11.8 s head.
+    health: 38000, speed: 2.4, damage: 54,
     abilities: ['teleport', 'volley'],
     palette: { wrap: 0x8a8892, wrapDark: 0x45444f, deep: 0x232230, eye: 0x9a4aff, accent: 0x4e6fb0 },
   },
   {
     id: 'sekhmet', name: 'SEKHMET', crown: 'lioness',
-    health: 9600, speed: 3.0, damage: 58,
+    // 48,000: 14.9 s head, 35.7 s body. The fastest god at speed 3.0, so the
+    // fight is long AND it is the one that will not let the player walk away.
+    health: 48000, speed: 3.0, damage: 60,
     abilities: ['charge', 'slam'],
     palette: { wrap: 0xb59767, wrapDark: 0x6c4d2c, deep: 0x2e1e12, eye: 0xff7a20, accent: 0xe0a63e },
   },
   {
     id: 'set', name: 'SET', crown: 'set',
-    health: 13500, speed: 2.8, damage: 64,
+    // 58,000: 18 s of perfect headshots, and 207 rounds of an upgraded LMG - more
+    // than one magazine, which is what puts the refill wall in the fight.
+    // Damage stops at 68 on purpose: at 72 the strike's 0.7 multiplier crosses
+    // 50 and the player dies in TWO hits instead of three, which is a cliff
+    // rather than a curve.
+    health: 58000, speed: 2.8, damage: 68,
     // Escalating: one more tell to read every quarter of its health bar.
     abilities: ['charge', 'slam', 'volley', 'teleport', 'summon'],
     escalating: true,

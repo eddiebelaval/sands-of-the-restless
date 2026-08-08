@@ -1127,7 +1127,20 @@ export function createDirector({
       const god = bosses.forWave(state.wave);
       const point = pickPoint(true);
       if (point) {
-        god.spawn(point.x, point.z, ctx, 1 + (state.wave / 5 - 1) * 0.55);
+        /**
+         * ONE, and the health is read straight off the GODS table.
+         *
+         * This used to be `1 + (state.wave / 5 - 1) * 0.55`, and with five gods
+         * landing on waves 5 through 25 that expression had exactly one value
+         * per god and could never have another. It was not a difficulty curve,
+         * it was a constant written as arithmetic, and it split every god's real
+         * health across two files so the table read as a lie.
+         *
+         * The escalation lives in the table now, where it can be seen and tuned
+         * against `test/bosstune.mjs`. The parameter stays because the day an
+         * endless mode exists it is where the curve goes back.
+         */
+        god.spawn(point.x, point.z, ctx, 1);
         const slot = takeEmitter();
         god.emitter = slot ? slot.handle : null;
         if (slot) slot.actor = god;
