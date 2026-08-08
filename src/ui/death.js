@@ -616,7 +616,7 @@ function css() {
  */
 export function createDeath({
   doc, rig, player, viewmodel, combat, director, powerups, altar, economy,
-  input, audio, suspended, spaces,
+  input, audio, suspended, spaces, save,
 }) {
   const el = build(doc);
 
@@ -652,8 +652,16 @@ export function createDeath({
     armed: false,
     /** Set by confirm(); consumed by update() on the next frame. */
     pending: false,
-    /** Lifetime completed sequences, for the harness. */
-    resets: 0,
+    /**
+     * Lifetime completed sequences, for the harness.
+     *
+     * SEEDED FROM THE SAVE, because the card's whole conceit is that the tomb
+     * remembers. It counted your erasures in memory and forgot them on the next
+     * reload, which made the one number in this game whose entire meaning is
+     * that it REMEMBERS the one number that did not. It is now cumulative
+     * across every session on this machine.
+     */
+    resets: save ? save.getRecord('erased', 0) : 0,
     /** How the run ended, frozen at the moment of death. */
     wave: 0,
     gold: 0,
@@ -807,6 +815,25 @@ export function createDeath({
     // away from yet. The +1 counts the one the player is looking at, which is
     // the only reading that is not off by one on a player's first death.
     const erased = state.resets + 1;
+
+    /**
+     * WRITTEN WHEN THE CARD GOES UP, not when the player walks away from it.
+     *
+     * A player who reads "ERASED 04 TIMES" and closes the tab has been erased
+     * four times, and recording it at the reset instead would quietly disagree
+     * with the number they were looking at when they left.
+     *
+     * `best` rather than an increment, and that is what makes it safe: erasures
+     * only ever go up, so writing the ABSOLUTE total is idempotent. Showing this
+     * card twice for one death - which the harness does, and which a resumed
+     * sequence could - cannot double-count.
+     */
+    if (save) {
+      save.best('erased', erased);
+      save.best('deepestWave', state.wave);
+      save.best('richestRun', state.gold);
+    }
+
     el.stats.textContent =
       `WAVE ${String(state.wave).padStart(2, '0')}   ·   ${state.gold} GOLD`
       + `   ·   ERASED ${String(erased).padStart(2, '0')} ${erased === 1 ? 'TIME' : 'TIMES'}`;

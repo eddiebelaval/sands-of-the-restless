@@ -338,7 +338,7 @@ function css() {
  * @param {function} [parts.suspended] true while the pause menu is up
  */
 export function createEnding({
-  doc, director, doors, spaces, input, audio, rig, suspended,
+  doc, director, doors, spaces, input, audio, rig, suspended, save,
 }) {
   const el = build(doc);
 
@@ -427,6 +427,29 @@ export function createEnding({
     state.armed = false;
     state.pending = false;
     state.wave = (director && director.state && director.state.wave) || 0;
+
+    /**
+     * THE RECORDS A FINISHED RUN LEAVES, and a clear is not a high score in the
+     * usual sense.
+     *
+     * This is a twenty-five wave campaign with an ending, so "furthest wave"
+     * stops meaning anything the moment a player can finish it: everyone who
+     * finishes is on the same wave. What separates two clears is TIME, so that
+     * is what is kept, and it is kept with `least` rather than `best`.
+     *
+     * `clears` is counted apart from erasures on purpose. One is the number of
+     * times the tomb erased the player and the other is the number of times it
+     * did not, and a player wants to be told both.
+     *
+     * Flushed rather than left to coalesce: a player who finishes World 1 and
+     * closes the tab on the card still finished it.
+     */
+    if (save) {
+      const secs = (director && director.state && director.state.elapsed) || 0;
+      save.add('clears', 1);
+      if (secs > 0) save.least('fastestClear', Math.round(secs));
+      save.flush();
+    }
 
     stale = heldNow;
     suspendInput(true);

@@ -681,7 +681,7 @@ const HEADINGS = {
  * @param {{get: function, set: function}} o.fidelity
  * @param {function} [o.onResume]    called after the menu closes
  */
-export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onResume }) {
+export function createPauseMenu({ root, rig, audio, input, fidelity, retro, save, onResume }) {
   if (!root) {
     return {
       get paused() { return false; },
@@ -746,6 +746,51 @@ export function createPauseMenu({ root, rig, audio, input, fidelity, retro, onRe
   };
 
   const spec = buildSpec({ rig, audio, mute, fidelity, retro: retro || NO_RETRO, pad: (input && input.pad) || NO_PAD });
+
+  /**
+   * PERSISTENCE, APPLIED TO THE TABLE RATHER THAN TO EACH SETTING.
+   *
+   * Every row above already declares the two functions this needs - `read` for
+   * what the thing currently is and `write` for how to change it - so a save
+   * layer can be a pass over the spec instead of a hand-wired call beside each
+   * slider. That is the whole reason it is here and not in eight places.
+   *
+   * It also means a row added tomorrow persists on the day it is added, with no
+   * second edit to remember. This project has a standing lesson about exactly
+   * that shape: N edited literals leave N places to break, and the half that
+   * breaks is always the half nobody is looking at.
+   *
+   * THE SAVED VALUE IS WHAT `read` REPORTS AFTER THE WRITE, not the value that
+   * was passed in. Every one of these writers clamps - sensitivity to its own
+   * range, field of view to 60..110, volume to 0..1 - so storing the request
+   * rather than the result would save a number the game refused, and a reload
+   * would silently produce a different setting than the one on screen.
+   *
+   * Namespaced by group so `game.invert` and `controller.padinvert` can never
+   * collide, and so a future tab cannot quietly overwrite an existing key.
+   */
+  if (save) {
+    for (const group of spec) {
+      for (const row of group.rows || []) {
+        if (!row || typeof row.read !== 'function' || typeof row.write !== 'function') continue;
+        const key = `${group.id}.${row.id}`;
+
+        // Restore first, so the panel is built showing what the player chose.
+        // Guarded because a stored value is untrusted input: it survived this
+        // build's validator, which says it is a number or a boolean, and says
+        // nothing about whether THIS row can accept it.
+        const saved = save.getSetting(key, undefined);
+        if (saved !== undefined) { try { row.write(saved); } catch { /* keep the default */ } }
+
+        const inner = row.write;
+        row.write = (v) => {
+          const r = inner(v);
+          try { save.setSetting(key, row.read()); } catch { /* never break a slider */ }
+          return r;
+        };
+      }
+    }
+  }
 
   const tabsEl = root.querySelector('[data-pause-tabs]');
   const bodyEl = root.querySelector('[data-pause-body]');

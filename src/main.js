@@ -15,6 +15,7 @@ import { createPost } from './core/post.js';
 import { createRetro } from './core/retro.js';
 import { createInput } from './core/input.js';
 import { keymap } from './core/keymap.js';
+import { createSave } from './core/save.js';
 import { createSky } from './world/sky.js';
 import { buildCourtyard } from './world/courtyard.js';
 import { buildMaterials, applyFidelity, upgradeMaterials } from './world/materials.js';
@@ -121,6 +122,20 @@ function boot() {
   const player = createPlayer(world);
   const rig = createCameraRig(camera);
   const input = createInput(canvas);
+
+  /**
+   * The local save: settings, records, unlocks.
+   *
+   * Built here rather than inside the pause menu because it is not the settings
+   * panel's - the death card writes the erasure count through it, the ending
+   * card writes the clear time, and World 2's Easter egg will read a flag off
+   * it. The panel is the biggest READER, which is not the same as the owner.
+   *
+   * Constructing it cannot throw and cannot fail the boot. See core/save.js:
+   * every store failure lands the player on defaults, which is the state they
+   * were in before the file existed.
+   */
+  const save = createSave();
 
   // --- combat ---------------------------------------------------------------
   // The raycast needs an explicit target list. Handing it the whole scene would
@@ -712,6 +727,9 @@ function boot() {
     rig,
     audio,
     input,
+    // The local save. Every settings row persists through it, and the panel
+    // restores from it as it is built. See the pass over `spec` in pause.js.
+    save,
     // Handed as an accessor pair rather than as the flag, because `high` is a
     // binding in this scope and the panel has to see the value AFTER the corner
     // buttons change it. Both surfaces write through the same function, so the
@@ -987,7 +1005,7 @@ function boot() {
   const death = createDeath({
     doc: document,
     rig, player, viewmodel, combat, director, powerups, altar, economy,
-    input, audio, spaces,
+    input, audio, spaces, save,
     suspended: () => pause.paused,
   });
   combat.attach({ death });
@@ -1008,7 +1026,7 @@ function boot() {
   const ending = createEnding({
     doc: document,
     director, doors, spaces,
-    input, audio, rig,
+    input, audio, rig, save,
     suspended: () => pause.paused,
   });
 
@@ -1792,6 +1810,9 @@ function boot() {
     viewmodel, weapons, impacts, audio,
     spaces, economy, doors, courtyard, interior: spaces.interior,
     director, combat, melee, death, ending, jars,
+    // The local save, so a harness can read records and settings back without
+    // reaching into localStorage and guessing at the key.
+    save,
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
     pause,

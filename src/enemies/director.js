@@ -1377,6 +1377,22 @@ export function createDirector({
   function update(dt, elapsed) {
     if (!state.running) return;
 
+    /**
+     * HOW LONG THIS RUN HAS BEEN GOING, and it was declared and never written.
+     *
+     * `state.elapsed` sat at 0 from the day it was added. Nothing read it, so
+     * nothing noticed - until the ending card tried to record a clear time and
+     * got a silent zero, which its own `if (secs > 0)` guard then skipped. A
+     * field that is always zero and a feature that is always skipped are the
+     * same defect wearing two hats.
+     *
+     * Accumulated from dt rather than taken from the `elapsed` argument, which
+     * is the loop's clock since BOOT: it includes the main menu, every pause,
+     * and every previous run. A clear time has to start when the run does, and
+     * reset() zeroes this for exactly that reason.
+     */
+    state.elapsed += dt;
+
     if (spaces.active !== lastSpace) {
       lastSpace = spaces.active;
       onSpaceChange();
@@ -1727,6 +1743,8 @@ export function createDirector({
       clearLive();
       queue.length = 0;
       state.wave = 0;
+      // A new run, so the clear clock starts again. See update().
+      state.elapsed = 0;
       state.phase = 'breather';
       state.timer = tierNow().firstBreather;
       state.killed = 0;
