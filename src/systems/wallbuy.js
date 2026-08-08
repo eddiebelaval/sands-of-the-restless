@@ -10,17 +10,23 @@
  * Three states, and the prompt has to tell them apart at a glance, because the
  * player is reading it while something is walking at them:
  *
- *   TAKE     you do not own this weapon. Full price. You leave holding it.
- *   REFILL   you own it AND you are carrying it. Half price, reserve only.
- *   nothing  you own it and are carrying something else. Silence, not a
- *            refusal - there is nothing wrong, there is just nothing on offer,
- *            and a red prompt would be the wall telling you off for walking
- *            past it.
+ *   TAKE       you do not own this weapon. Full price. You leave holding it.
+ *   REFILL     you own it and its reserve is short. Half price, reserve only.
+ *   AMMO FULL  you own it and it is topped up. Not a refusal - it is the answer
+ *              to the question you walked over to ask, and a red prompt would be
+ *              the wall telling you off for checking.
  *
- * That last one is the reason this file exists rather than the whole thing
- * being four lines in a generic buy handler. In this genre a wall buy is a
- * standing offer, and an offer that shouts at you when you are not taking it is
- * an offer you learn to stop reading.
+ * THERE IS NO SILENT STATE, and there used to be. REFILL additionally required
+ * the weapon to be IN YOUR HANDS, and a wall you owned but were not holding said
+ * nothing whatsoever. A player carries the best gun they own, so that condition
+ * was false almost every time anybody walked past a wall, and the refill path -
+ * built, priced, tested at 500 gold - went undiscovered through an entire
+ * playthrough. See the note at the check in `offerFor`.
+ *
+ * A wall buy is a standing offer, and an offer that shouts at you when you are
+ * not taking it is one you learn to stop reading. But an offer that says nothing
+ * at all is one you never learn to read in the first place, which is worse, and
+ * it is the failure this file actually shipped.
  *
  * REFILL PRICING is half the take price, which is the tuned convention from the
  * games this economy is lifted from and is not arbitrary: at half, topping up
@@ -67,11 +73,27 @@ export function createWallBuys({ weapons, economy, audio, notice }) {
       return { kind: 'take', id, cost: take };
     }
 
-    // Refills are for the weapon IN YOUR HANDS. Standing at the shotgun wall
-    // topping up a carbine you are not holding is not a thing this genre does,
-    // and allowing it turns every wall in the map into a universal ammo box.
-    if (weapons.state.current !== id) return { kind: 'idle', id };
-
+    /*
+     * A WALL REFILLS THE WEAPON IT SELLS, HELD OR NOT.
+     *
+     * This used to require the weapon to be IN YOUR HANDS, and returned a silent
+     * `idle` otherwise, on the reasoning that anything looser "turns every wall
+     * in the map into a universal ammo box".
+     *
+     * That reasoning does not survive being read closely. A wall only ever
+     * refills its OWN weapon. Topping a carbine up at a shotgun wall would be a
+     * universal ammo box; topping the shotgun up at the shotgun wall while
+     * holding a carbine is just what the shotgun wall is for. The walk to the
+     * right wall is the entire cost the rule meant to charge, and that cost is
+     * unchanged.
+     *
+     * What the rule actually bought was silence. The owner played a full run,
+     * walked up to guns he already owned, and got no prompt at all - because a
+     * player carries the best gun they own and is therefore almost never holding
+     * the one whose wall they are standing at. Measured before this change:
+     * holding it, "REFILL WADJET SMG - 500 GOLD  [F]"; not holding it, "". The
+     * feature was built, priced, and invisible for an entire playthrough.
+     */
     const full = weapons.ammo[id].reserve >= STATS[id].reserve;
     if (full) return { kind: 'full', id };
 
@@ -92,7 +114,6 @@ export function createWallBuys({ weapons, economy, audio, notice }) {
 
     const name = displayName(offer.id).toUpperCase();
 
-    if (offer.kind === 'idle') return { text: '', deny: false };
     if (offer.kind === 'full') {
       // Not a refusal. The player is being told the answer to the question they
       // walked over to ask, which is "do I need this", and the answer is no.
@@ -121,7 +142,7 @@ export function createWallBuys({ weapons, economy, audio, notice }) {
 
   function buy(rec) {
     const offer = offerFor(rec);
-    if (offer.kind === 'none' || offer.kind === 'idle') return false;
+    if (offer.kind === 'none') return false;
     if (offer.kind === 'full') return false;
 
     if (!economy.canAfford(offer.cost)) {

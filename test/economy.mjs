@@ -410,8 +410,22 @@ const refill = await page.evaluate(async () => {
 await shoot('eco-04-wallbuy-refilled', 'ammo full: the wall stops selling, and is not red about it');
 
 // ---------------------------------------------------------------------------
-// 5. a wall you own but are not carrying says nothing at all
+// 5. a wall you own but are not carrying STILL OFFERS ITS REFILL
 // ---------------------------------------------------------------------------
+//
+// This section used to assert the opposite - that such a wall says nothing -
+// and it passed, and it was pinning the defect in place.
+//
+// The owner played a full run and reported walking up to guns he already owned
+// and getting no prompt at all. He was right, and the cause was that REFILL
+// additionally required the weapon to be IN THE HANDS. A player carries the best
+// gun they own, so a wall they are standing at is almost never selling the gun
+// they are holding, and the refill path went undiscovered for a whole run.
+//
+// The reserve is drained first, deliberately: section 4 above left the SMG full,
+// and a full wall correctly says AMMO FULL for reasons that have nothing to do
+// with what is in your hands. Testing this with a full magazine would assert the
+// right string for the wrong reason and would still pass if the bug came back.
 
 const idle = await page.evaluate(async () => {
   const g = window.__SANDS__;
@@ -422,6 +436,8 @@ const idle = await page.evaluate(async () => {
     await new Promise((r) => requestAnimationFrame(r));
     f++;
   }
+  g.weapons.ammo.smg.reserve = 0;
+  g.economy.reset(900);
   await window.__E__.frames(3);
 
   return {
@@ -1163,7 +1179,10 @@ const checks = {
   'a full wall is not a refusal':     refill.denyWhenFull === false,
 
   // owned but not carried
-  'an idle wall says nothing':        idle.candidate === true && idle.prompt === '' && idle.promptOn === false,
+  'a wall you own but do not hold still offers its refill':
+    idle.candidate === true && idle.holding === 'mk9'
+    && /REFILL/.test(idle.prompt) && /\d+\s*GOLD/.test(idle.prompt)
+    && idle.promptOn === true && idle.deny === false,
 
   // the other walls
   'shotgun wall quotes 1200':         /1200 GOLD/.test(walls.shotgun.prompt),
