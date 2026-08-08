@@ -339,8 +339,11 @@ await lab.goto(new URL('test/gunlab.html', BASE).href, { waitUntil: 'load' });
 await lab.waitForFunction(() => window.__GUNLAB_READY__, null, { timeout: 30000 });
 
 const audio = await lab.evaluate(async () => {
-  const { createAudio } = await import('/src/core/audio.js');
-  const { REPORTS } = await import('/src/core/gunsmith.js');
+  // Resolved against the lab page, not the server root: a root-absolute path
+  // works on localhost and silently misses on a Pages subpath, which is the one
+  // deploy this harness most needs to be able to check.
+  const { createAudio } = await import(new URL('../src/core/audio.js', location.href).href);
+  const { REPORTS } = await import(new URL('../src/core/gunsmith.js', location.href).href);
   const RATE = 48000;
   const REPEATS = 3;
 
