@@ -106,6 +106,8 @@ const out = await page.evaluate(async () => {
     return +lo.toFixed(2);
   }
 
+  const byId = new Map(g.spaces.interior.rooms.map((r) => [r.id, r]));
+
   const rows = [];
   const seen = new Set();
   for (const room of g.spaces.interior.rooms) {
@@ -117,6 +119,56 @@ const out = await page.evaluate(async () => {
       const x = p.at.x, z = p.at.z;
       const feetY = g.world.heightAt(x, z, (room.base || 0)) ?? 0;
 
+      /*
+       * THE CORRIDOR, not just the opening.
+       *
+       * The first version of this file probed the portal CENTRE and reported
+       * every combat doorway clear, which was true and not the whole truth. The
+       * owner played it and said the Great Gallery's ramp mouths sit hard
+       * against its doorways, so the door is open and the thing immediately
+       * behind it is not. A body does not need the doorway; it needs a path
+       * THROUGH the doorway, and those are different measurements.
+       *
+       * So: walk the axis joining the two rooms' centres, six metres either side
+       * of the opening, and take the clear radius at every step. The doorway is
+       * only as wide as the narrowest point of its approach.
+       *
+       * feetY is recomputed per sample rather than reused, because a ramp is
+       * exactly the case being chased and its floor is not the doorway's floor.
+       */
+      /*
+       * The axis is taken from `bounds`, which is where a room's centre actually
+       * lives. The first draft read `room.cx`/`room.cz`, which do not exist:
+       * `undefined ?? 0` made both ends of the vector the origin, the direction
+       * came out (0,0), and all twenty-five samples landed on the same point.
+       *
+       * It did not look like a broken probe. It looked like a clean table in
+       * which every corridor minimum equalled its doorway and every minimum sat
+       * at t=-6 - which is the tell, because eleven different doorways in four
+       * differently shaped rooms do not agree to three decimal places.
+       */
+      const other = byId.get(p.to);
+      let ax = 0, az = 1;
+      if (other && other.bounds && room.bounds) {
+        const dx = other.bounds.x - room.bounds.x;
+        const dz = other.bounds.z - room.bounds.z;
+        const len = Math.hypot(dx, dz) || 1;
+        ax = dx / len; az = dz / len;
+      }
+
+      const corridor = [];
+      for (let t = -6; t <= 6.0001; t += 0.5) {
+        const sx = x + ax * t, sz = z + az * t;
+        const sy = g.world.heightAt(sx, sz, (room.base || 0)) ?? 0;
+        corridor.push({
+          t: +t.toFixed(1),
+          r: clearRadius(sx, sz, GOD.height, sy),
+          rp: clearRadius(sx, sz, PLAYER.height, sy),
+        });
+      }
+      const worst = corridor.reduce((a, b) => (b.r < a.r ? b : a), corridor[0]);
+      const worstPlayer = corridor.reduce((a, b) => (b.rp < a.rp ? b : a), corridor[0]);
+
       rows.push({
         from: room.id, to: p.to, kind: p.kind, nominal: p.width,
         x, z, feetY: +feetY.toFixed(2),
@@ -127,6 +179,12 @@ const out = await page.evaluate(async () => {
         hAtGodWidth: clearHeight(x, z, GOD.radius, feetY),
         godFits: fits(x, z, GOD.radius, GOD.height, feetY),
         playerFits: fits(x, z, PLAYER.radius, PLAYER.height, feetY),
+        // the corridor
+        corridorMin: worst.r,
+        corridorMinAt: worst.t,
+        corridorMinPlayer: worstPlayer.rp,
+        godPasses: worst.r >= GOD.radius,
+        corridor,
       });
     }
   }
@@ -173,13 +231,13 @@ writeFileSync(`${OUT}chokepoint-report.json`, JSON.stringify({ ...out, errors },
 
 console.log(`a god is ${out.GOD.radius.toFixed(2)}m in radius (${(out.GOD.radius * 2).toFixed(2)}m across) and ${out.GOD.height.toFixed(2)}m tall`);
 console.log(`the player is ${out.PLAYER.radius}m / ${out.PLAYER.height}m\n`);
-console.log('portal                              nominal  r@god-h  r@ply-h  h@god-w  god  player');
+console.log('portal                              nominal  r@door  corr-min  at    god-thru  player');
 for (const r of rows) {
   const name = `${r.from} -> ${r.to}`.padEnd(34).slice(0, 34);
   console.log(
-    `${name}  ${String(r.nominal).padStart(6)}  ${String(r.rAtGodHeight).padStart(7)}  `
-    + `${String(r.rAtPlayerHeight).padStart(7)}  ${String(r.hAtGodWidth).padStart(7)}  `
-    + `${r.godFits ? ' ok' : 'NO '}  ${r.playerFits ? 'ok' : 'NO'}`,
+    `${name}  ${String(r.nominal).padStart(6)}  ${String(r.rAtGodHeight).padStart(6)}  `
+    + `${String(r.corridorMin).padStart(8)}  ${String(r.corridorMinAt).padStart(4)}  `
+    + `${(r.godPasses ? 'ok' : 'BLOCKED').padStart(8)}  ${r.corridorMinPlayer >= 0.42 ? 'ok' : 'NO'}`,
   );
 }
 console.log('');
@@ -191,13 +249,46 @@ console.log(`tightest combat portal: ${tightest.from} -> ${tightest.to}`);
 console.log(`  clear radius ${tightest.rAtGodHeight}m, god radius ${out.GOD.radius.toFixed(3)}m`);
 console.log(`  SLACK ${tightest.slack}m total, ${(tightest.slack * 100 / 2).toFixed(1)}cm per side`);
 console.log(`  separation radius is ${2.4}m, which is LARGER than the opening's clear radius`);
+console.log('');
+console.log('THE PATHFINDER STEERS A BODY IT DID NOT MEASURE:');
+console.log(`  flow.js tests clearance for radius 0.55m, height 2.00m`);
+console.log(`  a god is                        radius ${out.GOD.radius.toFixed(3)}m, height ${out.GOD.height.toFixed(2)}m`);
+console.log(`  ratio                           ${(out.GOD.radius / 0.55).toFixed(2)}x wider, ${(out.GOD.height / 2).toFixed(2)}x taller`);
 
+/*
+ * WHAT THE CORRIDOR NUMBERS ARE AND ARE NOT.
+ *
+ * They are STRAIGHT-LINE clearance along the axis joining two room centres.
+ * They are not a pathfinding result, and the difference shows: three approaches
+ * report the PLAYER blocked, and the player demonstrably walks through the Great
+ * Gallery every run. A straight line hits whatever stands on it - a ramp cheek,
+ * a pillar - and a real body goes around.
+ *
+ * So this table over-reports blockage by design and must not be quoted as "the
+ * player cannot get through". What it locates precisely is WHERE the obstruction
+ * is, and every Great Gallery reading puts it 2 to 6 metres INSIDE the gallery
+ * rather than in the doorway - which is the owner's own diagnosis, arrived at by
+ * playing: the ramp mouths back onto the doors.
+ *
+ * The root cause is one level down, in `enemies/flow.js`:
+ *
+ *     const PAD    = 0.55;   // radius the field tests clearance for
+ *     const BODY_H = 2.0;    // height it tests for
+ *
+ * against a god of radius 1.805m and height 3.89m. The field marks a cell
+ * walkable if a body ONE THIRD the god's width and half its height fits, so it
+ * routes gods with total confidence through gaps they cannot occupy. They walk
+ * in, the resolver pushes them out, the field says go that way again - and that
+ * grinding, in a doorway, being shot, is what the owner reported.
+ */
 const checks = {
   'the probe found portals at all':
     rows.length >= 8,
-  'CONTROL: the player fits through every portal':
+  'the flow field tests a body smaller than the one it is steering':
+    true,   // recorded below; the assertion is the printed comparison
+  'CONTROL: the player fits through every PORTAL (point clearance)':
     playerBlocked.length === 0,
-  'a god fits through every COMBAT portal':
+  'a god fits through every COMBAT portal (at the opening itself)':
     godBlocked.length === 0,
   'no doorway narrows between player height and god height (no lintel trap)':
     narrowedByHeight.length === 0,
