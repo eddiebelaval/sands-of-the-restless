@@ -1492,6 +1492,19 @@ export function createDirector({
     live,
     bosses,
     pools,
+    /**
+     * The collision context every actor resolves against.
+     *
+     * Exposed for the same reason the governor and the keymap are: a claim about
+     * what the world will and will not let a body through cannot be checked from
+     * outside the page unless the thing doing the checking is the SAME resolver
+     * the actors use. A harness that reimplements clearance is a harness
+     * measuring its own arithmetic, which this project has now been caught doing
+     * three times in a week.
+     *
+     * Read-only by convention. Nothing in `src/` reads it back off the api.
+     */
+    ctx,
 
     update,
     summon,
