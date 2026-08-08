@@ -9,7 +9,84 @@ gave notes. Full list in `docs/WORLD1-POLISH.md`, World 2 in `docs/WORLD2-PLAN.m
 
 ---
 
-## THE NEXT TASK, precisely
+## SUPERSEDED 2026-08-08 02:xx - THE SECOND FLOOD IS NOT THE NEXT TASK
+
+The plan below was to carve a second flow field at god dimensions. **Measured, and
+it would have made the game worse.** `test/godfield.mjs` is new and exists to
+answer exactly this before anything was built.
+
+A field carved at the god's 1.805 radius on flow.js's 0.7 grid reaches **401 of
+the 12,138 cells a shambler reaches - 3.3%**. Six of ten combat doorways held no
+cell a god could stand in at all. The arithmetic is exact and was verified to the
+centimetre: an opening of width W leaves W - 2r of legal band, so a 4.0 m doorway
+gives a shambler 2.90 m and a god 0.39 m, against a STEP of 0.7. Half a cell.
+Gods would have got NO route rather than a bad one, fallen through to the
+straight-line fallback in mummy.js, and walked into stone with more confidence.
+
+Tightening the god's collider instead does not rescue it: swept 0.95 down to
+0.62, reach goes 8.9% at r 0.70 and 74% at r 0.66. A 7 cm change moving
+connectivity eightfold is grid phase, not clearance - the whole map's
+connectivity was hanging on one or two cells in two doorways. 0.66 is also the
+floor, since the god's widest visible geometry is 0.659.
+
+**So the geometry had to move first, and two changes are now in and measured.**
+
+| | god reach from spawn | gallery cells reached |
+|---|---|---|
+| before | 401 (3.3%) | 8 of 1911 |
+| combat portals 4.0 -> 5.5 | 506 (4.1%) | 8 of 1911 |
+| + gallery ramps backed 4 m | **2369 (19.4%)** | **1866 of 1909** |
+
+1. `COMBAT_DOOR = 5.5` in `world/rooms.js`, applied to all ten combat portals.
+   The Serdab's 2.4 puzzle door is deliberately left god-proof.
+2. The gallery's two descent ramps moved from z -172..-160 to z -176..-164, with
+   the ledges shortened 23 -> 19 to meet them. Gradient untouched at 6 over 12.
+   This is the owner's own diagnosis, confirmed: the ramp mouths sat on the north
+   doorways. The mechanism is flow.js's overhead-slab clause, which blocks a band
+   under a ramp that is a function of BODY HEIGHT - z -161.3..-164.0 for a
+   shambler, z -161.3..**-167.8** for a god - leaving 3.3 m of clear floor against
+   a body 3.61 m across.
+
+`nav.mjs` 12/12, `interior.mjs` 13/13, `kite.mjs` 8/8 all green after both.
+
+### What is still islanded, and it is the real next task
+
+Act 3 is entirely unreachable for a god: embalming-chamber, canopic-crypt,
+star-shaft, kings-chamber and serdab all report 0 cells reached, despite all
+three gallery -> Act 3 doorways now carrying 2-3 god-legal cells. The approach
+profiles in `godfield.mjs` put the obstruction 1 to 7 m INSIDE the gallery, south
+of those doors. The shambler row is blocked across a narrower part of the same
+band, which is the tell: small bodies route around it laterally and a 3.61 m body
+cannot. Find what that is - it is south of the gallery's south-wall doorways -
+before touching anything else.
+
+Also still open from the measurement: `embalming-chamber -> kings-chamber` and
+`star-shaft -> kings-chamber` did not widen with the rest (band 0.48 and 0.46
+against 1.88 elsewhere). They sit 3 m off a room corner, and a god's 1.805
+clearance disc catches the perpendicular wall 1 m away. They need to MOVE, not
+just widen.
+
+**Only after Act 3 connects does the second flood become worth building**, and
+then it is genuinely needed - a field carved for a shambler still hands gods
+directions their body cannot take. It must be a SECOND field, not a wider single
+one, or shamblers detour around gaps they fit through fine.
+
+### Three instrument corrections this session, one of which invalidates a prior conclusion
+
+- `band()` held feetY fixed across a transect that crosses a descent. Fixed to
+  resample. It did NOT move the two King's Chamber numbers, so that finding
+  stands on its own.
+- The through-axis was taken from room CENTRE to CENTRE, which is diagonal
+  whenever two rooms are offset - and on this map most are. Transects walked out
+  of the doorway and into the wall beside it, printing doorways as islands that
+  the same run's reachability proves a god walks through. Now the wall normal.
+- **`test/chokepoint.mjs` uses that same centre-to-centre axis.** Its conclusion
+  that gallery obstructions sit "2 to 6 m INSIDE the gallery" is not trustworthy
+  and should be re-measured with the normal before it is used.
+
+---
+
+## THE ORIGINAL PLAN, kept for its reasoning. Do not execute step 1 as written.
 
 **Give gods a route their body fits.** The predicate is built; the routing is not.
 
