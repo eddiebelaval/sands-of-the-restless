@@ -25,7 +25,37 @@ to 1.7s each, which is a clock the player does not have.
 
 ---
 
-## 1. The ammo refill already exists and nobody can find it
+## 1. FIXED: the wall you already own was silent
+
+Reported as "I was walking up to the guns that I already owned, I was not getting
+a reload option, it was literally empty, it would say nothing."
+
+The first version of this note said the feature existed and only needed better
+guidance. That was wrong, and it was wrong because the code was read and never
+driven. `offerFor()` required the weapon to be IN YOUR HANDS before it would
+offer a refill and returned a silent `idle` otherwise. A player carries the best
+gun they own, so the wall in front of them is almost never selling the gun they
+are holding.
+
+The stated reason - that anything looser makes every wall a universal ammo box -
+does not hold: a wall only ever refills the weapon IT sells. The walk to the
+right wall was the entire cost the rule meant to charge, and it is unchanged.
+
+Measured at the SMG wall, empty reserve:
+
+| case | before | after |
+|---|---|---|
+| holding it | `REFILL WADJET SMG - 500 GOLD  [F]` | unchanged |
+| NOT holding it | `` (silence) | `REFILL WADJET SMG - 500 GOLD  [F]` |
+| ammo full | `WADJET SMG - AMMO FULL` | unchanged (control) |
+
+500 gold is the number the owner remembered being told about and could never
+make appear. `test/economy.mjs` had a check called "an idle wall says nothing"
+which passed throughout and was pinning the defect in place.
+
+**Commit `c50b239`.** `test/refill.mjs` is new.
+
+## 1b. Old item 1, superseded
 
 The note was "the ability to go up to the wall gun and reload, which is like for
 five hundred". `systems/wallbuy.js` already sells exactly that: look at the wall
@@ -80,18 +110,42 @@ Candidates, my picks first:
 
 Names are the owner's lane. Behaviour is mine.
 
-## 4. Pack-a-punch three times
+## 4. Pack-a-punch three times, told by COLOUR
 
-Today `weapons.upgraded` is a `Set` - membership, one tier, with an authored
-upgraded NAME per weapon (`Nekhbet's Talon`, `Wadjet Ascendant`, and so on).
-Three tiers means that becomes a level, and eight weapons need two more names
-each, which is sixteen names and squarely the owner's lane.
+**Owner decision, 2026-08-08: no new names. Colour carries the tier.** "It could
+be blue, some other color, and then gold, shiny gold is the final one."
 
-The mechanical half is mine: cost curve, damage curve, and the audio. Note the
-ring work from 2026-08-07 - each profile now carries its own `ring: {rate, gain,
-ms}` and the gains were balanced against ONE upgraded state. Three tiers will
-walk straight back into the handbell problem unless tier is a parameter of that
-ring rather than three hand-tuned copies. `test/gunfeel.mjs` is the gate.
+That is the better design and it also removes sixteen naming decisions from the
+critical path. It reads at a glance in a firefight, which a name in the HUD does
+not, and it means a player can tell another player's tier by looking.
+
+The mechanism is already the right shape. `viewmodel.js` does not re-pose or
+re-proportion an upgraded weapon - a restraint that is deliberate, because these
+models are the one part of the project the owner has said outright that he likes.
+It swaps which MATERIAL a body mesh points at, via a cached `buildGildMap()`
+table, leaving hands, optic glass, reticle, shells and muzzle flash untouched.
+Making that table take a tier is the whole change.
+
+Today, tier 1 is lapis: body `0x1d3068`, barrels the deeper `0x121f45`, with gold
+inlay on the 1mm wear strips along each chamfer - which is what makes the
+silhouette read as chased metal rather than a blue slab.
+
+**My pick for the middle tier: carnelian red.** Lapis, carnelian and gold are the
+actual Egyptian jewellery triad, so the progression is inside the world's own
+material vocabulary rather than a colour ramp bolted onto it. They are also the
+three most distinguishable choices at a glance in rooms lit by two point lights.
+Tier 3 takes the gold that is currently only in the inlay slivers and gives it
+the whole body, so the final tier reads as the weapon becoming the thing that was
+only ever hinted at along its edges.
+
+Mechanical half, mine: cost curve, damage curve, audio. **The audio is the risk.**
+Each profile now carries its own `ring: {rate, gain, ms}` and those gains were
+balanced against exactly ONE upgraded state on 2026-08-07, after every upgraded
+gun in the game was found ringing at an identical 1.6kHz. Three tiers walks
+straight back into the handbell problem unless tier is a PARAMETER of that ring
+rather than three hand-tuned copies. `test/gunfeel.mjs` is the gate and it fails
+10 of 17 against the reverted build, which is the only reason its green means
+anything.
 
 ## 5. Story, and the bridge into World 2
 
@@ -110,10 +164,11 @@ The material to build the middle from is already in the world and unused:
 - the four sons are four names nobody explains
 - the Serdab has five prop slots and zero interacts
 
-Related, same lane: the owner wants **a special weapon that has to be EARNED for
-World 2/3** - "I feel like that's always what was missing." That is the right
-instinct and it is also the story bridge. A weapon carried out of World 1 is the
-narrative object that makes World 2 a continuation instead of a new level.
+Related, same lane: the owner wants **a special weapon that has to be EARNED**.
+Note the later correction - World 2 starts FRESH, same guns, same rules, and the
+carried weapon is an **Easter egg** instead, hard to find and real. See
+`docs/WORLD2-PLAN.md`. That is a better answer than a carry-over: a guaranteed
+inheritance has to be balanced against, an egg does not.
 
 This item is mostly the owner's: it is names, identity and public voice. My job
 is to bring the pick, not the menu, and to build the surfaces once the beats are
