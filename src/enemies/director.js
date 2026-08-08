@@ -69,7 +69,7 @@ const FINAL_WAVE = 25;
 
 /** Pool depth per variant. Deeper than the cap so crumbling corpses never
  * starve the wave behind them. */
-const POOL = { shambler: 16, husk: 10, bound: 6, scarab: 12 };
+const POOL = { shambler: 16, husk: 10, bound: 6, scarab: 12, goldscarab: 8 };
 
 /**
  * Seconds of quiet between waves, and the shorter first one - a player who has
@@ -816,11 +816,23 @@ export function createDirector({
     // its first appearance and one that arrives already part-way up its ramp.
     const husk0 = unlockAt('husk');
     const bound0 = unlockAt('bound');
+    /**
+     * The gold scarab starts THIN and stays thin, which is what an elite is.
+     *
+     * 0.12 against the shambler's 1.0 is deliberately the lowest opening weight
+     * in the table - lower than the Bound's 0.10 only because the Bound's ramp
+     * is slower. This variant carries 220 health and crits only from behind, so
+     * a wave that turns into gold beetles is not a harder wave, it is a wave
+     * spent walking in circles looking for backs. It is the punctuation in a
+     * late wave rather than the sentence.
+     */
+    const gold0 = unlockAt('goldscarab');
     const weight = {
       shambler: 1.0,
       scarab: wave >= unlockAt('scarab') ? 0.30 + Math.min(0.35, wave * 0.012) : 0,
       husk: wave >= husk0 ? 0.25 + Math.min(0.55, (wave - husk0) * 0.035) : 0,
       bound: wave >= bound0 ? 0.10 + Math.min(0.30, (wave - bound0) * 0.02) : 0,
+      goldscarab: wave >= gold0 ? 0.12 + Math.min(0.20, (wave - gold0) * 0.02) : 0,
     };
 
     let sum = 0;
@@ -834,8 +846,19 @@ export function createDirector({
         if (r <= 0) { pick = k; break; }
       }
       queue.push(pick);
-      // The swarm arrives as a swarm. One scarab is a curiosity; four is a
-      // problem, which is the only reason the variant exists.
+      /**
+       * The swarm arrives as a swarm. One scarab is a curiosity; four is a
+       * problem, which is the only reason the variant exists.
+       *
+       * DELIBERATELY NOT EXTENDED TO THE GOLD SCARAB, which is a decision and
+       * not an oversight. Four gold scarabs is not four scarabs: each carries
+       * 220 health and crits only through a vent on its back, so a clutch is
+       * four bodies the player has to get BEHIND at once, in a room, while they
+       * bite for 14. That is not a harder version of the swarm, it is a
+       * different and much worse fight. A lone gold walking in with an ordinary
+       * scarab clutch is the introduction that teaches what it is - the player
+       * shoots the pack, watches one of them not die, and goes looking for why.
+       */
       if (pick === 'scarab' && i < total - 2) { queue.push('scarab'); i++; }
     }
 

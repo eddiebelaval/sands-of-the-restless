@@ -1,5 +1,5 @@
 /**
- * The three deviations from the shambler.
+ * The four deviations from the shambler.
  *
  * THE ONE RULE THIS FILE IS WRITTEN AGAINST: a variant that is only a different
  * colour is not a variant. At twenty metres, in a chamber lit by two point
@@ -15,10 +15,20 @@
  *     height cannot be confused with anything else in the game, which is the
  *     entire point of putting a swarm enemy in a shooter about upright dead.
  *
+ * THE GOLD SCARAB IS THE ONE ENTRY THAT DOES NOT OBEY THAT RULE, and it is
+ * worth saying why rather than letting it look like an oversight. It shares the
+ * scarab's outline on purpose: the player is supposed to read it as "that
+ * beetle, but elite" in the frame it appears in, and a new silhouette would say
+ * "a new thing" instead. What separates it at range is not shape, it is the one
+ * bright metal mass in a roster of linen, plus a cadence half the speed of the
+ * swarm it walks in with. The rule above is about not being able to TELL two
+ * enemies apart; this one is about wanting them told together.
+ *
  * Everything else is a number on top of the base record in mummy.js. Where a
  * variant needs geometry the humanoid builder cannot express, it brings its own
  * builder and its own animator and keeps the actor contract; that is the case
- * for the scarab and nothing else.
+ * for the scarab, and the gold scarab wraps the scarab's pair rather than
+ * forking them.
  *
  * Wave gating lives in director.js, not here. This file says what a thing IS,
  * the director says when the map is allowed to use it.
@@ -279,6 +289,141 @@ function animateScarab(rig, spec, s) {
   // And the head recoils, which on this rig is the only fine motion available.
   rig.neck.rotation.x += -f * hk * (0.14 + (s.hitHead || 0) * 0.40);
   rig.neck.rotation.y += lx * hk * (0.18 + (s.hitHead || 0) * 0.45);
+}
+
+// ---------------------------------------------------------------------------
+// the gold scarab: the same rig, re-armoured
+// ---------------------------------------------------------------------------
+
+/**
+ * The vent, and it is the whole enemy.
+ *
+ * A gold scarab is plated everywhere the player can see it while backing away,
+ * and the one panel that is not plated is on the back of the abdomen. That is
+ * not decoration: the hitscan reads `userData.region` off whatever mesh it
+ * struck, and this mesh is the only one on the body tagged 'head'. So the crit
+ * multiplier - 2.0 to 2.6 depending on the weapon - lives BEHIND it.
+ *
+ * SIZE IS THE PART THAT IS EASY TO GET WRONG, and mummy.js has the arithmetic:
+ * at the fifteen metres an enemy is fought at, a metre is about 47 px in a
+ * 1000 px frame. The first draft of this was three 2.8 cm spiracle slots, which
+ * is 1.3 px each - authored, believed, never on screen, which is the exact
+ * defect that note was written about. One plate at 0.46 of the shell's width
+ * comes out 32.6 cm across the actor's own 1.18 scale, or about 15 px, and it
+ * is the thing the player is being asked to aim at.
+ *
+ * It takes mats.eye, so the panel is the same low emissive the sockets are.
+ * Cold light on a gold body is the point - see the palette note below.
+ */
+const VENT = new Map();
+
+function goldVentGeometry(P) {
+  let out = VENT.get(P);
+  if (out) return out;
+
+  const p = parts(WRAP_TILES);
+  // Offsets are baked in, exactly as scarabGeometry bakes the abdomen's, so
+  // this can be parented straight to the abdomen mesh and inherit the
+  // per-instance width and length jitter that mesh already carries.
+  p.box(P.shellW * 0.46, P.shellH * 0.52, 0.05, {
+    y: -0.01, z: -P.shellD * 0.86, chamfer: 0,
+  });
+  out = p.build();
+
+  VENT.set(P, out);
+  return out;
+}
+
+/**
+ * Built on buildScarab and then re-tagged, rather than forked.
+ *
+ * Everything that makes this thing hard is in WHICH MESH CARRIES WHICH REGION,
+ * so a second copy of the rig would be 80 lines of duplicated leg tripod in
+ * order to change four `userData.region` strings. Three edits on top of the
+ * scarab:
+ *
+ *   1. the abdomen becomes the crit ('head') and is repainted in `deep`, so the
+ *      soft spot is the one DARK mass on a gold body and reads as a gap in the
+ *      armour rather than as a differently-shaped plate;
+ *   2. the skull, sockets and jaws lose the crit. The habit the game spends six
+ *      waves teaching - HEADSHOT_LETHAL_THROUGH in systems/damage.js is 6 -
+ *      is the habit this enemy is built to punish;
+ *   3. the vent panel goes on the back of the abdomen.
+ *
+ * The remap rides four systems that were already region-aware and gets all four
+ * right for free: the vent pays the 100 crit bounty instead of the 60 body one
+ * (main.js payout), flashes the body at 1.35 instead of 1.0 (mummy.js hurt),
+ * throws the heavier ejecta (systems/impacts.js), and fires the crit hitmarker.
+ * Nothing outside this file had to learn what a gold scarab is.
+ */
+function buildGoldScarab(spec, mats, actor) {
+  const rig = buildScarab(spec, mats, actor);
+
+  // Found by material rather than by index into rig.meshes. The abdomen is the
+  // only DIRECT mesh child of the body wearing wrapDark - the shell beside it
+  // is accent, and every femur that shares the material hangs off a hip group
+  // one level down - so this is a narrow assumption instead of a positional
+  // one, and it breaks loudly rather than silently if buildScarab is rebuilt.
+  let abdomen = null;
+  for (const child of rig.body.children) {
+    if (child.isMesh && child.material === mats.wrapDark) { abdomen = child; break; }
+  }
+  if (!abdomen) {
+    throw new Error('goldscarab: buildScarab no longer hangs the abdomen off the body as a wrapDark mesh');
+  }
+
+  abdomen.material = mats.deep;
+  abdomen.userData.region = 'head';
+
+  for (const m of rig.neck.children) {
+    if (m.isMesh) m.userData.region = 'body';
+  }
+
+  const vent = new THREE.Mesh(goldVentGeometry(spec.proportions), mats.eye);
+  vent.userData.enemy = actor;
+  vent.userData.region = 'head';
+  abdomen.add(vent);
+
+  // Pushed into rig.meshes because that array is not a manifest, it is driven:
+  // the spawn path re-shows every mesh in it and the quality setting rewrites
+  // castShadow across it. A mesh outside it is a mesh that stays hidden after
+  // the first death.
+  rig.meshes.push(vent);
+  rig.triangles += vent.geometry.attributes.position.count / 3;
+  rig.vent = vent;
+
+  return rig;
+}
+
+/**
+ * The scarab's scuttle, plus a stance and a crit reaction.
+ *
+ * The stance is the read: a permanent 0.10 rad nose-down carries the front
+ * plate toward the player and tips the vent up off the floor, so the panel is
+ * visible from behind at standing eye height instead of only from a crouch.
+ *
+ * UNDOING THE BASE ANIMATOR'S SKULL RECOIL WAS TRIED AND REJECTED. animateScarab
+ * spends its s.hitHead term on the neck, on the reasonable assumption that a
+ * crit means a shot to the face; on this variant a crit is a shot to the far end
+ * of the body. Subtracting exactly that term would mean hard-coding two literals
+ * out of the function above into the function below, which is a maintenance trap
+ * for a gain of nothing - a beetle whose back panel has just been opened up
+ * snapping its head is a whole-body reaction and is not wrong. So the crit adds
+ * a buck and takes nothing away.
+ */
+function animateGoldScarab(rig, spec, s) {
+  animateScarab(rig, spec, s);
+
+  rig.body.rotation.x += 0.10;
+
+  const crit = (s.hit || 0) * (s.hitHead || 0);
+  if (crit <= 0) return;
+
+  // Nose down and the abdomen kicks up, which is the same axis the wind-up
+  // already uses in the opposite direction - so a vent hit reads as the exact
+  // inverse of the telegraph, and the two can never be confused.
+  rig.body.rotation.x += crit * 0.30;
+  rig.body.position.y -= crit * 0.02;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,12 +697,131 @@ export const SCARAB = extend(MUMMY, {
   animate: animateScarab,
 });
 
+/**
+ * The gold scarab: the swarm, plated, and soft only from behind.
+ *
+ * THE PROBLEM IT IS BUILT AGAINST. By wave fifteen the player has one answer to
+ * everything - backpedal in a circle and hold fire - and it works because every
+ * enemy in the roster is happy to be shot in the face while it follows. More
+ * health does not challenge that habit, it just makes the circle longer. So
+ * this variant moves the only soft panel on its body to the BACK, which makes
+ * the habit itself the wrong play: a player who keeps backing away is aiming at
+ * plate and paying 2.6x the rounds for it, and the only way to pay scarab
+ * prices is to break the circle, get past the thing, and shoot it from behind.
+ *
+ * It is a scarab and not a new species: same rig, same proportions, same tripod
+ * scuttle. One `scale` makes it bigger and every derived quantity - reach,
+ * separation, actor height - follows from that, which is why nothing in the
+ * proportions record is overridden.
+ *
+ * The key is `goldscarab` and not `gilded` on purpose. It is read at exactly two
+ * call sites, both in the director's tables, and next to the literal `scarab`
+ * in the same object it says what it is without anyone opening this file.
+ */
+export const GOLD_SCARAB = extend(SCARAB, {
+  id: 'goldscarab',
+  name: 'Gold Scarab',
+
+  // 2.59x a shambler's 85, and that ratio is where the number comes from rather
+  // than from feel. TTK against a body is health / weapon damage, so from the
+  // FRONT this costs 2.59 shamblers' worth of rounds with any gun on the table,
+  // and through the vent - crits run 2.0 to 2.6 - it lands back at roughly ONE
+  // shambler. The flank is not a bonus, it is the price of admission, and the
+  // player who pays it gets ordinary trash-mob time-to-kill back.
+  health: 220,
+  // UNDER the player's 5.4 walk, where the scarab's 5.0 is only just under it.
+  // This is not a mercy: an enemy the player cannot get around is an enemy with
+  // no back, and the back is the entire design. A gold scarab has to be
+  // outpaceable on foot or the mechanic is decoration.
+  speed: 3.9,
+  accel: 7.5,
+  // THE LOAD-BEARING NUMBER. Circling only reaches the vent if the player can
+  // out-rotate the body, and angular rate is lateral speed over range: at a walk
+  // the player beats 1.9 rad/s inside about 2.8 m and loses to it further out.
+  // So the flank costs a commitment to closing to bite range, which is where the
+  // 14 damage is waiting. The scarab's 6.5 rad/s snaps to face you from anywhere
+  // and would make the whole variant unflankable.
+  damage: 14,
+  turn: 1.9,
+  attackRange: 1.35,
+  // Slower than the scarab's 0.22 because the damage more than doubled and the
+  // rear-up telegraph is the only tell this rig has; a 0.36 wind-up is about two
+  // and a half of the player's reaction windows, so getting bitten inside the
+  // flank is a decision rather than a tax.
+  windup: 0.36,
+  strikeTime: 0.26,
+  cooldown: 1.05,
+  // The plate eats the flinch. At the scarab's 1.8 a player can chip-fire into
+  // the front and stall the approach indefinitely, which is a second way to win
+  // by backing up and is exactly what this enemy exists to close off. Not the
+  // Bound's 0.25 - that is a wall and this is a swarm member that still visibly
+  // rocks when it is hit, otherwise front hits read as not registering at all.
+  staggerTake: 0.55,
+
+  // One number, and everything scales off it: the actor multiplies height,
+  // radius, attackRange and sepRadius by it. Restated below rather than left
+  // implicit because the separation radius is the one that gets got wrong.
+  scale: 1.18,
+  height: 0.55,
+  radius: 0.30,
+  // THE SCARAB'S, UNCHANGED, and it must stay that way. The swarm's separation
+  // is half the humanoids' so a clutch flows around a pillar as a mass instead
+  // of queueing behind it; 0.55 through the 1.18 scale is an effective 0.65
+  // against the humanoids' 1.05, which keeps the pack a pack. A gold scarab that
+  // spread out like a shambler would give the player lanes to back down.
+  sepRadius: 0.55,
+  voicePitch: 1.5,
+
+  palette: {
+    // Gold, and metal rather than a yellow-painted object: mummy.js reads
+    // accentMetal into metalness and accentRough into roughness on the accent
+    // material, which is the shell and the jaws. The Bound sits at 0.88 / 0.34
+    // and the gods at 0.85 / 0.30; this goes crisper than both because a
+    // carapace is polished where gilded wood is not.
+    //
+    // 0.26 IS THE FLOOR, not a preference. The interior is lit by two point
+    // lights over a low environment intensity, and a metal below about 0.2
+    // roughness in that scene has almost nothing to reflect between its
+    // specular hits - it renders as a black shell with two bright spots, which
+    // is the same value-crushed failure the base linen was corrected out of.
+    accent: 0xe8bf55,
+    accentMetal: 0.90,
+    accentRough: 0.26,
+    // The legs and the skull go DARKER than the scarab's, so the gold shell is
+    // the only bright mass on the body and the outline at range is a single
+    // hovering plate. `deep` also paints the abdomen on this variant, which is
+    // what makes the crit panel read as a hole in the armour.
+    wrapDark: 0x33291a,
+    deep: 0x1c150d,
+    // COLD, on a gold body, and that is the tell. The scarab's 0xd06a12 is warm
+    // orange, which against 0xe8bf55 plate is one value at fifteen metres and
+    // the vent would disappear into the thing it is cut into. The Bound already
+    // taught this player that a cold socket means armoured - it has had blue
+    // eyes since wave ten - so the vocabulary is one they have had five waves to
+    // learn rather than one being invented here.
+    eye: 0x63e0ff,
+  },
+
+  gait: {
+    // Slower and longer than the scarab's 2.2 / 0.45. Twice the mass on the same
+    // legs does not take the same steps, and the heavier cadence is the cue that
+    // separates a gold from the ordinary scarabs it spawns alongside - before
+    // hue is available, which at range it is not.
+    rate: 1.55,
+    stride: 0.60,
+  },
+
+  build: buildGoldScarab,
+  animate: animateGoldScarab,
+});
+
 /** Every variant the director may draw from, base included. */
 export const VARIANTS = {
   shambler: MUMMY,
   husk: HUSK,
   bound: BOUND,
   scarab: SCARAB,
+  goldscarab: GOLD_SCARAB,
 };
 
 /**
@@ -571,6 +835,18 @@ export const UNLOCK = {
   scarab: 4,
   husk: 6,
   bound: 10,
+  // FIFTEEN, and the gap is the argument. The schedule is 1, 4, 6, 10 - four
+  // introductions in the first ten waves and then nothing at all for the fifteen
+  // that follow, which is the complaint: the second half of the run is the first
+  // half with a bigger health multiplier. Five waves after the Bound continues
+  // the spacing the table already has, and it lands on a boss wave, so the
+  // first gold scarab walks out on the wave the player is already braced for.
+  //
+  // It cannot come earlier than about 12 without being unfair. The crit window
+  // in systems/damage.js keeps headshots lethal through wave 6 and the whole
+  // point of this enemy is that the head is not the crit, so it needs to arrive
+  // well clear of the waves that were teaching the opposite lesson.
+  goldscarab: 15,
 };
 
 export { buildHumanoid, animateHumanoid };
