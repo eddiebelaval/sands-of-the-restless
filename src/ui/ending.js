@@ -423,6 +423,7 @@ export function createEnding({
 
     state.phase = 'black';
     state.t = 0;
+    lastTick = 0;
     state.armed = false;
     state.pending = false;
     state.wave = (director && director.state && director.state.wave) || 0;
@@ -458,18 +459,57 @@ export function createEnding({
   function descend() {
     state.phase = 'going';
     state.t = 0;
+    lastTick = 0;
     el.root.classList.add('going');
     el.again.classList.remove('armed');
     for (const fn of listeners) fn();
   }
 
-  function step(dt) {
+  /**
+   * THE CARD RUNS ON THE WALL CLOCK, AND IT IS THE ONE CLOCK IN THIS FILE THAT
+   * IS NOT THE SIMULATION'S.
+   *
+   * It used to add main.js's clamped `dt`, on the header's stated reasoning that
+   * this card should keep time the way the death card does. That reasoning does
+   * not survive contact with what the two cards actually are.
+   *
+   * `MAX_DELTA` is 1/20, so a frame contributes at most 0.05s of sim time no
+   * matter how long it really took. Under 20fps the simulation deliberately
+   * runs SLOW rather than skipping - which is right for a player who must not
+   * be teleported through a wall, and wrong for a title card on a black screen,
+   * because there is no longer a world to be teleported through. Worse, the
+   * frame the world ends on is the most expensive in the game: twenty-five waves
+   * of dressing, and the renderer still drawing all of it behind an opaque wash
+   * nobody can see through.
+   *
+   * Measured: six seconds of real time advanced this clock by 0.7s, against the
+   * 1.25s the card waits. The owner finished a real run, walked into the Serdab
+   * and reported "the screen turned black and nothing happened". Nothing was
+   * broken. The card was coming, on a clock that had slowed to a crawl at the
+   * exact moment the thing keeping it slow had stopped mattering.
+   *
+   * The death card keeps sim time and should: its beat lands on the tail of a
+   * camera fall that IS simulation, so the two must degrade together. Here
+   * nothing moves. There is nothing to stay in step with.
+   *
+   * Accrued per call rather than measured from the phase start so that a frame
+   * loop which stops calling update - the pause menu returns before this - costs
+   * the card no time, and clamped per step so a backgrounded tab resumes into
+   * the beat it left rather than skipping straight past the card.
+   */
+  const clock = () => (doc.defaultView.performance || Date).now();
+  const MAX_STEP = 0.25;
+  let lastTick = 0;
+
+  function step() {
     if (state.phase === 'none') {
       if (ready()) begin();
       return;
     }
 
-    state.t += dt;
+    const t = clock();
+    state.t += lastTick ? Math.min((t - lastTick) / 1000, MAX_STEP) : 0;
+    lastTick = t;
 
     if (state.phase === 'black') {
       if (state.t >= CARD_AT) {
@@ -501,8 +541,8 @@ export function createEnding({
     begin,
     confirm,
 
-    update(dt) {
-      step(dt);
+    update() {
+      step();
       // Re-asserted rather than set once: ui/pause.js is the other writer of
       // the input freeze and does not know the world has ended. death.js keeps
       // the same guard for the same reason.
