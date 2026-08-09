@@ -1353,15 +1353,71 @@ export const ROOMS = [
      */
     spawnPoints: [],
 
-    // No interactSlots on purpose. The serdab's payoff is authored by the
-    // puzzle chain, which lands with the rest of M5; giving it a shrine now
-    // would quietly make it the cheapest perk in the map.
+    /**
+     * THE CHAPEL, BUILT. The five slots below used to be a placeholder set - a
+     * four-metre pharaoh under a five-metre ceiling, an offering table in the
+     * middle of the walking line, two urns and a brazier - and the note here
+     * said the room's payoff was "authored by the puzzle chain". It was not.
+     * `ui/ending.js` fired in an empty box, and the owner walked into it and
+     * reported that nothing happened.
+     *
+     * docs/NARRATIVE.md, "The chapel at the bottom", is the spec and it is
+     * literal: ten rock-cut figures of the same woman shoulder to shoulder
+     * along the back wall, an eleventh niche cut into the SIDE wall on its own
+     * and empty, and the archaeologist sitting on a stool with her back to the
+     * door, facing it, her lamp beside her. The geometry is in world/serdab.js
+     * with the composition argument; what belongs here is only WHERE.
+     *
+     * THE ORDER OF THESE SLOTS IS LOAD BEARING. `buildLights` gives this room
+     * exactly one point light (one per sixteen units of long axis, and the room
+     * is fourteen) and hangs it on the first anchor a prop registers. The lamp
+     * is first so the room's only light is hers. The brazier that used to hold
+     * that anchor is gone: a ceremonial fire burning in a chamber sealed for
+     * four thousand years is a light source that argues with the room it lights.
+     *
+     * WHAT IS NOT HERE. No interactSlots, still, and now for a stronger reason
+     * than the old note's: the beat in this room is that the player is prompted
+     * at a person the way they have been prompted at every door and gun and
+     * shrine in the game, "except that this one has no price on it". A shrine
+     * in the corner would be the room quoting a price on the way past.
+     */
     propSlots: [
-      { type: 'statue', x: 47, z: -209, rot: Math.PI },
-      { type: 'offering-table', x: 47, z: -214, rot: 0 },
-      { type: 'urn', x: 43, z: -217, rot: 0.9 },
-      { type: 'urn', x: 51.5, z: -209.5, rot: 2.1 },
-      { type: 'brazier', x: 43.5, z: -209.5, rot: 0 },
+      // Her lamp, on the floor beyond her from the door, so she is the
+      // silhouette between the player and the only warm thing down here.
+      { type: 'field-lamp', x: 47.1, z: -214.8, rot: 2.55 },
+
+      // Back to the door, facing the empty niche. The rotation is DERIVED from
+      // the two coordinates - atan2(49.4 - 46.2, -218.4 - -213.6) - so if the
+      // niche moves along the wall she is still looking at it.
+      { type: 'archaeologist', x: 46.2, z: -213.6, rot: 2.554 },
+
+      // The back wall: the wall opposite the door, at its inner face x = 53.
+      // rot = -PI/2 turns the row's local +x onto world +z and its local +z
+      // (which is out of the wall) onto world -x, so the ten face the door.
+      //
+      // PITCH 1.06 AND THE CENTRE PUSHED 0.45 OFF THE ROOM'S OWN AXIS, and both
+      // numbers are the eleventh niche's fault rather than a taste call. The
+      // side wall below is thickened by 0.90 to hold the recess, which takes the
+      // clear run of the back wall from 12.00 down to 11.10. Ten figures at the
+      // 1.12 the first cut used measure 11.12 across the pilasters and buried
+      // the far one in that thickening. At 1.06 the row measures 10.52, the
+      // plinth 10.16, and the two ends clear the panel and the near wall by
+      // 0.47 each. The gap between two pilasters is 0.06, which is what
+      // "shoulder to shoulder" means when it is a measurement.
+      { type: 'ka-row', x: 53, z: -212.55, rot: -Math.PI / 2, config: { count: 10, pitch: 1.06 } },
+
+      // The side wall, at its inner face z = -219, thickened across its whole
+      // length with the eleventh cut into it 2.4 m off centre - at the far end
+      // from the door, so she has her back to the way in while facing it.
+      { type: 'eleventh-niche', x: 47, z: -219, rot: 0, config: { at: 2.4 } },
+
+      // What survives of the old dressing, moved out of the walking line and
+      // off the row. A serdab has an offering table facing its statues and this
+      // is that table; the urns are the room's only clutter and they hug the
+      // near wall where nothing has to walk round them.
+      { type: 'offering-table', x: 44.4, z: -208.4, rot: 0 },
+      { type: 'urn', x: 50.8, z: -208.2, rot: 2.1 },
+      { type: 'urn', x: 42.6, z: -217.0, rot: 0.9 },
     ],
 
     interactSlots: [],

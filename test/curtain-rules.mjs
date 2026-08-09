@@ -14,7 +14,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome } from './chrome.mjs';
+import { resolveChrome, dismissBriefing } from './chrome.mjs';
 
 // Two defects in one line, and the second is why `npm test` has never passed in
 // one invocation: 4581 is served by nothing (4177 is what `npm start` serves and
@@ -35,6 +35,8 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 await page.waitForTimeout(1400);
 
 await page.evaluate(() => {

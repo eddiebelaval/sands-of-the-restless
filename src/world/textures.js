@@ -57,9 +57,19 @@ function fbm(x, y, octaves, basePeriod, seed) {
 // canvas helpers
 // ---------------------------------------------------------------------------
 
-function makeCanvas(size) {
+/**
+ * An offscreen canvas.
+ *
+ * NON-SQUARE IS ALLOWED, and that is not generality for its own sake. The
+ * scanned CC0 sets this project ships are 1024x512, so any pass that composites
+ * onto one - see `inscribeScan` - works at 2:1 or it resamples a photograph for
+ * no reason. Every painter in this file still calls it with one argument and
+ * still gets the square canvas it has always got.
+ */
+function makeCanvas(w, h = w) {
   const c = document.createElement('canvas');
-  c.width = c.height = size;
+  c.width = w;
+  c.height = h;
   return c;
 }
 
@@ -77,25 +87,25 @@ function toTexture(canvas, repeat = 1, colorSpace = THREE.SRGBColorSpace) {
  * `strength` scales the perceived depth of the relief.
  */
 function normalFromCanvas(source, strength = 2.4) {
-  const size = source.width;
+  const w = source.width, h = source.height;
   const src = source.getContext('2d', { willReadFrequently: true })
-    .getImageData(0, 0, size, size).data;
+    .getImageData(0, 0, w, h).data;
 
   // Precompute luminance so the inner loop is one array read, not three.
-  const lum = new Float32Array(size * size);
+  const lum = new Float32Array(w * h);
   for (let i = 0, p = 0; i < lum.length; i++, p += 4) {
     lum[i] = (src[p] * 0.299 + src[p + 1] * 0.587 + src[p + 2] * 0.114) / 255;
   }
 
-  const out = makeCanvas(size);
+  const out = makeCanvas(w, h);
   const ctx = out.getContext('2d', { willReadFrequently: true });
-  const img = ctx.createImageData(size, size);
+  const img = ctx.createImageData(w, h);
   const dst = img.data;
 
-  const at = (x, y) => lum[(((y % size) + size) % size) * size + (((x % size) + size) % size)];
+  const at = (x, y) => lum[(((y % h) + h) % h) * w + (((x % w) + w) % w)];
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
       // Sobel kernels, 3x3, wrapped so the normal map tiles like the albedo.
       const tl = at(x - 1, y - 1), t = at(x, y - 1), tr = at(x + 1, y - 1);
       const l  = at(x - 1, y),                       r  = at(x + 1, y);
@@ -109,7 +119,7 @@ function normalFromCanvas(source, strength = 2.4) {
       const len = Math.hypot(nx, ny, nz) || 1;
       nx /= len; ny /= len; nz /= len;
 
-      const i = (y * size + x) * 4;
+      const i = (y * w + x) * 4;
       dst[i]     = (nx * 0.5 + 0.5) * 255;
       dst[i + 1] = (ny * 0.5 + 0.5) * 255;
       dst[i + 2] = (nz * 0.5 + 0.5) * 255;
@@ -123,13 +133,13 @@ function normalFromCanvas(source, strength = 2.4) {
 
 /** Derive a roughness map: darker/rougher where the albedo is busy. */
 function roughnessFromCanvas(source, lo = 0.55, hi = 0.95) {
-  const size = source.width;
+  const w = source.width, h = source.height;
   const src = source.getContext('2d', { willReadFrequently: true })
-    .getImageData(0, 0, size, size).data;
+    .getImageData(0, 0, w, h).data;
 
-  const out = makeCanvas(size);
+  const out = makeCanvas(w, h);
   const ctx = out.getContext('2d', { willReadFrequently: true });
-  const img = ctx.createImageData(size, size);
+  const img = ctx.createImageData(w, h);
   const dst = img.data;
 
   for (let i = 0; i < src.length; i += 4) {
@@ -190,7 +200,7 @@ function paintSand(size = 512) {
  * variation, and weathering. Drawn with the 2D API rather than per-pixel
  * because rectangles are exactly what a masonry wall is.
  */
-function paintMasonry(size = 512, { rows = 6, seed = 3, hieroglyphs = false } = {}) {
+function paintMasonry(size = 512, { rows = 6, seed = 3, hieroglyphs = false, register = false } = {}) {
   const c = makeCanvas(size);
   const ctx = c.getContext('2d', { willReadFrequently: true });
 
@@ -241,7 +251,352 @@ function paintMasonry(size = 512, { rows = 6, seed = 3, hieroglyphs = false } = 
     }
   }
 
+  if (register) drawRegister(ctx, size, blockH, seed);
+
   return c;
+}
+
+/**
+ * A CARVED REGISTER RUNNING THE WIDTH OF THE WALL.
+ *
+ * The per-block glyph columns above are scatter: a mark here and a mark there,
+ * on whichever stones the hash picked. That is what a weathered wall looks like
+ * up close and it is NOT what makes a wall read as decorated from across a
+ * room, because there is no line in it. Egyptian wall decoration is banded -
+ * a horizontal register, bounded top and bottom, with the inscription running
+ * inside it - and the band is the thing the eye locks onto at distance.
+ *
+ * THE ORDER OF THE THREE PIECES IS THE WHOLE TRICK, and it is the same one
+ * `drawGlyphColumn` uses one scale down. A sunk register is a recess, so it
+ * carries: a LIT fillet on the upper lip (the light in this scene comes from
+ * braziers below and the sun above, and the top of a recess catches both), a
+ * DARK ground inside it, and a SHADOWED under-edge. Those three values are what
+ * the Sobel pass turns into a band that has depth rather than a band that is a
+ * stripe of different-coloured paint.
+ *
+ * ONE BAND PER TILE, NOT THREE. At the `carved` density of 0.20 tiles per unit
+ * a tile is five metres, so this is one register per five metres of wall, which
+ * is architecture. Three would be 1.7 m apart, which is wallpaper: the same
+ * "high-frequency relief that reads as noise instead of carving" the gate piers
+ * in temple.js were rebuilt to get away from, arriving by the texture route.
+ *
+ * The marks stay ABSTRACT for the reason stated over `drawGlyphColumn` and
+ * restated in build.js: a real glyph at this budget is a smudge, and the fix
+ * for a smudge is never a more accurate smudge.
+ */
+function drawRegister(ctx, size, blockH, seed) {
+  drawInscription(ctx, size, size, {
+    seed,
+    bandH: blockH * 0.92,
+    lipRatio: 0.07,
+    cells: 9,
+    ground: 'opaque',
+    columns: false,
+  });
+}
+
+/**
+ * THE INSCRIPTION, DRAWN OVER WHATEVER IS ALREADY IN THE CONTEXT.
+ *
+ * `drawRegister` above is now one call into this, and the generalisation is the
+ * whole point of the wall-frieze lane rather than tidying. The band the previous
+ * lane authored can only be drawn onto a canvas this file painted, and this file
+ * does not paint the surface the interior walls actually wear: `upgradeMaterials`
+ * replaces the procedural masonry with the bricks083 scan at boot, so
+ * `paintMasonry(..., { register: true })` renders on the asset-404 path and
+ * NOWHERE ELSE. Measured on the shipped build: `limestone.map` is
+ * bricks083/color.jpg and `assetsFailed` is empty.
+ *
+ * So the inscription has to be able to land on a PHOTOGRAPH, not only on a
+ * canvas we painted, and that is the one capability this function adds. Three
+ * differences from the version it absorbed, each of which exists for that:
+ *
+ *   THE RECESS GROUND MULTIPLIES rather than fills. An opaque fill over a scan
+ *   deletes the scan inside the band - which is 11 per cent of the wall's area
+ *   turned into flat paint, and the flat patch is exactly where the eye is being
+ *   sent. Multiplying darkens by a ratio, so every grain, pit and bedding line
+ *   in the photograph survives inside the recess at reduced contrast, which is
+ *   also what a chiselled recess in real stone looks like: the same rock, in
+ *   shade. `ground: 'opaque'` keeps the original behaviour for the caller that
+ *   was written against it.
+ *
+ *   THE BAND CARRIES COLUMNS. A single horizontal line reads as a string course
+ *   - a moulding - and not as writing. What makes a wall read as INSCRIBED at
+ *   six metres is the pair: a horizontal register with vertical columns of text
+ *   dropping out of it. Verticals are also the axis a horizontal band cannot
+ *   supply, and a surface whose only structure runs one way is the "single
+ *   frequency in a single direction" failure paintDoorstone records.
+ *
+ *   IT TAKES ITS OWN WIDTH AND HEIGHT. The scans are 1024x512.
+ *
+ * The marks stay ABSTRACT, for the reason stated over `drawGlyphColumn` and
+ * restated in build.js: at this texel budget a real glyph resolves to a smudge,
+ * and the fix for a smudge is never a more accurate smudge.
+ */
+
+/**
+ * THE THREE GROUNDS A BAND CAN HAVE, AND WHY THERE ARE THREE.
+ *
+ * `opaque` is the original, kept byte-for-byte for `drawRegister`'s caller.
+ *
+ * `sunk` is the first cut of the wall frieze and it is A DARK RECESS: the same
+ * stone, in shade, multiplied down so the photograph's grain survives inside it.
+ * It is the physically obvious reading of a chiselled register and it FAILED the
+ * beetle control, which is why it is still here rather than deleted - the
+ * measurement that rejected it is only reproducible if the thing it rejected can
+ * still be built. Staged with a gold scarab on the band, it took the background
+ * behind the body from 14.4 to 4.8 luminance and lost 78.2 per cent of the body
+ * into it, against 48.8 on plain stone.
+ *
+ * `lime` is what ships. A register panel of LIMEWASHED PLASTER let into the
+ * weathered stone, lifted above the wall around it, with the carving as dark
+ * incision in a pale ground. Three things make it right rather than a dodge:
+ *
+ *   IT IS WHAT THE ROOM ALREADY DOES. paintCeiling holds its ochre band around
+ *   155 luminance for this exact reason and states it: a gold scarab renders as
+ *   a DARK body with a bright rim, so the background it needs is a LIGHT one.
+ *   The wall now has a scarab on it too, and the same argument does not stop
+ *   being true because the surface turned ninety degrees.
+ *
+ *   IT IS WHAT THE REAL WALLS ARE. An Egyptian tomb register is not bare rock in
+ *   shadow; it is plastered, limewashed and painted, and it is LIGHTER than the
+ *   dressed stone around it, not darker.
+ *
+ *   IT IS THE MORE LEGIBLE DECORATION. A dark band on a dark wall in a room lit
+ *   by four braziers is a band you cannot see. The whole point of the lane is
+ *   that the player reads writing on the wall.
+ *
+ * The relief is unaffected by any of this: the normal map is Sobelled from the
+ * `flat` pass, which is geometry only, so the carving is still carved whichever
+ * ground it is cut into.
+ */
+const BAND_GROUNDS = {
+  opaque: {
+    fill: 'rgb(118, 104, 80)', op: 'source-over',
+    litLip: 'rgba(255,246,224,.30)', darkLip: 'rgba(26,19,10,.34)',
+    aboveShadow: 'rgba(30,22,12,.22)', belowLight: 'rgba(255,248,226,.16)',
+    colFill: 'rgb(126, 112, 88)', colOp: 'source-over',
+    colLit: 'rgba(255,246,224,.26)', colDark: 'rgba(26,19,10,.30)',
+  },
+  sunk: {
+    fill: 'rgb(154, 141, 119)', op: 'multiply',
+    litLip: 'rgba(255,246,224,.30)', darkLip: 'rgba(26,19,10,.34)',
+    aboveShadow: 'rgba(30,22,12,.22)', belowLight: 'rgba(255,248,226,.16)',
+    colFill: 'rgb(168, 156, 134)', colOp: 'multiply',
+    colLit: 'rgba(255,246,224,.26)', colDark: 'rgba(26,19,10,.30)',
+  },
+  lime: {
+    // 0.46 rather than opaque, so a bit over half the photograph's own grain
+    // survives inside the panel. A flat fill here would put a smooth patch on
+    // the one part of the wall the eye is being sent to.
+    fill: 'rgba(226, 210, 180, .46)', op: 'source-over',
+    litLip: 'rgba(255,250,232,.34)',
+    // THE DARK LIP IS THINNED FROM .34 TO .20, and that is the beetle again
+    // rather than taste: the shadowed under-edge of the band is the darkest
+    // thing on this surface and it is a full lip tall, which is a hole a body
+    // can sit in. The incised marks stay as dark as they were, because a mark
+    // is a five-texel line and a five-texel line cannot hold a beetle - the
+    // same distinction paintCeiling draws about its own double rule.
+    darkLip: 'rgba(26,19,10,.20)',
+    aboveShadow: 'rgba(30,22,12,.16)', belowLight: 'rgba(255,248,226,.18)',
+    colFill: 'rgba(232, 218, 190, .38)', colOp: 'source-over',
+    colLit: 'rgba(255,250,232,.28)', colDark: 'rgba(26,19,10,.18)',
+  },
+};
+
+function drawInscription(ctx, w, h, {
+  seed = 71,
+  bandH = h * 0.115,
+  lipRatio = 0.09,
+  cells = 11,
+  ground = 'lime',
+  columns = true,
+  // Draw onto flat grey for the Sobel pass rather than onto a surface. The
+  // geometry is identical; only the values change, because a normal map wants
+  // clean opaque steps where the albedo wants a translucent stain.
+  flat = false,
+} = {}) {
+  const G = BAND_GROUNDS[ground] || BAND_GROUNDS.lime;
+  const bh = bandH;
+  const top = Math.round(h * 0.5 - bh / 2);
+  const lip = Math.max(2, bh * lipRatio);
+
+  ctx.save();
+
+  // The ground of the band.
+  if (flat) {
+    ctx.fillStyle = 'rgb(96, 96, 96)';
+  } else {
+    ctx.globalCompositeOperation = G.op;
+    ctx.fillStyle = G.fill;
+  }
+  ctx.fillRect(0, top, w, bh);
+  ctx.globalCompositeOperation = 'source-over';
+
+  // The lit upper fillet and the shadowed lower one. These two are the band.
+  ctx.fillStyle = flat ? 'rgb(214,214,214)' : G.litLip;
+  ctx.fillRect(0, top, w, lip);
+  ctx.fillStyle = flat ? 'rgb(38,38,38)' : G.darkLip;
+  ctx.fillRect(0, top + bh - lip, w, lip);
+
+  // And the reveal: the stone immediately above and below the recess is in
+  // shadow and in light respectively, which is what stops the band reading as
+  // a painted stripe on a flat wall.
+  ctx.fillStyle = flat ? 'rgb(72,72,72)' : G.aboveShadow;
+  ctx.fillRect(0, top - lip, w, lip);
+  ctx.fillStyle = flat ? 'rgb(182,182,182)' : G.belowLight;
+  ctx.fillRect(0, top + bh, w, lip * 0.8);
+
+  // The inscription. An integer number of cells across the tile, so it wraps.
+  const cw = w / cells;
+  const s = Math.min(cw * 0.62, (bh - lip * 4) * 0.72);
+
+  for (let i = 0; i < cells; i++) {
+    const cx = (i + 0.5) * cw;
+    const cy = top + bh / 2;
+    // Two marks stacked in the taller cells, one in the rest, which is what an
+    // inscription actually does and what stops the row reading as a dotted line.
+    const stack = hash2(i, 3, seed + 53) > 0.34 ? 2 : 1;
+    for (let k = 0; k < stack; k++) {
+      const y = stack === 1 ? cy : cy + (k - 0.5) * s * 0.94;
+      const ss = stack === 1 ? s : s * 0.62;
+      carveMark(ctx, Math.floor(hash2(i * 7 + k, k * 13, seed + 59) * MARKS) % MARKS,
+        cx, y, ss);
+    }
+  }
+
+  /**
+   * THE COLUMNS OF TEXT DROPPING OUT OF THE BAND.
+   *
+   * ABOUT A THIRD OF THE CELLS, NOT ALL OF THEM, and the count is doing the same
+   * job the register's own count does one scale up. Every cell carrying a column
+   * is a comb, and a comb has a period the eye finds; a third of them, at
+   * lengths drawn from the same hash, is a rhythm it does not. It is also the
+   * difference between a wall that has an inscription on it and a wall that is
+   * an inscription, and this one is a tomb corridor rather than a temple
+   * sanctuary.
+   *
+   * THEY HANG BELOW THE BAND AND ARE CLAMPED INSIDE THE TILE. A column that ran
+   * off the bottom would wrap round to the top of the same tile and reappear
+   * above the register it is meant to hang from, which at a 5.88 m tile is a
+   * column of text floating in the middle of the course above.
+   */
+  if (columns) {
+    const colTop = top + bh + lip * 1.6;
+    const maxH = Math.min(h - colTop - lip * 2, bh * 2.1);
+
+    if (maxH > s * 2) {
+      for (let i = 0; i < cells; i++) {
+        if (hash2(i, 17, seed + 67) < 0.66) continue;
+        const cx = (i + 0.5) * cw;
+        const colH = maxH * (0.55 + hash2(i, 29, seed + 73) * 0.45);
+        const colW = cw * 0.80;
+
+        // The channel the column sits in: the same three values as the band,
+        // turned ninety degrees. Without it the marks read as graffiti on the
+        // face rather than as text in a sunk panel.
+        if (flat) {
+          ctx.fillStyle = 'rgb(104, 104, 104)';
+        } else {
+          ctx.globalCompositeOperation = G.colOp;
+          ctx.fillStyle = G.colFill;
+        }
+        ctx.fillRect(cx - colW / 2, colTop, colW, colH);
+        ctx.globalCompositeOperation = 'source-over';
+
+        ctx.fillStyle = flat ? 'rgb(206,206,206)' : G.colLit;
+        ctx.fillRect(cx - colW / 2, colTop, Math.max(1.5, lip * 0.8), colH);
+        ctx.fillStyle = flat ? 'rgb(46,46,46)' : G.colDark;
+        ctx.fillRect(cx + colW / 2 - Math.max(1.5, lip * 0.8), colTop,
+          Math.max(1.5, lip * 0.8), colH);
+
+        drawGlyphColumn(ctx, cx, colTop + lip, colW, colH - lip * 2,
+          hash2(i, 23, seed + 79));
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
+/**
+ * THE INSCRIPTION, COMPOSITED ONTO A SCANNED MAP SET.
+ *
+ * This is the function that closes the bug. Everything else in this file paints
+ * a surface from nothing and then loses it to `upgradeMaterials`; this one takes
+ * the scan that WINS that argument and writes the carving into it, so what ships
+ * is the photograph's grain, bedding and relief AND the inscription, rather than
+ * a choice between them.
+ *
+ * It is also the historically honest answer. An Egyptian wall is dressed stone
+ * first and decorated second: the masons cut the blocks, and the sunk relief was
+ * carved into a face that already had all the character of the quarry in it. A
+ * procedural albedo swapped in for the scan reverses that order - it throws the
+ * stone away to keep the writing.
+ *
+ * TWO MAPS OUT, NOT FOUR. The roughness and AO of the scan are handed back
+ * untouched by the caller and SHARED with the wall material they came from, so
+ * this costs two GPU textures rather than four. The recess should strictly be
+ * rougher than the face around it; that is a real omission and it is recorded in
+ * the report rather than hidden, because the alternative is a third full-size
+ * texture for a term the world-space grime pass is already moving.
+ *
+ * THE NORMAL IS A BLEND, WHICH IS THE WHOLE REASON THIS IS NOT JUST AN ALBEDO
+ * OVERLAY. Carving is relief. An inscription that exists only in the albedo is a
+ * PAINTED inscription, and a painted mark on a wall lit by four braziers does
+ * not change as the player walks past it, which is precisely the "paid for and
+ * never drawn" failure the doorstone's normalStrength note records. The mark
+ * geometry is drawn once more onto flat grey, Sobelled into a detail normal, and
+ * added to the scan's own normal in tangent space:
+ *
+ *     out.xy = base.xy + (detail.xy - 0.5),   out.z = base.z
+ *
+ * which is the standard partial-derivative addition of two tangent-space
+ * normals. Leaving z alone is an approximation and a deliberate one: three.js
+ * normalises the sampled vector in `normal_fragment_maps` before it is used, so
+ * the two slopes add and the length is corrected in the shader for free.
+ */
+function inscribeScan(colorImage, normalImage, opts = {}) {
+  const w = colorImage.width, h = colorImage.height;
+
+  const albedo = makeCanvas(w, h);
+  const actx = albedo.getContext('2d', { willReadFrequently: true });
+  actx.drawImage(colorImage, 0, 0, w, h);
+  drawInscription(actx, w, h, opts);
+
+  let normal = null;
+  if (normalImage) {
+    const relief = makeCanvas(w, h);
+    const rctx = relief.getContext('2d', { willReadFrequently: true });
+    rctx.fillStyle = 'rgb(128,128,128)';
+    rctx.fillRect(0, 0, w, h);
+    drawInscription(rctx, w, h, { ...opts, flat: true });
+
+    // 2.0 rather than the masonry's 3.0. The scan's own normal is already
+    // carrying the stone; this term only has to add the chisel, and a detail
+    // normal that overpowers the surface it is added to is the corrugation
+    // `upgradeMaterials` dials normalScale down to avoid.
+    const detail = normalFromCanvas(relief, 2.0);
+
+    normal = makeCanvas(w, h);
+    const nctx = normal.getContext('2d', { willReadFrequently: true });
+    nctx.drawImage(normalImage, 0, 0, w, h);
+
+    const base = nctx.getImageData(0, 0, w, h);
+    const b = base.data;
+    const dd = detail.getContext('2d', { willReadFrequently: true })
+      .getImageData(0, 0, w, h).data;
+
+    for (let i = 0; i < b.length; i += 4) {
+      const x = b[i] + dd[i] - 128;
+      const y = b[i + 1] + dd[i + 1] - 128;
+      b[i] = x < 0 ? 0 : x > 255 ? 255 : x;
+      b[i + 1] = y < 0 ? 0 : y > 255 ? 255 : y;
+    }
+    nctx.putImageData(base, 0, 0);
+  }
+
+  return { albedo, normal };
 }
 
 /**
@@ -256,66 +611,145 @@ function drawGlyphColumn(ctx, cx, top, colW, colH, r) {
 
   for (let i = 0; i < n; i++) {
     const y = top + cell * (i + 0.5);
-    const kind = Math.floor(hash2(i, (cx * 7) | 0, 41 + r * 100) * 6);
+    const kind = Math.floor(hash2(i, (cx * 7) | 0, 41 + r * 100) * MARKS) % MARKS;
+    carveMark(ctx, kind, cx, y, s);
+  }
+}
 
-    // Carved: a dark incision with a light lower lip, which is what the
-    // Sobel pass turns into real-looking relief.
-    ctx.strokeStyle = 'rgba(52,42,26,.62)';
-    ctx.lineWidth = Math.max(1.5, s * 0.16);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
+/**
+ * HOW MANY ABSTRACT MARKS THE VOCABULARY HOLDS.
+ *
+ * Six was not enough and the reason is arithmetic rather than taste. A register
+ * of nine cells drawn from six shapes repeats a shape 2.2 times per band on
+ * average, and a repeat inside one band is the tell that turns an inscription
+ * into a pattern - the eye finds the period, and once it has found it the wall
+ * is wallpaper. Eleven puts the expected repeat under one per band.
+ *
+ * They are STILL NOT HIEROGLYPHS and adding more of them did not make them any
+ * closer to being hieroglyphs. See the note over `drawGlyphColumn`'s caller and
+ * the matching one in build.js: at this texel budget a real glyph resolves to a
+ * smudge, and eleven kinds of smudge that can be told apart is worth more than
+ * one accurate one that cannot.
+ */
+const MARKS = 11;
 
-    switch (kind) {
-      case 0: // ankh
-        ctx.moveTo(cx, y - s * 0.1); ctx.lineTo(cx, y + s * 0.5);
-        ctx.moveTo(cx - s * 0.32, y + s * 0.06); ctx.lineTo(cx + s * 0.32, y + s * 0.06);
-        ctx.moveTo(cx, y - s * 0.1);
-        ctx.arc(cx, y - s * 0.26, s * 0.18, Math.PI * 0.5, Math.PI * 2.5);
-        break;
-      case 1: // eye
-        ctx.moveTo(cx - s * 0.4, y);
-        ctx.quadraticCurveTo(cx, y - s * 0.38, cx + s * 0.4, y);
-        ctx.quadraticCurveTo(cx, y + s * 0.28, cx - s * 0.4, y);
-        ctx.moveTo(cx + s * 0.12, y + s * 0.1); ctx.lineTo(cx + s * 0.2, y + s * 0.42);
-        break;
-      case 2: // waves
-        for (let k = -1; k <= 1; k++) {
-          const yy = y + k * s * 0.26;
-          ctx.moveTo(cx - s * 0.42, yy);
-          for (let q = 0; q <= 4; q++) {
-            ctx.quadraticCurveTo(
-              cx - s * 0.42 + s * 0.21 * q + s * 0.105, yy + (q % 2 ? s * 0.12 : -s * 0.12),
-              cx - s * 0.42 + s * 0.21 * (q + 1), yy);
-          }
+/**
+ * One abstract mark, CARVED: a dark incision with a lit lower lip.
+ *
+ * Two strokes of the same path, the second offset downward and light. That
+ * pair is what the Sobel pass in this file turns into relief, and it is the
+ * reason these marks survive the flat interior lighting that flattens
+ * everything else - the shading is in the albedo, so it does not need a lamp
+ * standing in the right place.
+ *
+ * Split out of `drawGlyphColumn` so the register band, the ceiling's
+ * inscription and the per-block scatter all draw from ONE vocabulary. Three
+ * copies of a switch is three vocabularies that drift.
+ */
+function carveMark(ctx, kind, cx, y, s) {
+  ctx.strokeStyle = 'rgba(52,42,26,.62)';
+  ctx.lineWidth = Math.max(1.5, s * 0.16);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  traceMark(ctx, kind % MARKS, cx, y, s);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(0, Math.max(1, s * 0.09));
+  ctx.strokeStyle = 'rgba(255,248,226,.20)';
+  ctx.lineWidth = Math.max(1, s * 0.1);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * One abstract mark, PAINTED: a flat stroke in a given colour, no relief.
+ *
+ * The ceiling wants this and the wall does not. A tomb ceiling is plastered and
+ * PAINTED - the inscription up there is pigment on a flat soffit, not chisel
+ * work in a dressed face - and running the carved pair on it would put a lit
+ * lower lip on every mark and a bump in the normal map, which at nine metres
+ * reads as a rough ceiling rather than a painted one.
+ */
+function paintMark(ctx, kind, cx, y, s, style, width = 0.15) {
+  ctx.strokeStyle = style;
+  ctx.lineWidth = Math.max(1.2, s * width);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  traceMark(ctx, kind % MARKS, cx, y, s);
+  ctx.stroke();
+}
+
+/** The shapes themselves. Path only: the caller owns colour and relief. */
+function traceMark(ctx, kind, cx, y, s) {
+  switch (kind) {
+    case 0: // ankh
+      ctx.moveTo(cx, y - s * 0.1); ctx.lineTo(cx, y + s * 0.5);
+      ctx.moveTo(cx - s * 0.32, y + s * 0.06); ctx.lineTo(cx + s * 0.32, y + s * 0.06);
+      ctx.moveTo(cx, y - s * 0.1);
+      ctx.arc(cx, y - s * 0.26, s * 0.18, Math.PI * 0.5, Math.PI * 2.5);
+      break;
+    case 1: // eye
+      ctx.moveTo(cx - s * 0.4, y);
+      ctx.quadraticCurveTo(cx, y - s * 0.38, cx + s * 0.4, y);
+      ctx.quadraticCurveTo(cx, y + s * 0.28, cx - s * 0.4, y);
+      ctx.moveTo(cx + s * 0.12, y + s * 0.1); ctx.lineTo(cx + s * 0.2, y + s * 0.42);
+      break;
+    case 2: // waves
+      for (let k = -1; k <= 1; k++) {
+        const yy = y + k * s * 0.26;
+        ctx.moveTo(cx - s * 0.42, yy);
+        for (let q = 0; q <= 4; q++) {
+          ctx.quadraticCurveTo(
+            cx - s * 0.42 + s * 0.21 * q + s * 0.105, yy + (q % 2 ? s * 0.12 : -s * 0.12),
+            cx - s * 0.42 + s * 0.21 * (q + 1), yy);
         }
-        break;
-      case 3: // bird
-        ctx.moveTo(cx - s * 0.4, y + s * 0.28);
-        ctx.lineTo(cx - s * 0.05, y - s * 0.3);
-        ctx.lineTo(cx + s * 0.4, y + s * 0.02);
-        ctx.moveTo(cx - s * 0.05, y - s * 0.3); ctx.lineTo(cx + s * 0.1, y + s * 0.34);
-        break;
-      case 4: // reed / staff
-        ctx.moveTo(cx, y - s * 0.44); ctx.lineTo(cx, y + s * 0.44);
-        ctx.moveTo(cx - s * 0.22, y - s * 0.2); ctx.lineTo(cx, y - s * 0.44);
-        ctx.moveTo(cx + s * 0.22, y - s * 0.2); ctx.lineTo(cx, y - s * 0.44);
-        break;
-      default: // seated figure
-        ctx.arc(cx, y - s * 0.26, s * 0.14, 0, Math.PI * 2);
-        ctx.moveTo(cx, y - s * 0.12); ctx.lineTo(cx, y + s * 0.16);
-        ctx.moveTo(cx, y + s * 0.16); ctx.lineTo(cx + s * 0.34, y + s * 0.16);
-        ctx.moveTo(cx, y + s * 0.16); ctx.lineTo(cx - s * 0.1, y + s * 0.44);
-        break;
-    }
-    ctx.stroke();
-
-    // The lit lower lip of the incision.
-    ctx.save();
-    ctx.translate(0, Math.max(1, s * 0.09));
-    ctx.strokeStyle = 'rgba(255,248,226,.20)';
-    ctx.lineWidth = Math.max(1, s * 0.1);
-    ctx.stroke();
-    ctx.restore();
+      }
+      break;
+    case 3: // bird
+      ctx.moveTo(cx - s * 0.4, y + s * 0.28);
+      ctx.lineTo(cx - s * 0.05, y - s * 0.3);
+      ctx.lineTo(cx + s * 0.4, y + s * 0.02);
+      ctx.moveTo(cx - s * 0.05, y - s * 0.3); ctx.lineTo(cx + s * 0.1, y + s * 0.34);
+      break;
+    case 4: // reed / staff
+      ctx.moveTo(cx, y - s * 0.44); ctx.lineTo(cx, y + s * 0.44);
+      ctx.moveTo(cx - s * 0.22, y - s * 0.2); ctx.lineTo(cx, y - s * 0.44);
+      ctx.moveTo(cx + s * 0.22, y - s * 0.2); ctx.lineTo(cx, y - s * 0.44);
+      break;
+    case 5: // bowl / basket: a wide shallow arc on a foot
+      ctx.moveTo(cx - s * 0.38, y - s * 0.08);
+      ctx.quadraticCurveTo(cx, y + s * 0.40, cx + s * 0.38, y - s * 0.08);
+      ctx.moveTo(cx - s * 0.38, y - s * 0.08); ctx.lineTo(cx + s * 0.38, y - s * 0.08);
+      break;
+    case 6: // jar: a shouldered vessel with a collar
+      ctx.moveTo(cx - s * 0.14, y - s * 0.38); ctx.lineTo(cx + s * 0.14, y - s * 0.38);
+      ctx.moveTo(cx - s * 0.14, y - s * 0.38);
+      ctx.quadraticCurveTo(cx - s * 0.36, y - s * 0.02, cx - s * 0.18, y + s * 0.40);
+      ctx.lineTo(cx + s * 0.18, y + s * 0.40);
+      ctx.quadraticCurveTo(cx + s * 0.36, y - s * 0.02, cx + s * 0.14, y - s * 0.38);
+      break;
+    case 7: // feather: a stem with a curled head
+      ctx.moveTo(cx, y + s * 0.44); ctx.lineTo(cx, y - s * 0.22);
+      ctx.quadraticCurveTo(cx, y - s * 0.48, cx + s * 0.26, y - s * 0.40);
+      ctx.moveTo(cx - s * 0.16, y + s * 0.12); ctx.lineTo(cx, y + s * 0.02);
+      break;
+    case 8: // zigzag: three folds, the flattest mark in the set
+      ctx.moveTo(cx - s * 0.42, y - s * 0.14);
+      for (let q = 0; q < 4; q++) {
+        ctx.lineTo(cx - s * 0.42 + s * 0.21 * (q + 1), y + (q % 2 ? -s * 0.14 : s * 0.14));
+      }
+      break;
+    case 9: // disc on a bar: the only mark in the set with a closed round
+      ctx.arc(cx, y - s * 0.14, s * 0.20, 0, Math.PI * 2);
+      ctx.moveTo(cx - s * 0.40, y + s * 0.24); ctx.lineTo(cx + s * 0.40, y + s * 0.24);
+      break;
+    default: // seated figure
+      ctx.arc(cx, y - s * 0.26, s * 0.14, 0, Math.PI * 2);
+      ctx.moveTo(cx, y - s * 0.12); ctx.lineTo(cx, y + s * 0.16);
+      ctx.moveTo(cx, y + s * 0.16); ctx.lineTo(cx + s * 0.34, y + s * 0.16);
+      ctx.moveTo(cx, y + s * 0.16); ctx.lineTo(cx - s * 0.1, y + s * 0.44);
+      break;
   }
 }
 
@@ -983,6 +1417,320 @@ function paintGold(size = 256) {
   return c;
 }
 
+/**
+ * THE CEILING, WHICH STOPPED BEING A LID.
+ *
+ * WHY THIS SURFACE NOW EXISTS AT ALL. Until the gold scarab learned to crawl -
+ * enemies/wallcrawl.js, and the `wallCrawl` flag in enemies/variants.js - every
+ * body in this game arrived along the floor, so the player's search was a
+ * horizontal sweep at eye level and the ceiling was scenery they never looked
+ * at. It is now a surface a moving target is tracked across, which changes what
+ * the ceiling is FOR: it is a background, and the first duty of a background is
+ * that the thing in front of it can be seen.
+ *
+ * SO THIS IS A LEGIBILITY JOB BEFORE IT IS A DECORATION JOB, and the two point
+ * the same way here, which is lucky and worth stating because it usually does
+ * not happen.
+ *
+ * What was up there was `M.limestone`: a bricks083 scan tinted 0xd8c39a. A gold
+ * scarab's shell is 0xe8bf55 at metalness 0.90. Those are the SAME HUE at
+ * roughly the SAME VALUE - pale warm against pale warm - so a beetle crossing
+ * the old ceiling was a gold plate on a gold-ish background, and the only thing
+ * separating them was the specular. That is the worst possible background for
+ * this enemy and it was arrived at by nobody deciding anything.
+ *
+ * THE FIRST VERSION OF THIS SURFACE WAS A DARK BLUE NIGHT SKY WITH STARS, AND
+ * IT WAS A REGRESSION. It is worth writing down in full, because the reasoning
+ * that produced it is correct-sounding, is the historically famous answer, and
+ * is wrong here for one measurable reason.
+ *
+ * The argument was: the beetle is gold, gold is bright, therefore darken the
+ * background. Every word of that is true about the beetle's ALBEDO and none of
+ * it is true about its PIXELS. Measured off the frame, by test/wallart.mjs,
+ * over the exact pixels a gold scarab covers on a nine-metre ceiling:
+ *
+ *     the body's own luminance      p10   0      p50   4.3     p90  86.1
+ *
+ * A gold scarab in this interior is a DARK BODY WITH A BRIGHT RIM. Half of it
+ * is under 5. The gilt shell is metalness 0.90 at roughness 0.26, so it has
+ * almost no diffuse term: in a room lit by two point lamps over a low
+ * environment it returns light in a thin specular band along its back and is
+ * nearly black everywhere else. The 0xe8bf55 in enemies/variants.js is what it
+ * would be under a studio, not what it is in a tomb.
+ *
+ * So the night sky put a nearly black body on a nearly black ground. Measured
+ * on the same pose, same frame, same light phase:
+ *
+ *     ceiling            background p50    body pixels within 12 of it
+ *     limestone (old)           23.4                    13.8%
+ *     night sky (first cut)      0.0                    69.2%
+ *
+ * Sixty-nine per cent of the beetle merged into the ceiling. It was a better
+ * screenshot and a worse game, which is the exact failure this lane was warned
+ * about, and the only reason it was caught is that the harness measures the
+ * body against what is behind it rather than measuring the ceiling.
+ *
+ * SO THE CEILING IS PALE. A limewashed plaster soffit, which is also something
+ * these rooms actually had, and which puts a dark body on a light ground - the
+ * oldest legibility answer there is, and the one the evidence points at rather
+ * than the one the palette suggested.
+ *
+ * THE THREE RULES THE ORNAMENT IS HELD TO, all of which are about the beetle:
+ *
+ *   1. NOTHING UP HERE GOES DARK. The inscription is faded red ochre and the
+ *      stars are a muted blue-grey, both kept well ABOVE the body's median.
+ *      A bold dark-on-pale scheme would have been handsomer and would have put
+ *      beetle-coloured holes across the whole surface for the body to sit in.
+ *
+ *   2. EVERYTHING IS SMALL AGAINST THE TARGET. A gold scarab at the 1.18 scale
+ *      is about 1.2 m of body; at the seven metres a nine-metre ceiling is read
+ *      from that is roughly 115 screen pixels on a 1080-high frame. A star is
+ *      0.30 m across, so 29 pixels - a sixteenth of the beetle's area. Ornament
+ *      the size of the target is camouflage.
+ *
+ *   3. THE VALUE RANGE STAYS NARROW AND HIGH. Field, soot, inscription and
+ *      plaster loss are all held between roughly 150 and 245 in albedo, so the
+ *      darkest thing on this ceiling is still far above the body's median. The
+ *      ceiling is not competing with the beetle for brightness; it is the sheet
+ *      the beetle is a hole in.
+ *
+ * TEXEL DENSITY, because this file has been wrong about that twice and both
+ * times it was the actual defect rather than the taste. The ceiling is built by
+ * world/build.js at DENSITY.limestone, 0.17 tiles per unit, so one tile is
+ * 5.88 m and a 512 map is 87 texels per metre. Reading the Hall of Offerings'
+ * 9 m ceiling from an eye at 1.7 m is a 7.3 m sight line, where a 1080-high
+ * frame at the game's 75 degree vertical field of view puts 96 screen pixels on
+ * a metre. That is 0.9 texels per screen pixel - very near 1:1, which is the
+ * rule the door slab was rebuilt to obey. Nothing in here is authored below
+ * about six texels, so nothing in here relies on detail the mip chain will eat.
+ *
+ * IT IS PAINT, NOT CARVING, and that is why the marks go through `paintMark`
+ * rather than `carveMark`. A plastered soffit has no chisel work on it, and the
+ * lit-lower-lip trick that makes the wall register read as cut stone would put
+ * a bump under every glyph in the derived normal map. The `ceiling` entry in
+ * `buildTextures` therefore takes a low normal strength and a high roughness
+ * floor: matte plaster, not dressed limestone.
+ */
+function paintCeiling(size = 512) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+
+  /**
+   * The same LOCAL renormalisation `paintDoorstone` and `paintGold` use, for
+   * the same measured reason: `hash2` returns roughly 0.01..0.50 on the integer
+   * lattice, so `fbm` is neither centred on 0.5 nor the amplitude it claims and
+   * the `fbm() - 0.5` idiom elsewhere in this file is a near-constant darkening.
+   */
+  const field = (octaves, period, seed) => {
+    const a = new Float32Array(size * size);
+    let lo = Infinity, hi = -Infinity;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const t = fbm(x / size, y / size, octaves, period, seed);
+        a[y * size + x] = t;
+        if (t < lo) lo = t;
+        if (t > hi) hi = t;
+      }
+    }
+    const k = hi > lo ? 1 / (hi - lo) : 0;
+    for (let i = 0; i < a.length; i++) a[i] = (a[i] - lo) * k;
+    return a;
+  };
+
+  // Periods are cells per tile, and the tile is 5.88 m. Period 3 is a 2 m
+  // cloud, period 6 a metre, period 40 a 15 cm grain - which brackets the
+  // 30 cm star from both sides and leaves no hole in the spectrum.
+  const fMottle = field(3, 3, 613);
+  const fSoot = field(2, 6, 617);
+  const fLoss = field(2, 5, 619);
+  const fGrain = field(1, 40, 623);
+
+  // -------------------------------------------------------------------- field
+  const img = ctx.createImageData(size, size);
+  const d = img.data;
+
+  for (let i = 0, p = 0; i < size * size; i++, p += 4) {
+    // Uneven limewash. A hand-laid ground coat is never one value, and this is
+    // the term that keeps an 8-by-6-tile gallery ceiling from reading as one
+    // stamp repeated 48 times. Multiplicative and NARROW: a wide swing on a
+    // pale ground opens dark patches, and rule 3 above is what a dark patch on
+    // this surface costs.
+    const t = 0.94 + (fMottle[i] - 0.5) * 0.16;
+
+    // SOOT, and it is the one thing up here that is genuinely earned by the
+    // room below. Every light in the interior is a brazier; three thousand
+    // years of one puts carbon on the plaster above it. Upper tail only, so
+    // this is patches rather than a wash - a wash would just be a darker flat
+    // fill, which is the mistake the gold map's tarnish note warns about.
+    //
+    // CAPPED, which is the one place this surface is not free to be as honest
+    // as it wants. Real soot over a brazier goes to black, and black is a
+    // beetle-sized hiding place. 62 counts off a 240 ground bottoms this term
+    // out at about 175, which still reads as staining and never becomes a
+    // shadow the target can sit in.
+    const soot = Math.min(1, Math.max(0, fSoot[i] - 0.58) * 1.9);
+
+    let r = 240 * t, g = 232 * t, b = 210 * t;
+    r -= soot * 62; g -= soot * 60; b -= soot * 52;
+
+    d[p] = r < 0 ? 0 : r;
+    d[p + 1] = g < 0 ? 0 : g;
+    d[p + 2] = b < 0 ? 0 : b;
+    d[p + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // ---------------------------------------------------------------- the bands
+  //
+  // ONE PER TILE, so a band every 5.88 m, which is about a column bay.
+  //
+  // THE FIRST CUT HAD TWO AND IT WAS WRONG AT ROOM SCALE, which is a thing only
+  // the room can tell you. A band every 2.94 m is a defensible rhythm on the
+  // texture and a defensible one in the Hall of Offerings, which is 18 m deep.
+  // Rendered in the Great Gallery - 52 by 38 - it put THIRTEEN evenly spaced
+  // parallel lines across one view, and thirteen evenly spaced parallel lines
+  // is not a decorated ceiling, it is a grating: the same failure paintDoorstone
+  // records for a single-frequency chisel, two orders of magnitude larger.
+  //
+  // The lesson is the one this file keeps relearning. A surface is authored
+  // against the distance it is READ from, and for a ceiling that distance is
+  // the diagonal of the biggest room it is in, not the height of the average
+  // one.
+  const BANDS = 1;
+  const bandH = Math.round(size * 0.105);        // 54 texels, 62 cm
+  const rule = Math.max(2, Math.round(bandH * 0.10));
+
+  const bandRows = [];
+  for (let i = 0; i < BANDS; i++) {
+    const cy = (i + 0.5) * (size / BANDS);
+    bandRows.push(cy);
+
+    // Ground: faded red ochre, and the value is chosen against the body rather
+    // than against the plaster. Held around 155 in luminance - well above the
+    // beetle's median of 4 and above its p50-to-p90 mass - so a body crossing a
+    // band is still a dark shape on a lighter one.
+    ctx.fillStyle = 'rgb(208, 152, 112)';
+    ctx.fillRect(0, cy - bandH / 2, size, bandH);
+
+    // The double rule top and bottom. Two lines rather than one because a
+    // single line at this width mips to nothing by the far end of a long room,
+    // and a pair leaves a legible light-dark-light edge for twice as long. The
+    // dark one is THIN by design: a 5-texel line is 6 cm, which cannot hold a
+    // beetle, and the same value spread over the whole band could.
+    ctx.fillStyle = 'rgb(238, 224, 196)';
+    ctx.fillRect(0, cy - bandH / 2, size, rule);
+    ctx.fillRect(0, cy + bandH / 2 - rule, size, rule);
+    ctx.fillStyle = 'rgba(126, 78, 54, .85)';
+    ctx.fillRect(0, cy - bandH / 2 - rule * 0.6, size, rule * 0.6);
+    ctx.fillRect(0, cy + bandH / 2, size, rule * 0.6);
+
+    // The inscription. An integer number of cells across the tile so it wraps,
+    // and painted rather than carved: see the note above this function.
+    const cells = 13;
+    const cw = size / cells;
+    const s = Math.min(cw * 0.66, (bandH - rule * 3) * 0.80);
+    for (let k = 0; k < cells; k++) {
+      const kind = Math.floor(hash2(k * 5 + i, i * 11 + 3, 641) * MARKS) % MARKS;
+      paintMark(ctx, kind, (k + 0.5) * cw, cy, s, 'rgba(140, 86, 60, .90)', 0.17);
+    }
+  }
+
+  // ---------------------------------------------------------------- the stars
+  //
+  // FIVE ROWS AND FIVE COLUMNS per tile, a 1.18 m lattice, jittered hard. The
+  // one row that lands on the band is dropped, leaving four rows of five in the
+  // panel around it.
+  //
+  // Seven was the first number and it came down with the band count for the
+  // same reason: at 84 cm the field read as a printed pattern in the gallery
+  // rather than as painted stars, and the give-away was that the eye could find
+  // the lattice. 1.18 m with 45 per cent jitter cannot be resolved into rows
+  // and columns at the distance a ceiling is seen from, which is the whole job
+  // of the jitter.
+  const STARS = 5;
+  const step = size / STARS;
+  const R = Math.round(size * 0.0255);           // 13 texels, 30 cm across
+
+  /** A five-pointed star, wrapped so the tile is seamless. */
+  const star = (cx, cy, r, alpha) => {
+    for (const ox of [-size, 0, size]) {
+      for (const oy of [-size, 0, size]) {
+        const x = cx + ox, y = cy + oy;
+        if (x < -r * 2 || x > size + r * 2 || y < -r * 2 || y > size + r * 2) continue;
+        ctx.beginPath();
+        for (let k = 0; k < 10; k++) {
+          const a = -Math.PI / 2 + (k * Math.PI) / 5;
+          const rr = k % 2 ? r * 0.42 : r;
+          const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+          if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        // MUTED BLUE-GREY, AND NOT MUCH DARKER THAN THE PLASTER. The one
+        // colour decision on this surface that is load-bearing rather than
+        // aesthetic. See rule 1 above: a star is the smallest piece of
+        // ornament up here and is therefore the one most likely to be sitting
+        // exactly where the body is, so it is the one that must not be a hole.
+        ctx.fillStyle = `rgba(150, 164, 172, ${alpha})`;
+        ctx.fill();
+      }
+    }
+  };
+
+  for (let gy = 0; gy < STARS; gy++) {
+    for (let gx = 0; gx < STARS; gx++) {
+      const jx = (hash2(gx, gy, 653) * 2 - 0.5) * step * 0.45;
+      const jy = (hash2(gx, gy, 659) * 2 - 0.5) * step * 0.45;
+      const cx = (gx + 0.5) * step + jx;
+      const cy = (gy + 0.5) * step + jy;
+
+      // Inside a band is inscription, not sky.
+      let inBand = false;
+      for (const by of bandRows) if (Math.abs(cy - by) < bandH * 0.5 + R) inBand = true;
+      if (inBand) continue;
+
+      // Size and opacity both vary. A star field where every star is the same
+      // star is the identical-clone read, one scale down from the prop cloud
+      // dressing.js warns about.
+      const r = R * (0.82 + Math.min(1, hash2(gx, gy, 661) * 2) * 0.36);
+      const a = 0.62 + Math.min(1, hash2(gx, gy, 673) * 2) * 0.32;
+      star(cx, cy, r, a);
+    }
+  }
+
+  // -------------------------------------------------- age, over the paint
+  //
+  // PLASTER LOSS RUNS LAST, and the order is the point: it has to eat the
+  // ornament, not sit under it. Paint falls off a ceiling in patches and takes
+  // whatever was painted on it, so a star with a bite out of it is the single
+  // strongest cue that this is a painted surface three thousand years old
+  // rather than a texture.
+  //
+  // The exposed stone is DULLER AND GREYER THAN THE LIMEWASH, but only just.
+  // Bare limestone under a lost patch of plaster is not a dark hole, and this
+  // surface cannot afford one anyway: around 185 in albedo, so a patch reads as
+  // a change of material rather than as a shadow.
+  const back = ctx.getImageData(0, 0, size, size);
+  const q = back.data;
+  for (let i = 0, p = 0; i < size * size; i++, p += 4) {
+    const loss = Math.min(1, Math.max(0, (fLoss[i] - 0.70) / 0.16));
+    if (loss > 0) {
+      const k = smoothstep(loss) * 0.88;
+      const t = 0.94 + (fMottle[i] - 0.5) * 0.16;
+      q[p] = q[p] * (1 - k) + 196 * t * k;
+      q[p + 1] = q[p + 1] * (1 - k) + 186 * t * k;
+      q[p + 2] = q[p + 2] * (1 - k) + 162 * t * k;
+    }
+    // A 15 cm tooth over everything, so the surface has something between the
+    // 30 cm star and the film grain. A hole in the frequency spectrum that wide
+    // is what made the door slab read as suede.
+    const grain = (fGrain[i] - 0.5) * 9;
+    q[p] += grain; q[p + 1] += grain; q[p + 2] += grain;
+  }
+  ctx.putImageData(back, 0, 0);
+
+  return c;
+}
+
 // ---------------------------------------------------------------------------
 // public API
 // ---------------------------------------------------------------------------
@@ -998,8 +1746,28 @@ export function buildTextures() {
 
   const sand = paintSand(512);
   const block = paintMasonry(512, { rows: 6, seed: 3 });
-  const carved = paintMasonry(512, { rows: 5, seed: 11, hieroglyphs: true });
+
+  /**
+   * THE WALL FRIEZE, AS THE FALLBACK HALF OF A TWO-PATH MATERIAL.
+   *
+   * The SAME painter and the SAME arguments as `block` above, plus the
+   * inscription, so on the asset-404 path the interior walls are the masonry
+   * they have always been with carving added rather than a different stone. On
+   * the normal path `upgradeMaterials` replaces both of these maps with the
+   * bricks083 scan inscribed by `inscribeScan`, which is the same relationship
+   * `limestone` already has to its own scan - and the reason this set exists at
+   * all is that the previous attempt at wall carving did NOT have it, so it only
+   * ever rendered when the download failed.
+   */
+  const frieze = paintMasonry(512, { rows: 6, seed: 3, hieroglyphs: true });
+  drawInscription(frieze.getContext('2d', { willReadFrequently: true }), 512, 512);
+  // `register: true` is the wall art. The scattered per-block marks the
+  // `hieroglyphs` flag already drew are what a weathered wall looks like from
+  // arm's length; the register is what makes it read as DECORATED from across a
+  // room, because it is the only thing on the surface with a line in it.
+  const carved = paintMasonry(512, { rows: 5, seed: 11, hieroglyphs: true, register: true });
   const granite = paintGranite(512);
+  const ceiling = paintCeiling(512);
   const doorstone = paintDoorstone(512);
   const gold = paintGold(256);
 
@@ -1009,6 +1777,12 @@ export function buildTextures() {
   cache = {
     sand: materialMaps(sand, { normalStrength: 1.6, rough: [0.78, 0.98] }),
     block: materialMaps(block, { normalStrength: 3.0, rough: [0.62, 0.94] }),
+
+    // Identical treatment to `block`, because it is `block` with an inscription
+    // cut into it. Any divergence here would show as a seam between a wall and
+    // the lintel above it, which are the same stone in the same room.
+    frieze: materialMaps(frieze, { normalStrength: 3.0, rough: [0.62, 0.94] }),
+
     carved: materialMaps(carved, { normalStrength: 3.6, rough: [0.58, 0.92] }),
     // ROUGHNESS FLOOR RAISED FROM 0.22, AND THAT NUMBER WAS A BUG WITH A LIGHT
     // ATTACHED TO IT. At 0.22 the slab is a near-mirror, and the sun's specular
@@ -1078,9 +1852,40 @@ export function buildTextures() {
     // facet at 4.6% albedo contrast, and relief that never reaches the lighting
     // is the unread-chamfer failure again - paid for, and never drawn.
     goldRelief: materialMaps(gold, { normalStrength: 1.6, rough: [0.36, 0.62] }),
+
+    /**
+     * THE PAINTED CEILING, and the two numbers here are both legibility
+     * numbers rather than taste ones.
+     *
+     * normalStrength 0.55, the lowest in the registry by a factor of three.
+     * Every other set in here is cut stone, where the Sobel pass inferring
+     * shape from colour is close enough to right. This one is PIGMENT ON FLAT
+     * PLASTER: there is no geometry under a painted star, and at the 1.4 the
+     * masonry wears, every mark and every rule line comes back as a ridge. The
+     * failure mode is specific and it is the one that would cost the beetle -
+     * a ceiling full of relief catches the brazier light in a hundred places
+     * and puts a hundred moving highlights behind a moving target.
+     *
+     * ROUGHNESS 0.86-0.99, the flattest in the registry. Same argument through
+     * the other channel. A gold scarab is metalness 0.90 at roughness 0.26, so
+     * what makes it visible up there is its specular: it is the only thing on
+     * the ceiling with a highlight. A ceiling that also has highlights is a
+     * ceiling the beetle has to compete with. Matte plaster gives the target
+     * the entire specular channel to itself.
+     */
+    ceiling: materialMaps(ceiling, { normalStrength: 0.55, rough: [0.86, 0.99] }),
   };
 
   return cache;
 }
 
-export const _internals = { fbm, valueNoise, normalFromCanvas, paintMasonry };
+/**
+ * The inscription compositor, exported because `materials.js` is where the
+ * scanned map sets arrive and this file is where the marks are drawn.
+ */
+export { inscribeScan };
+
+export const _internals = {
+  fbm, valueNoise, normalFromCanvas, roughnessFromCanvas, materialMaps,
+  paintMasonry, drawInscription, inscribeScan, makeCanvas,
+};

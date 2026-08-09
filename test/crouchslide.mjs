@@ -53,7 +53,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome, GL_ARGS } from './chrome.mjs';
+import { resolveChrome, GL_ARGS, dismissBriefing } from './chrome.mjs';
 
 // 4177 is the port `npm start` serves and the port every other suite defaults
 // to. This one defaulted to 5317, which nothing in the repo ever serves, so
@@ -100,6 +100,8 @@ await page.addInitScript(() => {
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 await page.waitForTimeout(1400);
 
 let pass = 0;

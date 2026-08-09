@@ -44,6 +44,12 @@ import {
   createBoonStrip, createReadouts, createPowerStrip, createFlash, createGrenadeReadout,
 } from './ui/hud.js';
 import { createMinimap } from './ui/minimap.js';
+import { createCompass } from './ui/compass.js';
+import { createVoice } from './story/voice.js';
+import { createTableau } from './story/tableau.js';
+import { createMeeting } from './story/meeting.js';
+import { createPresence } from './story/presence.js';
+import { WORLD_1_FRAGMENTS, createFragmentSequence } from './story/fragments.js';
 import { createObjectives, createObjectivePanel } from './ui/objective.js';
 import { createGrenades } from './systems/grenades.js';
 import { createDeath } from './ui/death.js';
@@ -52,6 +58,7 @@ import { createPowerups } from './systems/powerups.js';
 import { createPauseMenu } from './ui/pause.js';
 import { createDifficulty } from './systems/difficulty.js';
 import { createStartScreen } from './ui/start.js';
+import { createBriefing } from './ui/briefing.js';
 import { createPacer } from './ui/pacer.js';
 
 // A single frame can never advance the simulation by more than this. A tab
@@ -468,7 +475,11 @@ function boot() {
   });
 
   const objectivePanel = createObjectivePanel(
-    document.getElementById('objective'), objectives);
+    document.getElementById('objective'), objectives,
+    // The director, for the standing goal above the step: she cannot open the
+    // door until the dead are down, and the wave counter is how far that is.
+    // See the siege note in ui/objective.js.
+    { director });
 
   const minimap = createMinimap({
     canvas: document.getElementById('map-canvas'),
@@ -477,6 +488,46 @@ function boot() {
     mysterybox, power, economy, director, rig, player,
     // For the breathing target ring. See `ring()` in ui/minimap.js.
     jars,
+  });
+
+  /**
+   * The heading strip across the top of the screen.
+   *
+   * Handed what a bearing needs and nothing else: where the player is, which
+   * way they are facing, which space they are in, and the fixture records. It
+   * is deliberately NOT given the director - a compass that shows the horde
+   * would undo the work the audio lane did to make an unseen scarab locatable
+   * by its footsteps, and it would make the wall-crawlers pointless the moment
+   * they left the floor.
+   */
+
+  /**
+   * BEACONS: bearings that are not fixtures.
+   *
+   * Shipped EMPTY, and that is the design. This is the seam the owner asked for
+   * - "we can use that as a way to hide Easter eggs" - and what makes it worth
+   * having is that the compass never learns what an egg IS. Whoever hides one
+   * pushes `{ id, x, z, role, shape, range }` here while it should be findable
+   * and drops it when it should not, so the CONDITION belongs to the secret
+   * rather than to the readout: a flag, a wave, a weapon in hand, eight seconds
+   * after a shrine lights, whatever the secret wants.
+   *
+   * `core/save.js` already round-trips flags across a reload - `worldTwoEgg` is
+   * proved end to end by test/persist.mjs - so an egg that stays found once
+   * found is one setFlag away.
+   */
+  const eggBeacons = [];
+
+  const compass = createCompass({
+    canvas: document.getElementById('compass'),
+    rig, player, spaces,
+    // The SAME records ui/minimap.js draws from, so the two surfaces cannot
+    // disagree about where a fixture is.
+    interacts,
+    // The Easter egg seam. Anything with a world position can ask for a bearing
+    // and decide for itself whether it deserves one right now; see the note in
+    // ui/compass.js. Nothing registers one yet.
+    beacons: () => eggBeacons,
   });
 
   // The map asks the armoury one question - do you own this - and is given a
@@ -868,6 +919,62 @@ function boot() {
     onSettings: () => pause.open('title'),
   });
 
+  /**
+   * The classified file the player reads before the game starts, and the four
+   * days of silence between it and the courtyard. See the header of
+   * ui/briefing.js for why it is a government document rather than a prologue.
+   */
+  const briefing = createBriefing({ doc: document, audio, save });
+
+  /**
+   * THE FOUR MEMORY FRAGMENTS - the middle of World 1's story.
+   *
+   * A second scene rendered straight to the canvas, not silhouettes placed in
+   * the live world; see the header of src/story/tableau.js for why the other
+   * reading does not work. The driver knows nothing about jars, rooms or sons
+   * of Horus - a fragment is a camera and a list of stills, so Worlds 2 and 3
+   * are a data entry each.
+   */
+  const tableau = createTableau({ renderer, doc: document });
+  const fragments = createFragmentSequence(WORLD_1_FRAGMENTS);
+
+  /**
+   * THE MEETING - beats 4.5 to 4.8, and the last structural hole in World 1.
+   *
+   * Constructed beside the briefing and the tableau because it is the third
+   * thing in this build that owns a stretch of the player's attention, and it
+   * is placed AFTER them because it is the only one of the three that drives
+   * geometry the world already contains rather than a card or a second scene.
+   *
+   * `canPlay` is `ending.canMeet` - the ending's own first three conditions,
+   * asked of the ending rather than re-derived here from `director`, `doors`
+   * and `spaces`. It is a getter on an object built four hundred lines further
+   * down, so it is reached through a closure rather than read now: this line
+   * runs at boot and `ending` does not exist yet.
+   *
+   * `prompt` is a fourth channel on the same bus the doors and the fixtures
+   * write through, at a priority above both. Beat 4.5 is that he is prompted
+   * "the way he has been prompted at every door and gun and shrine in this
+   * game, except that this one has no price on it", and that sentence is only
+   * true if it is literally the same line of text on the same element.
+   */
+  const meeting = createMeeting({
+    scene,
+    player,
+    input,
+    doc: document,
+    prompt: promptBus.channel('meeting', 3),
+    canPlay: () => ending.canMeet,
+  });
+
+  /**
+   * Whether the HUD is currently faded out for her.
+   *
+   * The edge, not the state - `meeting.holding` is the state and this is the
+   * last value of it the DOM was told about. See the frame loop.
+   */
+  let quiet = false;
+
   // Keep the corner fidelity buttons and the panel in step. setFidelity is the
   // one writer; this is the panel finding out about a write it did not make.
   btnHigh.addEventListener('click', () => pause.refresh());
@@ -1029,6 +1136,11 @@ function boot() {
   const ending = createEnding({
     doc: document,
     director, doors, spaces,
+    // THE FOURTH CONDITION. See the header of ui/ending.js: the room the whole
+    // siege exists to reach used to be on screen for two frames, because the
+    // gate went true the instant the player crossed the threshold. It now also
+    // asks whether the beat that room was built for has happened.
+    met: () => meeting.done,
     input, audio, rig, save,
     suspended: () => pause.paused,
   });
@@ -1049,6 +1161,10 @@ function boot() {
     economy.reset(tier.startGold);
     startScreen.lockIn();
     director.reset();
+    // Both her beats are ONCE PER RUN, so the thing that starts a run is the
+    // thing that gives them back. Without this a second run in the same tab is
+    // played by someone she never appears to.
+    presence.reset();
 
     /**
      * The two Act 3 loop doorways are the one thing in the map whose GEOMETRY
@@ -1069,17 +1185,52 @@ function boot() {
     spaces.interior.applyTier(tier.id);
 
     veil.hidden = true;
+
+    // Browsers refuse to create an AudioContext outside a user gesture, so
+    // this is the only moment audio can legally come up. It stays HERE, in the
+    // click that left the title screen, rather than moving down into
+    // enterWorld() with the rest of the audio - see the note there.
+    audio.resume();
+
+    /*
+     * THE BRIEFING SITS BETWEEN THE TITLE SCREEN AND THE WORLD, and everything
+     * that hands the player control moved behind it.
+     *
+     * The HUD stays hidden and input stays un-engaged until the card is
+     * dismissed, because a player reading a classified file with a live
+     * ammunition plate in the corner is reading it in a game that has already
+     * started. The card is the four days he does not remember.
+     *
+     * `input.engage()` requests pointer lock, which browsers only grant inside a
+     * user gesture. That is why enterWorld is called SYNCHRONOUSLY from the
+     * briefing's own keydown and click handlers rather than from a timer: the
+     * press that dismisses the card is the gesture that buys the lock.
+     */
+    briefing.show(enterWorld);
+  }
+
+  /**
+   * Hand over the world. Called once, from the briefing's dismissal.
+   */
+  function enterWorld() {
     hud.hidden = false;
     input.engage();
 
-    // Browsers refuse to create an AudioContext outside a user gesture, so
-    // this is the only moment audio can legally come up.
-    audio.resume();
+    /*
+     * The desert arrives WITH the courtyard, not under the briefing.
+     *
+     * These two lines used to sit beside audio.resume() above. They are down
+     * here now so the card plays against silence with nothing but its own codec
+     * ticks on it: a document in a void, and then the cut to open air does some
+     * of the work the missing cutscene would have done. Moving them costs
+     * nothing - resume() is the only call with a user-gesture requirement.
+     *
+     * 'courtyard', not 'exterior'. startAmbience falls back to 'chamber' on an
+     * unknown profile RATHER than throwing, so this failed silently and the
+     * open desert played sealed-room ambience for as long as it was wired that
+     * way. A forgiving default turns a typo into a bug with no symptom in any log.
+     */
     audio.setSpace('exterior');
-    // 'courtyard', not 'exterior'. startAmbience falls back to 'chamber' on an
-    // unknown profile RATHER than throwing, so this failed silently and the
-    // open desert has been playing sealed-room ambience since it was wired.
-    // A forgiving default turns a typo into a bug with no symptom in any log.
     audio.startAmbience('courtyard');
 
     // If pointer lock was denied, say so rather than leaving the player
@@ -1159,7 +1310,16 @@ function boot() {
     // it. The player would have been refused at one thing and charged for
     // another, in the same keypress.
     interact: () => {
-      if (interacts.candidate) interacts.interact();
+      // HER FIRST, and she is only ever offered in a room with no fixtures and
+      // one door already open behind the player - so this branch is unreachable
+      // anywhere the other two have anything to say. It is first anyway, on the
+      // same argument the fixture/door order is made on: the arbitration that
+      // decides the PROMPT and the arbitration that decides the KEY must be the
+      // same arbitration, or the player is refused at one thing and charged for
+      // another in a single press. `meeting.offered` is exactly the state that
+      // put the line on the screen.
+      if (meeting.offered) meeting.begin('key');
+      else if (interacts.candidate) interacts.interact();
       else doors.interact();
     },
 
@@ -1324,6 +1484,43 @@ function boot() {
    */
   const pacer = createPacer({ el: notice, doc: document, audio });
 
+  /**
+   * HER VOICE. Four room-gated lines; the fifth is fired by the jar chain,
+   * because it is a collision rather than a room entry. See src/story/voice.js.
+   *
+   * CONSTRUCTED HERE, DIRECTLY BELOW THE PACER, and that is load bearing rather
+   * than tidy. The first cut built it up beside the minimap at line 529, which
+   * reads `pacer` roughly nine hundred lines before `const pacer` runs - a
+   * temporal dead zone, so boot threw and `window.__SANDS__` never appeared at
+   * all. Every suite in the project then failed at "wait for __SANDS__" with no
+   * hint that a story module was the cause.
+   */
+  const voice = createVoice({ pacer, spaces, director, save });
+
+  /**
+   * HER, AT A DISTANCE, TWICE - AND NEITHER TIME IS ANNOUNCED.
+   *
+   * Beats 1.5 and 3.7: a dark figure with a lamp on the breached east bay of the
+   * avenue wall, and her lamp burning on the Great Gallery floor with the horde
+   * walking past it. No notice, no pill, no objective line, no sound. A player
+   * who never looks up never gets either, which is the point of both.
+   *
+   * CONSTRUCTED HERE FOR THE SAME REASON `voice` IS - read the note above this
+   * line. It takes `spaces`, `camera`, `player` and `director`, and all four
+   * have to exist; a story module built at the top of this file is what put the
+   * whole game in a temporal dead zone once already.
+   *
+   * It reads `active`, `roomId`, `world.colliders`, `camera`, `player.position`,
+   * `director.wave` and `director.liveCount`, and writes to none of them. It
+   * registers ZERO colliders and adds no permanent light: the lamp's PointLight
+   * goes in with the lamp and comes out with it.
+   *
+   * The one rule the module rests on: nothing is added to or removed from the
+   * scene on a frame the player could see it happen. That is why `update()` runs
+   * where it does, after the composer - see the frame loop.
+   */
+  const presence = createPresence({ spaces, camera, player, director });
+
   /*
    * THE JAR CHAIN TAKES THE PACER, LATE.
    *
@@ -1336,6 +1533,11 @@ function boot() {
    * ui/pacer.js documents this call site by name and exports the line for it.
    */
   jars.attach({ pacer });
+
+  // Taking a jar gives him a quarter of his memory back, four times, in the
+  // order the map hands them over. jars.js has fired this event since it was
+  // written and the seam was deliberately left empty for exactly this.
+  jars.onTake(() => tableau.show(fragments.next()));
   function showNotice(text, ms = 2000, opts) {
     return pacer.notice(text, ms, opts);
   }
@@ -1453,6 +1655,44 @@ function boot() {
       return;
     }
 
+    /*
+     * THE BRIEFING HOLDS THE WORLD, for the reason stated at length on the
+     * `holding` getter in ui/briefing.js.
+     *
+     * Same shape as the pause above and placed immediately after it on purpose:
+     * the card is an opaque black sheet, so every clock this loop hands out was
+     * advancing a scene nobody could see, and the reveal's own animation frame
+     * was queued behind all of it. The player's report was that the typing
+     * "gets stuck and stutters", which is what a reveal on an absolute clock
+     * looks like when its frames arrive late and irregularly.
+     *
+     * Rendered at delta zero rather than skipped, matching the pause, so the
+     * canvas holds a valid frame for the instant the card comes off.
+     */
+    if (briefing.holding) {
+      post.composer.render(0);
+      return;
+    }
+
+    /*
+     * A MEMORY HOLDS THE WORLD, and unlike the briefing it also DRAWS it.
+     *
+     * src/story/tableau.js renders a second scene straight to the canvas on its
+     * own animation frame, so this branch must NOT call the composer - a
+     * composer frame here would paint the courtyard over the memory.
+     *
+     * ABOVE governor.sample() on purpose, and that was measured rather than
+     * assumed: a fragment skips the post chain, so frames get an order of
+     * magnitude cheaper, and a governor fed that burst upshifts the pixel scale
+     * and hands the world back at a different resolution.
+     *
+     * consumeLook() because pointer lock is still held. core/input.js
+     * accumulates dx/dy on every mousemove and only consumeLook() drains it, so
+     * four seconds of unconsumed mouse would snap the camera on the frame the
+     * world comes back.
+     */
+    if (tableau.holding) { input.consumeLook(); return; }
+
     const dt = Math.min(raw, MAX_DELTA);
     elapsed += dt;
 
@@ -1491,11 +1731,77 @@ function boot() {
     // the world was still running could never fire on the frame it has to.
     ending.update(dt);
 
+    /*
+     * THE MEETING, AND IT IS ON THE OTHER SIDE OF THE LINE FROM THE TABLEAU.
+     *
+     * A memory REPLACES the world: story/tableau.js draws a second scene
+     * straight to the canvas on its own animation frame, so its branch sits
+     * ABOVE governor.sample(), returns early, and must never call the composer
+     * or the courtyard paints over the memory.
+     *
+     * This scene is the opposite. Beats 4.5 to 4.8 happen to geometry the
+     * Serdab already contains, and the entire finding they exist to close is
+     * that the player never got to SEE that geometry - so a branch that skipped
+     * the render would rebuild the two-frame wash in a different file. It
+     * belongs here, below the governor, inside the normal render path, and the
+     * shape it takes is the DEATH GATE's rather than the memory's: the frame
+     * still draws, the composer still runs, and what stops is the simulation.
+     *
+     * The governor is therefore fed honest frames throughout, which is the
+     * other half of why this cannot go up there: the tableau's note records
+     * that a burst of composer-free frames upshifts the pixel scale and hands
+     * the world back at a different resolution, and handing the world back at a
+     * different resolution is precisely what must not happen in the middle of
+     * the last shot in World 1.
+     */
+    meeting.update(dt);
+
     // Either card owns the run. `death` restarts it and `ending` does not, and
     // this line does not care which: what it means is that the simulation block
     // below is skipped and doors keep their delta so a curtain in flight can
     // still come down.
-    const halted = death.halted || ending.halted;
+    //
+    // `meeting.holding` joins them for the length of the scene. It carries its
+    // own hard wall-clock deadline (see the getter) so this can never be a
+    // permanent stop, which is the rule story/tableau.js states about its own.
+    const halted = death.halted || ending.halted || meeting.holding;
+
+    // THE ONE LINE THE HALT WOULD HAVE LEFT ON THE SCREEN.
+    //
+    // promptBus.paint() lives inside the simulation block that `halted`
+    // switches off, which is correct for every other stop in this game: the
+    // death card and the ending card are both opaque and nobody can see the
+    // prompt underneath them. This scene is transparent - it IS the world - so
+    // a prompt that stops being repainted keeps offering REACH HER for the
+    // whole of her turn and the whole of the telegraph. The meeting clears its
+    // own channel in begin(); this is what lets that reach the element.
+    if (meeting.holding) promptBus.paint();
+
+    // AND THE REST OF THE FURNITURE GOES WITH IT.
+    //
+    // The prompt above is one element of about fifteen. Beat 4.8 is a silence,
+    // and it was playing behind the whole siege HUD with the gun up and pointed
+    // at her - see coherence finding 9 in docs/PLAYTHROUGH.md, which was found
+    // by opening the screenshot rather than by measuring anything.
+    //
+    // EDGE TRIGGERED, not written every frame. The fade is a CSS transition and
+    // re-adding a class it already has is free, but the viewmodel line is not:
+    // `group.visible` is read by the renderer and writing it sixty times a
+    // second to the value it already holds is the kind of thing that ends up in
+    // a profile. `quiet` is the only new piece of state and it lives here
+    // rather than in meeting.js, because what the HUD does is main.js's
+    // business - meeting.js owns her, not the furniture around her.
+    if (meeting.holding !== quiet) {
+      quiet = meeting.holding;
+      document.documentElement.classList.toggle('is-meeting', quiet);
+      // The gun is hidden rather than lowered. A lower is an ANIMATION and the
+      // viewmodel's animation layer is a state machine driven by the weapon it
+      // is holding; adding a pose to it for one four-second scene would put a
+      // story beat inside the thing that owns recoil and reloads. This is one
+      // boolean, in the file that already owns the scene, and it is reversible
+      // on the same line.
+      viewmodel.group.visible = !quiet;
+    }
 
     // GOING DOWN COSTS THE BOONS, and it has to, or none of this is a wager.
     //
@@ -1800,6 +2106,27 @@ function boot() {
     // repaints at the same rate relative to the simulation on any machine.
     objectivePanel.update(dt);
     minimap.update(dt);
+    // Every frame the map redraws, and for the same reason: it is a readout of
+    // where the player is looking, so a stale one points the wrong way.
+    compass.update();
+    // Cheap: it returns immediately unless a room edge armed something. It has
+    // to run every frame because the moment it is waiting for - the field going
+    // empty - is one the director can enter and leave between two room changes.
+    voice.update();
+    // AFTER THE COMPOSER, ON PURPOSE, AND THIS IS THE WHOLE CONTRACT.
+    //
+    // `post.composer.render(dt)` is ~70 lines up. By the time this runs, the
+    // frame the player is looking at has already been drawn, so `presence`
+    // tests what was ACTUALLY presented and only then decides whether to put
+    // her in or take her out - and whatever it changes cannot appear until the
+    // next frame, by which time it has already established the player was not
+    // looking. Run it before the render and the test is about a frame nobody
+    // saw, which is exactly how a figure pops in on screen.
+    //
+    // It also has to run after `rig.update()` for the frustum test to be against
+    // the camera that drew the frame rather than the one from last time. Both
+    // conditions are satisfied here and only here.
+    presence.update();
     // Cheap when nothing is running: it reads a list that is empty and touches
     // no DOM at all.
     powerStrip.update();
@@ -1818,6 +2145,29 @@ function boot() {
     save,
     power, wallbuys, shrines, altar, mysterybox, grenades, powerups, interacts, promptBus,
     readouts, powerStrip, grenadeReadout, objectives, objectivePanel, minimap,
+    // The heading strip. Exposed because a sign error in a compass is invisible
+    // in a still and obvious in motion, and test/compass.mjs turns the rig to
+    // each cardinal and reads back what landed under the index.
+    compass,
+    // The memory fragments, for test/tableau.mjs.
+    tableau, fragments,
+    // Beats 1.5 and 3.7 - her on the avenue wall, and her lamp on the gallery
+    // floor with the horde walking past it. test/presence.mjs reads the raise
+    // and retire decisions back and checks them against pixels.
+    presence,
+    // Beats 4.5 to 4.8 - the prompt, her stand, the telegraph, the silence.
+    // Exposed for test/meeting.mjs and for test/serdabscene.mjs, which measures
+    // the dwell this scene is the whole of.
+    meeting,
+    // Her five lines and the gate that holds them back. test/voice.mjs walks
+    // the player through the four rooms and reads back what was actually said.
+    voice,
+    // The Easter egg seam, so test/compass.mjs can push one and prove the hook
+    // is a hook rather than a comment. Nothing in the game writes it yet.
+    eggBeacons,
+    // The fixture records the compass and the minimap BOTH draw from, so a
+    // harness can compare what the game publishes against what reached a strip.
+    interacts,
     pause,
     // The notice pill's pacer. Exposed on its own line rather than added to one
     // above because main.js is shared this week; test/pacer.mjs reads the
@@ -1831,7 +2181,34 @@ function boot() {
     // and the gap between them is this project's defining bug.
     keymap,
     difficulty, startScreen,
-    setFidelity, setPixelScale, start,
+    setFidelity, setPixelScale,
+
+    /**
+     * THE HARNESS ENTRY, AND IT IS NOT WHAT THE BEGIN BUTTON DOES.
+     *
+     * `start()` now raises the briefing card and does not hand over the world
+     * until a player dismisses it. Nineteen existing suites call
+     * `__SANDS__.start()` and then immediately drive a running game, and every
+     * one of them would hang on a classified document they never asked to read.
+     *
+     * So this entry starts the run and then finishes the card in the same tick.
+     * That is a test seam, and a test seam is only honest if the path it bypasses
+     * is covered somewhere else, so: **`test/briefing.mjs` drives the real
+     * `#begin` button and asserts the card appears, reveals and dismisses.** If
+     * that file is ever deleted, this seam becomes a lie and the briefing can
+     * break with every suite green - which is the exact failure shape this
+     * project has hit three times this month.
+     *
+     * A suite that wants the real thing should click `#begin` rather than call
+     * this.
+     */
+    start(opts = {}) {
+      start();
+      if (opts.briefing !== true) briefing.finish();
+    },
+
+    /** The briefing card itself, so a harness can read its phase and counts. */
+    briefing,
     // The frame governor, and the composer it drives. Exposed so that
     // tools/perf.mjs can toggle individual passes and read the rung the machine
     // actually settled on - a claim about performance that cannot be measured

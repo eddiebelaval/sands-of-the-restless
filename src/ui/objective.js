@@ -37,6 +37,7 @@
 
 import { BOONS } from '../systems/shrines.js';
 import { installLanguage } from './hud.js';
+import { FINAL_WAVE } from '../enemies/director.js';
 
 /** How the tracker talks about a barrier, by what kind of barrier it is. */
 const CROSS_VERB = {
@@ -838,7 +839,51 @@ export function createObjectives({
  * ui/prompt.js keeps for the same reason. The gold gauge is exempt: it moves on
  * every kill and is a transform, which the compositor takes off the main thread.
  */
-export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
+/**
+ * THE SIEGE, and it is the reason the run exists.
+ *
+ * The owner, 2026-08-08: "what if she's trapped inside of that room and she
+ * can't come out until all the dead are gone. And the dead are gone after wave
+ * twenty-five. So I go through this big fight to get her out."
+ *
+ * `docs/PLAYTHROUGH.md` finding 1 named the hole this fills: the player was
+ * never told they were rescuing anybody. The stated goal for twenty-five waves
+ * was FETCH FOUR JARS, and the ending then landed on a person nobody had been
+ * told they were trying to reach. An absence cannot land when nothing promised
+ * a presence.
+ *
+ * WHAT MAKES THIS RIGHT RATHER THAN MERELY NICE: the game already enforces it.
+ * `ui/ending.js` has gated World 1 on three conditions since it shipped - the
+ * run concluded AND the field clear, four sons home, and the player inside the
+ * Serdab - and not one of them had a reason attached. The siege supplies all
+ * three at once. The dead are gone so she can come out; the machine is charged
+ * so the chapel is unsealed; and you are there to meet her.
+ *
+ * So this line is not a script. It is a READOUT of the same wave counter the
+ * director already publishes, which means it cannot promise something the game
+ * does not deliver - the rule every other rung on this ladder is built on.
+ */
+function siegeLine(director) {
+  if (!director || !director.state) return null;
+  const wave = director.state.wave || 0;
+  if (wave < 1) return null;
+
+  // Once the horde is finished the countdown is a lie, and the ladder's own
+  // `serdab` rung takes over with a place to walk to.
+  if (director.state.concluded) return { text: 'THE DEAD ARE DOWN', figure: 'GO TO HER' };
+
+  const left = Math.max(0, FINAL_WAVE - wave);
+  if (left <= 0) return { text: 'THE DEAD ARE DOWN', figure: 'GO TO HER' };
+  // Singular on the last one. It reads "1 WAVES" otherwise, and it reads it on
+  // the wave the whole run has been counting towards - the single most looked-at
+  // frame of the standing goal, and the one place a plural s is not forgivable.
+  return {
+    text: 'SHE CANNOT OPEN THE DOOR UNTIL THE DEAD ARE DOWN',
+    figure: `${left} ${left === 1 ? 'WAVE' : 'WAVES'}`,
+  };
+}
+
+export function createObjectivePanel(el, objectives, { hz = 20, director = null } = {}) {
   if (!el || !objectives) return { update() {}, get text() { return ''; } };
 
   // The Egyptian material pass, which this panel wears the same as every other
@@ -846,6 +891,7 @@ export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
   // there is exactly one sheet on the page whoever gets constructed first.
   installLanguage(el.ownerDocument);
 
+  const goal = el.querySelector('[data-obj-goal]');
   const headline = el.querySelector('[data-obj-text]');
   const detail = el.querySelector('[data-obj-detail]');
   const where = el.querySelector('[data-obj-where]');
@@ -856,6 +902,7 @@ export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
   let paintedWhere = null;
   let paintedShort = null;
   let paintedArcane = null;
+  let paintedGoal = null;
   let current = null;
 
   // Throttled off the CLAMPED frame delta, like the minimap. next() walks the
@@ -873,6 +920,26 @@ export function createObjectivePanel(el, objectives, { hz = 20 } = {}) {
 
     const step = objectives.next();
     current = step;
+
+    // The standing goal. Repainted only on change, like everything else here.
+    if (goal) {
+      const g = siegeLine(director);
+      const key = g ? `${g.text}|${g.figure}` : '';
+      if (key !== paintedGoal) {
+        paintedGoal = key;
+        goal.hidden = !g;
+        goal.textContent = '';
+        if (g) {
+          // Text nodes, not innerHTML: this is a HUD element and the figure is
+          // derived from live state, so there is no reason to hand a string to
+          // a parser sixty times a minute.
+          goal.appendChild(el.ownerDocument.createTextNode(`${g.text}  `));
+          const b = el.ownerDocument.createElement('b');
+          b.textContent = g.figure;
+          goal.appendChild(b);
+        }
+      }
+    }
 
     if (step.text !== paintedText) {
       paintedText = step.text;

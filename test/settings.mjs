@@ -46,7 +46,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome, GL_ARGS } from './chrome.mjs';
+import { resolveChrome, GL_ARGS, dismissBriefing } from './chrome.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 
@@ -316,6 +316,8 @@ console.log(`testing ${BASE}`);
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 await page.waitForTimeout(1400);
 
 // ---------------------------------------------------------------------------

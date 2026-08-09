@@ -33,7 +33,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome } from './chrome.mjs';
+import { resolveChrome, dismissBriefing } from './chrome.mjs';
 
 const BASE = process.argv[2] && !process.argv[2].startsWith('--')
   ? process.argv[2]
@@ -91,6 +91,8 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 await page.waitForTimeout(1400);
 
 await page.addScriptTag({

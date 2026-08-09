@@ -50,7 +50,7 @@ import sharp from 'sharp';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveChrome } from './chrome.mjs';
+import { resolveChrome, dismissBriefing } from './chrome.mjs';
 
 const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177';
 
@@ -85,6 +85,8 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(`[console] ${m
 await page.goto(`${BASE}/index.html`, { waitUntil: 'load', timeout: 120000 });
 await page.waitForFunction('!!window.__SANDS__', null, { timeout: 300000 });
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 
 // Settle in RENDERED FRAMES, never in wall-clock milliseconds. Under software
 // rendering the delta clamp makes simulated time run about six times slower

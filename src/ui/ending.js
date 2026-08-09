@@ -17,7 +17,7 @@
  * director should ever have heard of.
  *
  * ---------------------------------------------------------------------------
- * THE GATE: THREE CONDITIONS, AND WAVE 25 IS ONLY ONE OF THEM
+ * THE GATE: FOUR CONDITIONS, AND WAVE 25 IS ONLY ONE OF THEM
  * ---------------------------------------------------------------------------
  *
  *   1. The run has CONCLUDED. Set fell on wave twenty-five and the field is
@@ -26,11 +26,47 @@
  *      chapel in the first place - a player who reaches wave twenty-five having
  *      ignored the jars has not finished World 1 and is not shown its ending.
  *   3. THE PLAYER IS IN THE SERDAB. Not near it, not looking at it. Inside.
+ *   4. THE MEETING HAS PLAYED. See below.
  *
  * The third one is why this beat can exist at all, and it is architecture
  * rather than staging: the Serdab is the only room in twenty-five waves with no
  * spawn points, so it is the only room in the game where the player can be
  * alone. Every other space has a horde in it or a horde arriving.
+ *
+ * ---------------------------------------------------------------------------
+ * THE FOURTH CONDITION, AND WHY IT IS A CONDITION AND NOT A DELAY
+ * ---------------------------------------------------------------------------
+ *
+ * `test/serdabscene.mjs` measured what the three conditions above actually
+ * bought the player on 2026-08-09:
+ *
+ *     phase "none" -> "black" after 2 frame(s)
+ *     frame luminance 21.76 (spread 24.77)  ->  5.49 (spread 0.00)
+ *
+ * `ready()` went true the first frame `spaces.roomId === 'serdab'` and `begin()`
+ * put an opaque wash up with `transition: none`, so the room the entire
+ * twenty-five-wave siege exists to reach was on screen for TWO FRAMES, and
+ * `docs/PLAYTHROUGH.md` beats 4.2 through 4.8 - the ten figures, the empty
+ * eleventh niche, her, her lamp, the prompt, the stand, the telegraph, the
+ * silence - had nowhere in the sequence to occur.
+ *
+ * **Nothing in this file was wrong when it was written.** It was correct while
+ * the Serdab was an empty stone box: black on entry was black over nothing. The
+ * geometry landed underneath it and made a finished file wrong without touching
+ * a line of it.
+ *
+ * So the fix is not a timer bolted onto the card, which would have said "wait
+ * three seconds and hope something happened". It is a fourth CONDITION, in
+ * exactly the register of the other three: `story/meeting.js` owns her turn and
+ * the gold telegraph in her eyes and reports `done`, and until it does, this
+ * gate is waiting on a beat rather than on a clock. A build where the meeting
+ * cannot run reports `waitingOn: 'meeting'` forever, which is a diagnosable
+ * state; a build with a three-second sleep in it reports nothing at all.
+ *
+ * `story/meeting.js` carries a thirty-second backstop of its own so that a
+ * finished run can never be stranded behind an offer that failed to appear.
+ * That guard belongs there rather than here, because this file's job is to ask
+ * whether the beat has happened and not to have opinions about how.
  *
  * ---------------------------------------------------------------------------
  * WHY THIS IS A SIBLING OF ui/death.js AND NOT A FLAG ON IT
@@ -332,13 +368,14 @@ function css() {
  * @param {object} parts.director  the wave ceiling: `state.concluded`
  * @param {object} parts.doors     the jar counter: `state.jarsReturned`
  * @param {object} parts.spaces    which room the player is standing in
+ * @param {function} [parts.met]   the fourth condition: story/meeting.js's `done`
  * @param {object} [parts.input]   frozen while the ending holds
  * @param {object} [parts.audio]
  * @param {object} [parts.rig]
  * @param {function} [parts.suspended] true while the pause menu is up
  */
 export function createEnding({
-  doc, director, doors, spaces, input, audio, rig, suspended, save,
+  doc, director, doors, spaces, met, input, audio, rig, suspended, save,
 }) {
   const el = build(doc);
 
@@ -351,7 +388,7 @@ export function createEnding({
     pending: false,
     /** The wave it ended on, frozen at the moment it did. */
     wave: 0,
-    /** Which of the three gate conditions was last missing, for the harness. */
+    /** Which of the four gate conditions was last missing, for the harness. */
     waitingOn: null,
   };
 
@@ -399,22 +436,31 @@ export function createEnding({
   // ---------------------------------------------------------------------------
 
   /**
-   * Are all three conditions true right now.
+   * WHICH CONDITION IS MISSING, or null if none is.
    *
-   * Records WHICH one is missing rather than returning a bare boolean, because
-   * "the ending did not fire" has three completely different causes and a
-   * harness that cannot tell them apart cannot tell a broken gate from a run
-   * that has not finished the puzzle. Nothing on screen ever reads this.
+   * Split out of `ready()` and returning the NAME rather than a bare boolean,
+   * because "the ending did not fire" has four completely different causes and
+   * a harness that cannot tell them apart cannot tell a broken gate from a run
+   * that has not finished the puzzle. That pattern is load bearing and predates
+   * the fourth condition; the fourth condition is why it now has to be a
+   * function two callers can ask, rather than a side effect of `ready()`.
+   *
+   * THE ORDER IS THE ORDER THE PLAYER MEETS THEM IN, and the meeting is last
+   * because it is downstream of the other three: she cannot be met until the
+   * dead are down, the chapel is unsealed and he is standing in it.
    */
+  function missing() {
+    if (!director || !director.state.concluded) return 'wave';
+    if (!doors || doors.state.jarsReturned < 4) return 'jars';
+    if (!spaces || spaces.active !== 'interior' || spaces.roomId !== 'serdab') return 'room';
+    if (met && !met()) return 'meeting';
+    return null;
+  }
+
+  /** Are all four conditions true right now. */
   function ready() {
-    if (!director || !director.state.concluded) { state.waitingOn = 'wave'; return false; }
-    if (!doors || doors.state.jarsReturned < 4) { state.waitingOn = 'jars'; return false; }
-    if (!spaces || spaces.active !== 'interior' || spaces.roomId !== 'serdab') {
-      state.waitingOn = 'room';
-      return false;
-    }
-    state.waitingOn = null;
-    return true;
+    state.waitingOn = missing();
+    return state.waitingOn === null;
   }
 
   /** The world ends. Only ever called from update(), which is the frame loop. */
@@ -584,6 +630,24 @@ export function createEnding({
     get phase() { return state.phase; },
     get waiting() { return state.phase === 'waiting'; },
     get armed() { return state.armed; },
+
+    /**
+     * MAY THE MEETING PLAY - which is the gate with its own fourth condition
+     * taken back out.
+     *
+     * `story/meeting.js` must not offer her before the siege is over, the
+     * chapel is unsealed and the player is in the room, and those are the
+     * first three conditions verbatim. Exposing them from here rather than
+     * handing the meeting a second copy of `director`, `doors` and `spaces` is
+     * the difference between one gate and two gates that agree today.
+     *
+     * Written as "the only thing missing is the meeting itself" so that it
+     * cannot drift from `missing()` - there is no second list to keep in step.
+     */
+    get canMeet() {
+      const m = missing();
+      return m === null || m === 'meeting';
+    },
 
     /** The line on the card, so a suite can assert the card and not the DOM. */
     get verdict() { return el.line.textContent; },

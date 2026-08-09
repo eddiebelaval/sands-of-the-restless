@@ -65,7 +65,16 @@ const LIVE_CAP = 24;
  * things it has to ask about - the jars, the room - already are. A director that
  * knew about canopic jars would be a director that knew about World 1.
  */
-const FINAL_WAVE = 25;
+/**
+ * EXPORTED as of 2026-08-08, because a second file now needs it.
+ *
+ * `ui/objective.js` prints how many waves stand between the player and the
+ * woman sealed in the Serdab. That figure has to be THIS number and not a copy
+ * of it: a panel that promises "5 WAVES" while the director ends at a different
+ * count is the exact class of lie every rung on that ladder is written to
+ * avoid, and it would be invisible until somebody retuned the run length.
+ */
+export const FINAL_WAVE = 25;
 
 /** Pool depth per variant. Deeper than the cap so crumbling corpses never
  * starve the wave behind them. */

@@ -354,6 +354,41 @@
   #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
   #hud[hidden] { display: none; }
 
+  /* THE FURNITURE GOES QUIET WHILE SHE STANDS UP.
+     ------------------------------------------------------------------------
+     Beat 4.8 is "she does not ask him anything" - a silence - and it was
+     playing behind a minimap, an objective panel, a vitality plate, a frag
+     counter, an ammunition plate, two fidelity buttons and an MK9 held at the
+     centre of the screen and pointed at her. Every one of those is correct for
+     a siege. None of them is correct for this, and the game has spent an hour
+     teaching the player to read all of them, so they do not go unnoticed - they
+     go on shouting.
+
+     OPACITY AND NOT `hidden`, deliberately. The readouts are still THERE and
+     still true; the game is not taking the run away from him, it is looking
+     somewhere else for four seconds. A display:none would pop, and popping is
+     the opposite of what a held breath is.
+
+     The fade is slower going out than coming back (1100ms vs 420ms) for the
+     same reason a room dims slowly and a light switch is instant: leaving is a
+     mood and returning is a fact. Coming back only ever happens if the ending
+     somehow does not follow, which is a case story/meeting.js cannot construct
+     but does not claim is impossible.
+
+     Keyed off the ROOT and not off #hud, because #settings lives outside #hud
+     (it is the one corner that is clicked, so it cannot sit in a
+     pointer-events:none subtree) and the two fidelity buttons are as wrong in
+     this shot as the ammunition plate is. One class, both surfaces.
+
+     The crosshair is inside #hud and goes with it, which is the point: there is
+     nothing in this room to put it on. */
+  :root.is-meeting #hud,
+  :root.is-meeting #settings {
+    opacity: 0;
+    transition: opacity 1100ms cubic-bezier(.4, 0, .2, 1);
+  }
+  #hud, #settings { transition: opacity 420ms ease-out; }
+
   .plate {
     background: linear-gradient(180deg, rgba(9,6,3,.95), rgba(4,3,1,.90));
     border: 1px solid rgba(217,178,106,.30);
@@ -668,6 +703,21 @@
      One stack, because the two questions are one question. The map answers
      "where", the tracker answers "what next", and putting them anywhere but
      adjacent would make the player's eye do the joining. */
+  /* THE COMPASS. Centred on the top edge, above everything the fight needs the
+     middle of the screen for. Pointer-events off: it is a readout, and it sits
+     in the band a player sweeps past constantly. */
+  #compass {
+    position: absolute; left: 50%; top: 8px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    /* No plate behind it. Every other readout in this interface sits on a
+       translucent ground because it holds numbers that must survive sunlit
+       sand; this holds four letters and two pips, and a panel across the top of
+       the screen would be the single largest opaque object in the game. The
+       marks carry their own contrast instead - see the note in ui/compass.js
+       about honouring the HUD legibility floor by construction. */
+  }
+
   #hud-left {
     position: absolute; left: 22px; top: 20px;
     width: 290px;
@@ -708,6 +758,20 @@
   /* The objective. The headline is the only string on the HUD a player has to
      actually READ, so it is the only one set at a size that invites it. */
   #objective { padding: 0 0 9px; }
+  /* THE STANDING GOAL. Quieter than the step below it on purpose: the step is
+     what you do in the next ten seconds and this is what the hour is for, so it
+     must never compete for the glance. Gold rather than bone, one size down,
+     with a rule under it to separate the reason from the instruction. */
+  .obj-goal {
+    padding: 8px 11px 6px;
+    margin-bottom: 2px;
+    font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--gold-mid, #a08b64);
+    border-bottom: 1px solid rgba(217,178,106,.16);
+  }
+  .obj-goal b {
+    font-weight: 600; color: var(--gold);
+  }
   .obj-text {
     padding: 9px 11px 0;
     font-size: 12px; line-height: 1.4; letter-spacing: .1em;
@@ -1369,6 +1433,14 @@
     <circle class="cook-burn" cx="22" cy="22" r="17" data-cook-burn="1"/>
   </svg>
 
+  <!-- THE COMPASS. Top centre, which is the one band of the screen no readout
+       owns: #hud-left and #r-gold are both corner anchored and the crosshair
+       sits at the middle of the frame, well below this. Cardinal marks are
+       literal here rather than borrowed from the genre - the pyramid is aligned
+       to true north and every room in the map is cut on those axes. See
+       src/ui/compass.js. -->
+  <canvas id="compass" width="420" height="34" aria-hidden="true"></canvas>
+
   <div id="hud-left">
     <!-- THE MAP. A floorplan of the room graph at true scale and true bearing;
          see src/ui/minimap.js for why that rather than an overhead slice. -->
@@ -1387,6 +1459,11 @@
       <div class="card-head">
         <svg class="ico"><use href="#i-step"/></svg><span>Next</span>
       </div>
+      <!-- THE STANDING GOAL. Not a step - the reason for all of them. It sits
+           above the ladder because the ladder names what to do NEXT and this
+           names what the run is FOR, and those are different questions. See the
+           siege note in src/ui/objective.js. -->
+      <div class="obj-goal" data-obj-goal hidden></div>
       <div class="obj-text" data-obj-text>Buy the sealed doorway</div>
       <div class="obj-detail" data-obj-detail>1000 gold</div>
       <div class="obj-where" data-obj-where hidden></div>

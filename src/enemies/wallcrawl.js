@@ -41,13 +41,66 @@
  *   approach still on the floor, still under separation and avoid() and the
  *            wedge escape, but steering at a wall face instead of at the player.
  *   wall     climbing, drifting sideways toward the player's lateral position.
- *   roof     upside down, crossing to a point over the player.
+ *   coil     stopped dead at height, TURNED TO FACE THE PLAYER. The tell.
+ *   leap     in the air on a committed ballistic arc.  <- THE PAYOFF
+ *   roof     upside down, crossing to a point over the player. The fallback,
+ *            taken when the player is not in the leap window.
  *   drop     lets go, falls under mummy.js's own gravity, rights itself.
  *
  * A crawler that only mounted a wall it happened to be jammed against would
  * almost never leave the floor, because its heading is by definition AWAY from
  * the wall and toward the player. The approach leg is the whole reason this
  * reads as an enemy doing something rather than as a physics accident.
+ *
+ * ---------------------------------------------------------------------------
+ * THE LEAP, AND WHY THE CLIMB HAD NO POINT WITHOUT IT
+ * ---------------------------------------------------------------------------
+ *
+ * The owner, playing: "what if they run up the walls and jump at me? So they're
+ * basically trying to get a good height so that they can jump on top of me."
+ *
+ * That is a diagnosis, not a feature request. As shipped, a wall was a ROUTE:
+ * the only thing at the top of it was the ceiling, and the only thing the
+ * ceiling did was carry the body to a point over the player's head where it let
+ * go. Measured over 45 s in the Hall of Offerings, the crawler spent 28 per cent
+ * of its life off the floor and the wall leg itself was pure transit - nothing
+ * the player could answer happened on it, and nothing about being three metres
+ * up was different from being on the ground except that the beetle was harder to
+ * shoot. A climb whose payoff is a route is a climb the player has no reason to
+ * look at.
+ *
+ * A LEAP MAKES THE HEIGHT THE POINT. The body gains altitude BECAUSE altitude
+ * buys it a dive, the player can see the altitude being gained, and the dive is
+ * the thing they have to answer.
+ *
+ * FOUR RULES HOLD IT INSIDE THIS GAME'S VOCABULARY, which is "you have one
+ * second to answer this":
+ *
+ *   IT ANNOUNCES. COIL_S of a dead stop with the body turned off the climb to
+ *   face the player. Nothing else in the roster stops moving at height, so the
+ *   silhouette going still IS the telegraph, and it costs the player nothing to
+ *   learn.
+ *
+ *   IT DOES NOT TRACK. The arc is solved once, at the instant of launch, against
+ *   where the player IS. It is a thrown object from that frame on. A homing
+ *   pounce is not a thing you can dodge, it is a thing you can only out-damage,
+ *   and this game already has enough of those.
+ *
+ *   IT LAUNCHES FROM A WALL AND NEVER FROM THE ROOF. A dive that begins directly
+ *   over the player's head is exactly the unblockable ambush this feature is one
+ *   bad decision away from being. On a wall the arc is LATERAL, which means it
+ *   crosses the player's field of view before it arrives.
+ *
+ *   AND IT LAUNCHES FROM FOUR METRES, NOT FROM SIXTEEN. LEAP_H caps the height,
+ *   so a crawler in the Great Gallery does not plummet out of a 16 m ceiling at
+ *   terminal velocity. The cap is what keeps the flight time long enough to be
+ *   a beat rather than an event.
+ *
+ * IT LANDS AND THEN IT BITES, and the leap itself deals nothing. The whole
+ * flight runs through mummy.js's `off` branch, which zeroes windup and strike
+ * for exactly the reason a body on a ceiling must not bite through the roof. So
+ * there is no second damage path here, systems/damage.js is untouched, and the
+ * cost of being landed on is the ordinary bite with its ordinary wind-up.
  */
 
 import * as THREE from 'three';
@@ -55,6 +108,11 @@ import * as THREE from 'three';
 export const SURF_FLOOR = 0;
 export const SURF_WALL = 1;
 export const SURF_ROOF = 2;
+/**
+ * THE FOURTH SURFACE IS NO SURFACE: the body is in the air, on a ballistic arc
+ * it committed to before it left the stone. See THE LEAP below.
+ */
+export const SURF_LEAP = 3;
 
 /** Outward normals of the four faces, indexed 0:+X 1:-X 2:+Z 3:-Z. */
 const FACE_NX = [1, -1, 0, 0];
@@ -206,6 +264,94 @@ const COOL_S = 5;
 /** Seconds of righting after it lets go, and how fast a heading settles. */
 const RIGHT_S = 0.45;
 const ORIENT_RATE = 9;
+
+// ---------------------------------------------------------------------------
+// the leap
+// ---------------------------------------------------------------------------
+
+/**
+ * The height above the wall's own floor that the crawler climbs to before it
+ * will consider a dive.
+ *
+ * 4.2 m, and the number is set by the ARC rather than by the room. The solve
+ * below fixes the flight at FLIGHT_S, so launch height chooses how much of that
+ * flight is spent rising: from 4.2 m at a target 6 m away the body leaves the
+ * stone at 5.26 m/s upward, tops out 0.58 m ABOVE the launch point and comes
+ * down the far side. That rise is the whole readability of the move - a body
+ * that only ever falls reads as something that lost its grip.
+ *
+ * It is also a CEILING and that is the half that matters. The Great Gallery is
+ * 16 m tall and a crawler that climbed to the lip before diving would arrive at
+ * over 19 m/s with a flight the player could not see the start of. Capping the
+ * launch keeps every leap in the game the same readable shape whatever room it
+ * happens in.
+ */
+const LEAP_H = 4.2;
+
+/**
+ * It will not dive from lower than this, in metres above the landing floor.
+ *
+ * 2.8. Below it the arc is flat, the body arrives before the eye has separated
+ * it from the wall, and the whole thing reads as a beetle falling off. It is
+ * also comfortably over MIN_WALL_H's 4.0 minus the LIP, so every wall this file
+ * will climb can support a launch.
+ */
+const LEAP_MIN_H = 2.8;
+
+/**
+ * The horizontal window, in metres.
+ *
+ * MIN 3.2, because DROP_R is 2.2: a player standing at the foot of the wall is
+ * already inside the drop, and adding a second way to arrive on them from there
+ * is how a readable move becomes an ambush. The floor here is deliberately a
+ * metre outside it so the two never compete for the same frame.
+ *
+ * MAX 9.0, because the solve turns distance into horizontal SPEED at a fixed
+ * flight time. At 9 m the body crosses at 10.6 m/s, which is already twice the
+ * player's 5.4 m/s walk; further out it stops being a leap and becomes a
+ * projectile that happens to have legs.
+ */
+const LEAP_MIN_R = 3.2;
+const LEAP_MAX_R = 9.0;
+
+/**
+ * The tell: seconds stopped dead at height, turned off the climb to face the
+ * player, before anything is committed.
+ *
+ * 0.45, which is a little under two of the player's ~0.25 s reaction windows -
+ * the same currency MOUNT_S and LIP_S are priced in, and half again as long as
+ * POISE_S because this one has to carry further. The stop is the signal: every
+ * other body in this game is always moving, so a silhouette that goes still at
+ * four metres up is not something a player has to be taught.
+ */
+const COIL_S = 0.45;
+
+/**
+ * Time in the air, in seconds.
+ *
+ * 0.85, and it is fixed rather than derived because the flight time IS the
+ * answering window and it must not shrink when the crawler happens to be
+ * closer. At 5.4 m/s a player who starts moving on the launch frame covers
+ * 4.6 m before the body lands, which is more than a beetle's width in any
+ * direction: the dodge exists, it is generous, and it is the same size whatever
+ * range the leap was thrown from.
+ *
+ * Together with COIL_S the whole move is 1.30 s from the first sign to impact.
+ */
+const FLIGHT_S = 0.85;
+
+/**
+ * Gravity for the arc.
+ *
+ * The SAME 24 the fall in mummy.js integrates and the same one crawlDeathFall
+ * uses. Not a constant this file gets to have an opinion about: the solve has
+ * to agree with the integrator that finishes the arc after it lands, or a leap
+ * that is interrupted one frame early falls at a different rate than it flew.
+ */
+const LEAP_G = 24;
+
+/** How long a leap may stay in the air before it is force-landed. */
+const LEAP_MAX_S = FLIGHT_S * 2.2;
 
 /** Height on the face the mount lands at, and clearance kept under the ceiling. */
 const MOUNT_H = 0.45;
@@ -416,6 +562,16 @@ export function createCrawl() {
     fails: 0,              // approaches in a row that reached no face
     right: 0,              // seconds of righting left after a drop
 
+    // --- the leap ----------------------------------------------------------
+    coil: 0,               // seconds of the tell left to run
+    air: 0,                // seconds spent on the current arc
+    lvx: 0, lvy: 0, lvz: 0,  // the committed velocity. Solved once, at launch.
+    // Published for the harness, and the only proof that a body which ended up
+    // next to the player got there by leaping rather than by falling off.
+    leaps: 0,
+    launchY: 0,            // height above the landing floor it launched from
+    launchR: 0,            // horizontal range it committed to
+
     transit: 0,            // seconds left of a surface change
     transitS: 0,
     fromX: 0, fromY: 0, fromZ: 0,
@@ -442,6 +598,14 @@ export function resetCrawl(c) {
   c.transit = c.transitS = 0;
   c.motion = c.owns = c.falling = false;
   c.speed = 0;
+  // A pooled body must not come back mid-dive, and it must not come back
+  // carrying somebody else's leap count either: the harness reads `leaps` as
+  // "did THIS actor leap", and a counter that survives a respawn is a counter
+  // that reports a leap the run never saw.
+  c.coil = c.air = 0;
+  c.lvx = c.lvy = c.lvz = 0;
+  c.leaps = 0;
+  c.launchY = c.launchR = 0;
 }
 
 /**
@@ -475,6 +639,14 @@ export function crawlSteer(c, dir, pos) {
 function detach(c, st, rig, radius, rideH) {
   const pos = rig.group.position;
 
+  if (c.surf === SURF_LEAP) {
+    // Already in free space and already the right way up. Stepping it off a
+    // face normal it is no longer touching would teleport it sideways, which
+    // is what a shot beetle looks like when it is hit at the top of its arc.
+    land(c, st, rig);
+    return;
+  }
+
   if (c.surf === SURF_ROOF) {
     /**
      * TWICE THE RIDE HEIGHT, and it is a continuity fix rather than a fudge.
@@ -503,6 +675,82 @@ function detach(c, st, rig, radius, rideH) {
 
   st.feetY = pos.y;
   st.vy = 0;
+  st.vx = 0;
+  st.vz = 0;
+}
+
+/**
+ * Commit the arc.
+ *
+ * SOLVED ONCE, HERE, AND NEVER TOUCHED AGAIN. Flight time is fixed at
+ * FLIGHT_S, so the two horizontal components are just the offset over the
+ * time, and the vertical one is whatever makes a body under LEAP_G arrive at
+ * the landing height at exactly that moment:
+ *
+ *     vy = dy / T + G T / 2
+ *
+ * With a target below the launch point the first term is negative and the
+ * second is 10.2, so the body still leaves the stone travelling UPWARD and
+ * peaks above where it started. That rise is not decoration; it is the
+ * difference between a pounce and a body that lost its footing.
+ *
+ * The target is the player's position AT THIS INSTANT. Everything after this
+ * line is a thrown object.
+ */
+function launch(c, st, ctx, rig, radius) {
+  const pos = rig.group.position;
+
+  // Step off the face first, for the same reason detach() does: the first
+  // frame of the arc must not start inside the stone it was holding.
+  pos.x += c.nx * (radius + 0.05);
+  pos.z += c.nz * (radius + 0.05);
+
+  const tx = ctx.playerPos.x;
+  const tz = ctx.playerPos.z;
+  const ty = ctx.heightAt ? ctx.heightAt(tx, tz, pos.y) : 0;
+
+  c.lvx = (tx - pos.x) / FLIGHT_S;
+  c.lvz = (tz - pos.z) / FLIGHT_S;
+  c.lvy = (ty - pos.y) / FLIGHT_S + 0.5 * LEAP_G * FLIGHT_S;
+
+  c.launchY = pos.y - ty;
+  c.launchR = Math.hypot(tx - pos.x, tz - pos.z);
+  c.leaps++;
+
+  c.surf = SURF_LEAP;
+  c.wall = null;
+  c.air = 0;
+  c.coil = 0;
+  c.hold = 0;
+  c.press = 0;
+  c.transit = 0;
+  st.feetY = pos.y;
+  st.vx = st.vz = st.vy = 0;
+}
+
+/**
+ * Put it back on the floor's terms.
+ *
+ * The arc is handed to mummy.js's own integrator with the vertical velocity it
+ * was CARRYING, not with zero: a leap cut short by a ceiling, a pillar or a
+ * bullet has to keep falling at the rate it was already falling, or the last
+ * few centimetres of the move happen under different physics than the rest of
+ * it. That is the one seam in this file a player could actually see.
+ */
+function land(c, st, rig) {
+  const vy = c.lvy;
+  c.surf = SURF_FLOOR;
+  c.wall = null;
+  c.press = c.hold = c.approach = c.poise = c.air = c.coil = 0;
+  c.transit = 0;
+  c.cool = COOL_S;
+  c.right = RIGHT_S;
+  c.falling = true;
+  c.motion = false;
+  c.speed = 0;
+
+  st.feetY = rig.group.position.y;
+  st.vy = Math.min(0, vy);
   st.vx = 0;
   st.vz = 0;
 }
@@ -578,6 +826,7 @@ export function crawlTick(c, dt, ctx, actor, st, spec, rig, dist, clear) {
   switch (c.surf) {
     case SURF_WALL: crawlWall(c, dt, ctx, actor, st, spec, rig, dist, radius, rideH); break;
     case SURF_ROOF: crawlRoof(c, dt, ctx, actor, st, spec, rig, dist, radius, rideH, clear); break;
+    case SURF_LEAP: crawlLeap(c, dt, ctx, actor, st, rig, radius, clear); break;
     default: crawlFloor(c, dt, ctx, actor, st, spec, rig, dist, radius); break;
   }
 
@@ -599,6 +848,39 @@ export function crawlTick(c, dt, ctx, actor, st, spec, rig, dist, clear) {
 /** The body's up-axis and heading for whatever surface it is on or heading to. */
 function surfaceAim(c, ctx, pos, q) {
   const px = ctx.playerPos.x, pz = ctx.playerPos.z;
+
+  if (c.surf === SURF_LEAP) {
+    /**
+     * NOSE ALONG THE ARC, and this is the one pose in the file that is not
+     * derived from a surface normal because there is no surface.
+     *
+     * Built the same way a camera basis is: forward is the velocity, right is
+     * world-up crossed into it, and the body's up is what closes the set. That
+     * gives a beetle whose head is pointed exactly where it is going, pitching
+     * from nose-up on the rise to nose-down on the dive, with no roll - the
+     * pitch IS the read on how far through its arc it is, and a player who has
+     * seen the nose come over knows the thing is coming down now.
+     *
+     * The fallback is the floor pose, taken only if a leap were ever solved with
+     * a zero velocity, which the launch window makes impossible.
+     */
+    const l = Math.hypot(c.lvx, c.lvy, c.lvz);
+    if (l > 1e-4) {
+      const fx = c.lvx / l, fy = c.lvy / l, fz = c.lvz / l;
+      // right = worldUp x forward
+      let rx = -fz, ry = 0, rz = fx;
+      const rl = Math.hypot(rx, ry, rz);
+      if (rl > 1e-4) {
+        rx /= rl; rz /= rl;
+        // up = forward x right, which is orthonormal to both by construction.
+        const ux = fy * rz - fz * ry;
+        const uy = fz * rx - fx * rz;
+        const uz = fx * ry - fy * rx;
+        return aim(q, ux, uy, uz, fx, fy, fz);
+      }
+    }
+    return aim(q, 0, 1, 0, px - pos.x, 0, pz - pos.z);
+  }
 
   if (c.surf === SURF_WALL) {
     // Head first up the wall, leaning the way it is drifting.
@@ -666,6 +948,80 @@ function crawlFloor(c, dt, ctx, actor, st, spec, rig, dist, radius) {
   beginTransit(c, rig, MOUNT_S, SURF_WALL, tx, st.feetY + MOUNT_H, tz);
 }
 
+/**
+ * Is a dive available from here, right now.
+ *
+ * Three questions, and every one of them is a way the move could stop being
+ * readable rather than a way it could stop being possible:
+ *
+ *   TOO CLOSE. Inside LEAP_MIN_R the arc is nearly vertical, which is the
+ *   ceiling drop wearing a wall's clothes - and DROP_R already owns that case
+ *   two metres in.
+ *
+ *   TOO FAR. Past LEAP_MAX_R the fixed flight time turns into a horizontal
+ *   speed the player cannot step out of.
+ *
+ *   NOT ACTUALLY ABOVE THEM. `ty` is the floor under the PLAYER. On the Great
+ *   Gallery's upper ledge a crawler four metres up a wall whose base is at zero
+ *   is level with a player standing at six, and a "dive" that has to climb to
+ *   reach its target is not a dive. This is also the guard that stops the solve
+ *   producing an absurd launch velocity, because dy going positive is exactly
+ *   what makes vy run away.
+ */
+function leapArmed(ctx, pos, dist, ty) {
+  if (dist < LEAP_MIN_R || dist > LEAP_MAX_R) return false;
+  return pos.y - ty >= LEAP_MIN_H;
+}
+
+/**
+ * In the air.
+ *
+ * NOTHING STEERS HERE, and the absence is the design: there is no reference to
+ * the player's current position anywhere in this function. The arc was solved at
+ * launch and this integrates it.
+ *
+ * `clear` is mummy.js's pointClear, the same probe the ceiling crawl uses. A
+ * leap that would put the body inside stone - a pillar crossed mid-flight, a
+ * lintel, the wall it just left if the player was standing tight against it -
+ * lands on the spot instead of tunnelling, and lands carrying its vertical
+ * velocity so the last few centimetres run under mummy.js's gravity at the rate
+ * it was already falling.
+ */
+function crawlLeap(c, dt, ctx, actor, st, rig, radius, clear) {
+  const pos = rig.group.position;
+  c.air += dt;
+  c.speed = 0;
+
+  if (actor.dying) { land(c, st, rig); return; }
+
+  c.lvy -= LEAP_G * dt;
+  const nx = pos.x + c.lvx * dt;
+  const ny = pos.y + c.lvy * dt;
+  const nz = pos.z + c.lvz * dt;
+
+  const floor = ctx.heightAt ? ctx.heightAt(nx, nz, ny) : 0;
+
+  // Down through the floor is the ordinary end of a leap and it is not a
+  // collision: the arc was solved to arrive here.
+  if (ny <= floor) {
+    pos.x = nx; pos.z = nz;
+    pos.y = floor;
+    land(c, st, rig);
+    return;
+  }
+
+  // Into stone, or out of time. LEAP_MAX_S is the same argument WALL_MAX_S and
+  // ROOF_MAX_S make: a body that cannot finish what it started comes down and
+  // fights, because a round that does not end is worse than a bad decision.
+  if (!clear(nx, nz, radius, ny, ctx) || c.air > LEAP_MAX_S) {
+    land(c, st, rig);
+    return;
+  }
+
+  pos.x = nx; pos.y = ny; pos.z = nz;
+  st.feetY = ny;
+}
+
 /** On a wall: climb, drift toward the player's lateral position, or come down. */
 function crawlWall(c, dt, ctx, actor, st, spec, rig, dist, radius, rideH) {
   const pos = rig.group.position;
@@ -678,19 +1034,68 @@ function crawlWall(c, dt, ctx, actor, st, spec, rig, dist, radius, rideH) {
     return;
   }
 
+  /**
+   * --- the coil ------------------------------------------------------------
+   *
+   * Nothing moves. That is the whole point of the state, and it is checked
+   * before the climb rather than folded into it so there is no frame in which
+   * the body is both announcing and gaining ground.
+   *
+   * IT CAN STILL BE CALLED OFF. A player who walks out of the window during the
+   * coil gets the crawler back on the climb rather than a leap thrown at where
+   * they used to be, which would be the tracking this move is written to avoid
+   * wearing a different hat. The reverse - a player who walks INTO the window -
+   * does not shorten the tell, because the timer keeps its own count.
+   */
+  if (c.coil > 0) {
+    const coilY = ctx.heightAt ? ctx.heightAt(ctx.playerPos.x, ctx.playerPos.z, pos.y) : 0;
+    if (!leapArmed(ctx, pos, dist, coilY)) {
+      c.coil = 0;
+    } else {
+      c.coil -= dt;
+      c.speed = 0;
+      // Turn off the climb and look at them. The heading is projected into the
+      // face plane by aim(), so this is the largest turn the body can make
+      // while still holding the stone, and it is the visible half of the tell.
+      const dx = ctx.playerPos.x - pos.x;
+      const dz = ctx.playerPos.z - pos.z;
+      c.hx = dx; c.hy = 0; c.hz = dz;
+      if (c.coil <= 0) launch(c, st, ctx, rig, radius);
+      return;
+    }
+  }
+
   const top = c.ceilY - LIP;
+
+  /**
+   * WHERE THIS CLIMB IS GOING, and it is the one line that turns a route into
+   * a plan.
+   *
+   * `ty` is the floor UNDER THE PLAYER, not the floor at the base of this wall.
+   * They are the same number in every flat room, and they are not the same
+   * number on the Great Gallery's upper ledge - where the difference decides
+   * both whether a dive is even downhill and how much of the 4.2 m cap has
+   * already been spent by the geometry.
+   */
+  const ty = ctx.heightAt ? ctx.heightAt(ctx.playerPos.x, ctx.playerPos.z, pos.y) : 0;
+  const armed = leapArmed(ctx, pos, dist, ty);
+  const leapY = Math.min(top, ty + LEAP_H);
+  // A crawler with a dive available stops at the launch height. One without
+  // keeps going to the lip and takes the ceiling, exactly as it always has.
+  const climbTo = armed ? leapY : top;
+
   const lat = c.lx ? pos.x : pos.z;
   const want = c.lx ? ctx.playerPos.x : ctx.playerPos.z;
 
   // Climb is the priority and the sideways drift is a correction on it, which
   // is what stops a crawler that starts thirty metres along a gallery wall from
   // running the length of it at ankle height in full view.
-  const vert = pos.y < top ? 1 : 0;
+  const vert = pos.y < climbTo ? 1 : 0;
   const side = Math.max(-0.9, Math.min(0.9, (want - lat) / 3));
   const l = Math.hypot(vert, side) || 1;
   const step = spec.speed * WALL_MUL * dt;
 
-  pos.y = Math.min(top, pos.y + (vert / l) * step);
+  pos.y = Math.min(climbTo, pos.y + (vert / l) * step);
   const moved = Math.min(c.hi, Math.max(c.lo, lat + (side / l) * step));
   if (c.lx) pos.x = moved; else pos.z = moved;
   // Pinned to the face plane. Nothing else may write this coordinate.
@@ -705,6 +1110,21 @@ function crawlWall(c, dt, ctx, actor, st, spec, rig, dist, radius, rideH) {
     c.hx = c.lx ? (side / l) : 0;
     c.hy = vert / l;
     c.hz = c.lx ? 0 : (side / l);
+  }
+
+  /**
+   * HIGH ENOUGH, AND THEY ARE STILL THERE. Open the tell.
+   *
+   * Checked against `leapY` rather than against LEAP_MIN_H so a crawler that
+   * reaches the launch height on a wall too short to give it the full 4.2 m
+   * still commits: `leapY` is already clamped to the lip, and `leapArmed` has
+   * separately refused anything under LEAP_MIN_H above the player's floor. The
+   * two together are what let a 5 m room and a 16 m room produce the same move.
+   */
+  if (armed && pos.y >= leapY - 1e-3) {
+    c.coil = COIL_S;
+    c.speed = 0;
+    return;
   }
 
   if (pos.y < top - 1e-3) return;

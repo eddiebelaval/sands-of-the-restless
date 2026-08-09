@@ -45,7 +45,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome, GL_ARGS } from './chrome.mjs';
+import { resolveChrome, GL_ARGS, dismissBriefing } from './chrome.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 const OUT = new URL('../shots/', import.meta.url).pathname;
@@ -248,6 +248,8 @@ async function boot({ first = false } = {}) {
   await page.waitForTimeout(2600);
   await page.addScriptTag({ content: HELPERS });
   await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
   await page.waitForTimeout(1400);
   await page.evaluate(() => window.__B__.holdWave());
 }

@@ -113,9 +113,15 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
      * It is applied as damage equal to the target's remaining health rather
      * than as a separate "die now" path, so everything downstream is unchanged:
      * hurt() still computes the stagger share, still topples the body away from
-     * the shooter, and still returns the one fact the payout reads. A boss dies
-     * to it too, which is correct: the drop is rare, it lasts thirty seconds,
-     * and "the god fell to one pistol round" is a story.
+     * the shooter, and still returns the one fact the payout reads.
+     *
+     * IT DOES NOT KILL A BOSS. This reverses what this comment used to say -
+     * that "the god fell to one pistol round" was a story worth having. It is
+     * a story exactly once, and after that it is the answer to every boss wave
+     * the drop happens to land on: hold the Feather, walk in, fire once. The
+     * owner hit it in play and it read as the fight being skipped, not won.
+     * `executable()` below is the whole of the rule, and it is checked at all
+     * three doors that can resolve a lethal hit.
      */
     instaKill: false,
 
@@ -178,17 +184,124 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
    * BOSSES ARE EXEMPT, and that exemption is why this is a function rather than
    * a comparison inlined above. Anubis has 5200 health and arrives on wave 5,
    * INSIDE the window; a boss that dies to one pistol round to the face is not a
-   * boss. The Insta-Kill power-up deliberately does drop them, because that is a
-   * rare thing the player earns and spends, and it is on its own timer.
+   * boss.
+   *
+   * REVERSED 2026-08-08, BY THE OWNER, AND THE OLD REASONING IS LEFT HERE
+   * BECAUSE IT WAS NOT STUPID. This comment used to end: "The Insta-Kill
+   * power-up deliberately does drop them, because that is a rare thing the
+   * player earns and spends, and it is on its own timer." That is a coherent
+   * argument and it lost to the only test that matters, which is a person
+   * playing the game: "the one shot kill should never work on the bosses. I'm
+   * able to kill the bosses on one shot."
+   *
+   * Why the argument was wrong in practice. A drop that is rare in the abstract
+   * is not rare during the encounter it matters in: a boss wave is long, it is
+   * full of adds, and adds are what drop power-ups, so Insta-Kill is MORE likely
+   * to be in the player's hand during a god than at any other time. "Rare thing
+   * the player earns" described the drop rate and not the situation, and the
+   * situation is that the twenty-five wave climb has a delete button on it.
    */
   const HEADSHOT_LETHAL_THROUGH = 6;
+
+  /**
+   * MAY THIS ENEMY BE REMOVED BY A SINGLE APPLICATION OF DAMAGE.
+   *
+   * Extracted from headLethal, which had the rule right and kept it to itself.
+   * There were two holes and they were separate:
+   *
+   *   `state.instaKill` set damage to the target's full remaining health at all
+   *   THREE entry points below, and did it by SHORT-CIRCUITING the headshot
+   *   test - `state.instaKill || (head && headLethal(...))` never consults
+   *   identity when the left side is true. This file already knew a god may not
+   *   be one-shot and applied that knowledge to one of the four ways damage
+   *   arrives.
+   *
+   *   systems/powerups.js `detonate()` built every record with
+   *   `damage = Math.max(1, a.health)`, boss included, and its own comment
+   *   presented that as a feature.
+   *
+   * IDENTITY, NOT HEALTH. A boss is a boss on the wave it arrives, whatever the
+   * tier has done to its bar. A rule written as "over N hit points" would stop
+   * protecting the first god the moment somebody retuned Easy.
+   *
+   * WHAT A BOSS GETS INSTEAD differs by door, on purpose:
+   *
+   *   A GUN, A BLADE OR A GRENADE falls through to normal damage - which is
+   *   exactly what a headshot on a god already did, so this stays one rule
+   *   rather than becoming two. Insta-Kill is weak during a boss wave by
+   *   design; the alternative is that it deletes the encounter.
+   *
+   *   THE SECOND DEATH is bounded rather than ignored, over in powerups.js,
+   *   because it is a consumable with no second swing behind it.
+   */
+  function executable(enemy) {
+    if (!director) return true;
+    return enemy !== director.boss;
+  }
+
+  /** Is the execution shortcut allowed against this target right now. */
+  function executing(enemy) {
+    return state.instaKill && executable(enemy);
+  }
 
   function headLethal(enemy) {
     if (!director) return false;
     if (director.wave > HEADSHOT_LETHAL_THROUGH) return false;
-    // Identity, not health: a boss is a boss on the wave it arrives, whatever
-    // the tier has done to its health bar.
-    return enemy !== director.boss;
+    return executable(enemy);
+  }
+
+  /**
+   * WHAT A ROUND SOUNDS LIKE WHEN IT LANDS ON THIS PARTICULAR BODY.
+   *
+   * All three doors below used to say `audio.bodyHit({ pitch: voicePitch })`,
+   * which is the same defect the horde's voices had and in the same shape: one
+   * sound for six species, told apart by a scalar. bodyHit is a 620 Hz lowpass
+   * over a 105 Hz sine - a wet mass absorbing a round - and it is simply the
+   * wrong physics for a beetle, which is a thin hard shell over a void. Shooting
+   * a scarab sounded like shooting a man.
+   *
+   * The variants already carry the answer: `spec.sound.chitin` names a shell for
+   * the two that have one and is absent for everything with a throat. So this
+   * reads it, and nothing here knows what a scarab is.
+   *
+   * THE CRIT IS NOT THE SAME PLACE ON EVERY BODY, and that is the part worth
+   * being careful about. `region === 'head'` means whatever enemies/variants.js
+   * tagged 'head', not a skull: on a gold scarab the skull is re-tagged 'body'
+   * and the crit is the vent on the back of the abdomen. Because this routes on
+   * the REGION rather than on anatomy, that falls out correctly with no special
+   * case - a gold scarab's skull gets the plate knock, which is the honest sound
+   * for "nothing happened", and only the vent gets the crit cue. The two cues
+   * exist to tell the player which payout they earned, and on this variant that
+   * lesson is the entire design.
+   *
+   * NO KILL VARIANT, and that is deliberate rather than an omission. The
+   * carapace coming apart is `shellCrack`, and enemies/mummy.js already plays it
+   * out of beginDeath() through the actor's own positional emitter - exactly as
+   * a humanoid's deathRattle fires there while bodyHit fires here. Playing it
+   * again on the killing round would be two shell cracks in one frame, from two
+   * subsystems, on top of each other.
+   *
+   * `pitch` follows the same rule as say() in enemies/mummy.js: `voicePitch` is
+   * a larynx and a shell does not have one, so a chitin body uses its declared
+   * `sound.pitch` and the scarab's 2.0 never lands on a 2.6 kHz knock.
+   */
+  function hitSound(enemy, region) {
+    const spec = enemy?.spec;
+    if (!spec) return;
+    const snd = spec.sound;
+    const chitin = snd && snd.chitin;
+    const crit = region === 'head';
+
+    if (chitin) {
+      const opts = { pitch: snd.pitch ?? 1, chitin };
+      if (crit) audio?.chitinCrit?.(opts);
+      else audio?.chitinHit?.(opts);
+      return;
+    }
+
+    const opts = { pitch: spec.voicePitch || 1 };
+    if (crit) audio?.headshotHit?.(opts);
+    else audio?.bodyHit?.(opts);
   }
 
   /**
@@ -212,7 +325,7 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       if (!s) continue;
 
       const head = h.region === 'head';
-      const damage = (state.instaKill || (head && headLethal(h.enemy)))
+      const damage = (executing(h.enemy) || (head && headLethal(h.enemy)))
         ? Math.max(1, h.enemy.health)
         : s.damage * (head ? s.headshot : 1);
 
@@ -248,10 +361,9 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
 
       // Two distinct sounds, because the two payouts are distinct. A player who
       // cannot hear the difference between 60 and 100 has no feedback loop on
-      // the one skill the economy rewards.
-      const opts = { pitch: h.enemy.spec.voicePitch || 1 };
-      if (head) audio?.headshotHit?.(opts);
-      else audio?.bodyHit?.(opts);
+      // the one skill the economy rewards. Which PAIR of sounds depends on what
+      // was hit - see hitSound.
+      hitSound(h.enemy, h.region);
     }
 
     return connected;
@@ -306,7 +418,7 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
 
       h.region = h.region || 'body';
 
-      let damage = state.instaKill ? Math.max(1, h.enemy.health) : h.damage;
+      let damage = executing(h.enemy) ? Math.max(1, h.enemy.health) : h.damage;
 
       // The execution floor. See BLAST_EXECUTE - a body left on a sliver by an
       // explosion is the reported bug, not a near miss. Written as a raise of
@@ -337,7 +449,11 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       // hear.
       if (voiced < BLAST_VOICES) {
         voiced++;
-        audio?.bodyHit?.({ pitch: h.enemy.spec?.voicePitch || 1 });
+        // 'body', explicitly, and not h.region. A blast cannot land a crit, and
+        // the line above is the reason: the cue would teach a payout that was
+        // not paid. Passing the literal keeps that true for a chitin body too -
+        // a frag beside a gold scarab must not fire the vent cue.
+        hitSound(h.enemy, 'body');
       }
     }
 
@@ -398,7 +514,7 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       const dz = h.enemy.position.z - player.position.z;
 
       h.region = 'body';
-      const damage = state.instaKill ? Math.max(1, h.enemy.health) : h.damage;
+      const damage = executing(h.enemy) ? Math.max(1, h.enemy.health) : h.damage;
 
       // No hit point passed. A swipe has a direction and an arc rather than a
       // single struck texel, so the actor gets its whole-body reaction, which is
@@ -409,8 +525,18 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       connected++;
       if (h.killed) announceKill(h.enemy, 'body');
 
-      impacts?.spawnEnemyHit?.(h.point, 'body');
-      audio?.bodyHit?.({ pitch: h.enemy.spec?.voicePitch || 1 });
+      // GUARDED, exactly as applyHits guards it. `impacts.spawnEnemyHit` reads
+      // `point.x` with no defence of its own, and this was the one of the three
+      // doors that handed it the value unchecked.
+      //
+      // NOT a live bug: systems/melee.js sets `record.point` in the same breath
+      // as `record.enemy` and clears the two together, so in the shipped path a
+      // record with an enemy always has a point. It is one line to stop that
+      // being load-bearing, and the sibling call above already spends it.
+      if (h.point) impacts?.spawnEnemyHit?.(h.point, 'body');
+      // 'body' for the same reason the region was forced to it above: a blade
+      // cannot land a crit, so it must not sound like one.
+      hitSound(h.enemy, 'body');
     }
 
     return connected;

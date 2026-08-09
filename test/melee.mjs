@@ -9,7 +9,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome } from './chrome.mjs';
+import { resolveChrome, dismissBriefing } from './chrome.mjs';
 
 const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 
@@ -31,6 +31,8 @@ page.on('console', (m) => {
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 // SwiftShader can deliver fewer than one game frame per wall-clock second.
 // The hands own their readiness, so wait on that state rather than guessing how
 // long the opening raise animation will take on this machine.

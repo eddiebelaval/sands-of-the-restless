@@ -53,7 +53,7 @@
 
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
-import { resolveChrome } from './chrome.mjs';
+import { resolveChrome, dismissBriefing } from './chrome.mjs';
 
 const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
 const OUT = new URL('../shots/', import.meta.url).pathname;
@@ -85,6 +85,8 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 await page.waitForTimeout(1400);
 
 await page.addScriptTag({
@@ -202,6 +204,44 @@ window.__J__ = {
     await window.__J__.frames(3);
     window.dispatchEvent(new KeyboardEvent('keyup', { code, bubbles: true }));
     await window.__J__.frames(1);
+    await window.__J__.settle();
+  },
+
+  /*
+   * WAIT UNTIL THE WORLD IS ACTUALLY RUNNING AGAIN.
+   *
+   * Taking a jar fires jars.onTake, which raises a memory fragment, and
+   * main.js's frame loop returns EARLY while tableau.holding is true. Every
+   * live system stops - the interact raycast included - so anything measured
+   * during the hold is state from BEFORE the jar was picked up.
+   *
+   * That is exactly what happened on 2026-08-08. The suite took jar one, crossed
+   * into the Embalming Chamber, stood at niche 1, and read the candidate as a
+   * canopic-jar with the prompt still saying TAKE THE JAR OF IMSETY - because it
+   * was still looking at the courtyard plinth it had walked away from. Twenty
+   * nine checks failed and every one of them described a broken jar chain. The
+   * chain was fine. The world was paused.
+   *
+   * MEASURED, not assumed: the fragment does not answer a keypress - it is
+   * still holding after Space - and lets go on its own about four seconds later.
+   * So this waits on the STATE rather than pressing something or sleeping a
+   * fixed time, which is this project's standing rule; the frame cap is a
+   * safety net and not the mechanism.
+   *
+   * NOTE: no backticks anywhere in this block. It lives inside a template
+   * literal handed to addScriptTag, and one backtick in a comment ends the
+   * injected script - which is how this helper first shipped, as a syntax error.
+   */
+  async settle(capFrames = 900) {
+    const g = window.__SANDS__;
+    for (let i = 0; i < capFrames; i++) {
+      const held = (g.tableau && g.tableau.holding)
+        || (g.briefing && g.briefing.holding)
+        || (g.meeting && g.meeting.holding);
+      if (!held) return true;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    return false;
   },
 
   /** Hold a key down for n real frames, then let go. */
@@ -716,11 +756,48 @@ R.enter = await page.evaluate(async () => {
   const hud = window.__J__.hud();
   const roomBefore = g.spaces.roomId;
 
-  // HELD W, on real frames, through the opening. Not a teleport: the claim is
-  // that the doorway lets the player through, and only walking makes it.
-  await window.__J__.hold('KeyW', 90);
+  /*
+   * HELD W, on real frames, through the opening. Not a teleport: the claim is
+   * that the doorway lets the player through, and only walking makes it.
+   *
+   * WALKS UNTIL HE IS IN THE ROOM, NOT FOR NINETY FRAMES, AND THE DIFFERENCE IS
+   * THE WHOLE OF A FAILED RUN.
+   *
+   * It was `hold('KeyW', 90)`, which is a second and a half on a real machine
+   * and over a minute under swiftshader. story/meeting.js carries a THIRTY
+   * SECOND wall-clock backstop that starts the scene for a player who never
+   * presses anything - correct for a player, and it means this suite used to
+   * keep walking for half a minute after arriving and time itself out of the
+   * very prompt it came to test. The 2026-08-09 run failed exactly four checks
+   * and the one that passed was the diagnosis: `done` true, `via` 'backstop'.
+   *
+   * So it walks on STATE, the project's standing rule, with the old count as
+   * the cap rather than as the mechanism.
+   *
+   * AND THE STATE IS THE OFFER, NOT THE ROOM. Stopping at the threshold cost a
+   * second run: `meeting.offered` is PROXIMITY, three metres, and the doorway is
+   * about eleven from her. The suite crossed into the room, released W, and
+   * stood in the doorway waiting to be offered something it had to walk toward -
+   * ninety-eight frames of standing still, which is thirty seconds here, and the
+   * backstop took it by 227 ms (`armedMs 30227` against `backstopMs 30000`).
+   *
+   * The beat is called REACH HER. He has to actually cross the room, so W stays
+   * down until she is offered, and the room check below is satisfied on the way
+   * through rather than being the thing that stops him.
+   */
+  let walked = 0;
+  let arrived = false;
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
+  for (; walked < 120; walked++) {
+    await window.__J__.frames(1);
+    if (g.spaces.roomId === 'serdab') arrived = true;
+    if (arrived && g.meeting && g.meeting.offered) break;
+  }
+  window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW', bubbles: true }));
+  await window.__J__.frames(2);
 
   return {
+    walked,
     roomBefore,
     promptAtOpenDoor: hud.prompt,
     denyAtOpenDoor: hud.deny,
@@ -728,6 +805,66 @@ R.enter = await page.evaluate(async () => {
     room: g.spaces.roomId,
     // No spawn points, deliberately: the reason the beat can happen at all.
     serdabSpawns: (g.interior.rooms.find((r) => r.id === 'serdab').spawnPoints || []).length,
+  };
+});
+
+// ---------------------------------------------------------------------------
+// 9b. she stands up, and the way out is downstream of that
+// ---------------------------------------------------------------------------
+//
+// SHE IS REACHED WITH THE KEY, NOT WAITED OUT.
+//
+// story/meeting.js carries a thirty second backstop that starts the scene for a
+// player who never presses anything, and a run that reaches the card THROUGH
+// that net proves the net works and says nothing at all about the prompt. The
+// prompt is the beat: the same line, on the same element, that every door and
+// gun and shrine in this game has used, except that this one has no price.
+//
+// So this waits for the offer, reads the line off the real element, and presses
+// a real F. `press` already waits out `meeting.holding` (see the helper), so
+// there is no clock here either.
+R.meeting = await page.evaluate(async () => {
+  const g = window.__SANDS__;
+
+  let f = 0;
+  while (!g.meeting.offered && !g.meeting.done && f < 600) {
+    await new Promise((r) => requestAnimationFrame(r));
+    f++;
+  }
+
+  const offeredAfter = f;
+  /*
+   * HOW CLOSE THE WALK CAME TO THE BACKSTOP, reported whether it fired or not.
+   *
+   * `armedMs` is meeting.js's own count of how long the scene has been eligible
+   * and unplayed, against `backstopMs`. When this suite failed on 2026-08-09 it
+   * failed four checks that each described a broken prompt, and the actual cause
+   * was that this number had already passed the other one. Printing the pair
+   * turns that into one line of arithmetic.
+   */
+  const armed = g.meeting.stats();
+  const line = window.__J__.hud();
+  // Read BEFORE the press: begin() clears its own channel.
+  const waitingOnBefore = g.ending.stats().waitingOn;
+
+  await window.__J__.press('KeyF');
+
+  const s = g.meeting.stats();
+  return {
+    offeredAfter,
+    prompt: line.prompt,
+    deny: line.deny,
+    waitingOnBefore,
+    done: g.meeting.done,
+    holding: g.meeting.holding,
+    // How the scene was entered. The whole point is that it was not the net.
+    via: s.via,
+    forced: s.forced,
+    lastMs: s.lastMs,
+    // The pair that names a backstop run for what it is.
+    armedMs: Math.round(armed.armedMs),
+    backstopMs: armed.backstopMs,
+    alreadyDone: armed.done,
   };
 });
 
@@ -832,6 +969,7 @@ section('the name', R.name);
 section('set', R.set);
 section('conclusion', R.conclude);
 section('into the serdab', R.enter);
+section('she stands', R.meeting);
 section('the end card', R.ending);
 section('the descent', R.descend);
 
@@ -911,6 +1049,19 @@ const checks = {
   'the open door quotes no refusal':  !/SONS RETURNED/.test(R.enter.promptAtOpenDoor),
   'walked into the sealed chapel':    R.enter.room === 'serdab',
   'and nothing can spawn in it':      R.enter.serdabSpawns === 0,
+
+  // --- she stands ---------------------------------------------------------
+  // The offer is the beat. `via === 'key'` is the load-bearing one: it says the
+  // run got here by being PROMPTED, and not by standing still for thirty
+  // seconds until the backstop covered for a prompt that never came.
+  // Reads as "the walk did not eat the prompt". If this one fails, the four
+  // below it are describing the backstop and not a defect.
+  'the walk beat the backstop':       R.meeting.alreadyDone === false,
+  'she is offered':                   R.meeting.offeredAfter < 600,
+  'and the line has no price on it':  /REACH HER/.test(R.meeting.prompt) && R.meeting.deny === false,
+  'the way out was waiting on her':   R.meeting.waitingOnBefore === 'meeting',
+  'F reached her':                    R.meeting.via === 'key' && R.meeting.forced === false,
+  'and the scene played out':         R.meeting.done === true && R.meeting.holding === false,
 
   // --- the end ------------------------------------------------------------
   'the card lands':                   R.ending.phase === 'waiting' && R.ending.shown === true,

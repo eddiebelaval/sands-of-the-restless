@@ -73,6 +73,24 @@
  *   groan(opts) footfall(opts) swipe(opts) deathRattle(opts)
  *   bodyHit(opts) headshotHit(opts)
  *
+ *   groan and deathRattle take opts.throat: 'shambler' | 'husk' | 'bound' |
+ *                               'censer'. Omitted is the shambler, which is what
+ *                               every caller got before throats existed.
+ *   chitinStep(opts)            one tripod of leg taps on stone. opts.chitin
+ *                               picks 'scarab' or 'goldscarab'; opts.dist is
+ *                               metres to the player and is what the step pool
+ *                               allocates on.
+ *   chitinRasp(opts)            stridulation. The scarab's whole voice.
+ *   shellCrack(opts)            a carapace coming apart. The scarab's death.
+ *   chitinHit(opts)             a round off a carapace. The chitin bodyHit.
+ *   chitinCrit(opts)            a round through whatever this body's crit
+ *                               actually is - a skull on a scarab, the abdomen
+ *                               vent on a gold scarab. The chitin headshotHit.
+ *
+ *   Every enemy sound also takes opts.elev, the vertical component of the unit
+ *   vector from the listener to the source, which adds the above-the-head cue a
+ *   PannerNode cannot supply. It matters because gold scarabs cross ceilings.
+ *
  *   startAmbience(profile)      'courtyard' | 'corridor' | 'chamber' |
  *                               'gallery' | 'shaft' | 'crypt'. Safe to call on
  *                               every room change; it only retargets ramps.
@@ -100,6 +118,33 @@ import { REPORTS, SPACE_SEND, bakeReport, bakeMechanics, bakeRing } from './guns
 // Voice caps. These are voices, not nodes: one shotgun blast is one voice
 // holding four sources. Low fidelity is roughly what a 2015 laptop survives.
 const VOICE_CAP = { high: 28, low: 14 };
+
+/**
+ * A SECOND, SMALLER CAP, FOR THE ONE SOUND THAT IS PER-STEP.
+ *
+ * Everything else the horde makes is an event every few seconds. A scarab's
+ * legs are an event every eighth of a second per body, and twenty-four of them
+ * charging is a hundred and fifty voice allocations a second against a cap of
+ * twenty-eight. The general cap cannot solve that: it is first-come, so a
+ * wall of ticks would simply win the race and there would be no slots left for
+ * the gunshot, the reload or the line of text the player is being told.
+ *
+ * So steps get their own budget, INSIDE the general one, and it is allocated by
+ * distance rather than by arrival order. A step closer than the furthest one
+ * currently sounding takes its slot; a step further away is dropped outright.
+ * That is the correct priority for the thing this sound exists to do - the near
+ * scarab is the one the player has to locate - and it bounds the whole horde's
+ * step cost at six voices no matter how many bodies are live.
+ *
+ * The rate limiter underneath it is not about voice count, it is about
+ * ALLOCATION CHURN: a step builds about a dozen nodes, and a hundred and fifty
+ * a second is garbage the audio thread has to survive even when the voices
+ * themselves are short. Ten starts per 250ms window is forty a second, which is
+ * six or seven bodies' worth of legs and is more patter than the ear resolves.
+ */
+const STEP_POOL = { high: 6, low: 3 };
+const STEP_WINDOW = 0.25;
+const STEP_STARTS_PER_WINDOW = 10;
 
 // The housekeeping tick. Long enough to be free, short enough that the
 // ambience scheduler always has work queued past the audio callback.
@@ -260,6 +305,33 @@ export function createAudio(options = {}) {
   const voices = new Set();
   let cap = VOICE_CAP.high;
   let highFidelity = true;
+
+  /**
+   * Live step voices, and how far away each one is.
+   *
+   * A Map rather than a field on the voice so that kill() - which is called
+   * from four places and from onended - has one line to clean up and cannot
+   * leave a dead voice holding a slot in the pool.
+   */
+  const stepVoices = new Map();
+  let stepWindowAt = -1;
+  let stepStarts = 0;
+
+  /**
+   * WHAT WAS ASKED FOR, AND WHAT ACTUALLY SOUNDED.
+   *
+   * Two counters per sound name, because they answer different questions and
+   * the gap between them is the interesting one: `tried` is what the game
+   * wanted, `played` is what got a voice. A horde that requests four hundred
+   * ticks and plays sixty is working exactly as designed; one that requests
+   * four hundred and plays four hundred has no budget left for anything else.
+   *
+   * It exists for the harness, which cannot otherwise tell a sound that was
+   * scheduled from a sound that was heard - and this project's defining audio
+   * bug is the node that was built and never connected. It is two integer
+   * increments on a path that runs a few times a second.
+   */
+  const playCounts = new Map();
 
   let volume = options.volume ?? 0.85;
   let muted = false;
@@ -653,6 +725,52 @@ export function createAudio(options = {}) {
     }
     v.nodes.length = 0;
     voices.delete(v);
+    stepVoices.delete(v);
+  }
+
+  /**
+   * Take a slot in the step pool, or say no.
+   *
+   * The steal is the whole point. At the pool limit this finds the furthest
+   * step currently sounding and, if the new one is meaningfully closer, ends it
+   * and takes the slot. A player surrounded by scarabs then hears the ones
+   * beside them rather than whichever six happened to ask first.
+   *
+   * The half-metre margin stops two bodies at the same range trading the same
+   * slot back and forth every step, which would cost two allocations and a
+   * teardown per tick and sound like one stuttering scarab.
+   */
+  /**
+   * Is there room for a step at this range? Asks only; changes nothing.
+   *
+   * Split from the claim below because the order matters: stealing a slot and
+   * THEN discovering the general voice cap is full would have ended a scarab
+   * that was sounding perfectly well in exchange for silence.
+   */
+  function stepSlotOpen(dist) {
+    if (!ctx) return false;
+    const c = ctx.currentTime;
+    if (c - stepWindowAt >= STEP_WINDOW) { stepWindowAt = c; stepStarts = 0; }
+    if (stepStarts >= STEP_STARTS_PER_WINDOW) return false;
+
+    const pool = highFidelity ? STEP_POOL.high : STEP_POOL.low;
+    if (stepVoices.size < pool) return true;
+    let far = -1;
+    for (const d of stepVoices.values()) if (d > far) far = d;
+    return dist < far - 0.5;
+  }
+
+  /** Take the slot, ending the furthest step if that is what it costs. */
+  function claimStepSlot(v, dist) {
+    const pool = highFidelity ? STEP_POOL.high : STEP_POOL.low;
+    while (stepVoices.size >= pool) {
+      let furthest = null, far = -1;
+      for (const [sv, d] of stepVoices) if (d > far) { far = d; furthest = sv; }
+      if (!furthest) break;
+      kill(furthest);
+    }
+    stepStarts++;
+    stepVoices.set(v, dist);
   }
 
   // ---------------------------------------------------------------------------
@@ -1141,24 +1259,145 @@ export function createAudio(options = {}) {
   // ---------------------------------------------------------------------------
 
   /**
-   * A groan is two detuned sawtooths through parallel bandpass formants.
+   * THE ROSTER USED TO HAVE ONE THROAT.
    *
-   * The formants are what make it read as a throat rather than a synthesiser.
-   * Resonances near 570 / 1100 / 2400 Hz are roughly an open vowel; the detune
-   * between the two sawtooths gives the beat that makes it sound like a body
-   * rather than an oscillator. Pitch is randomised per call, so a horde is a
-   * crowd and not one voice played twenty times.
+   * Every enemy in this game played `groan` and was told apart by
+   * `spec.voicePitch`, one scalar, applied to the oscillator and to nothing
+   * else. The formant bank - 570 / 1100 / 2410 Hz, the thing that actually
+   * makes a sound read as a mouth - was identical on all six. That is why they
+   * all sounded like the same creature, and it is why the scarab, a beetle,
+   * sounded like a man moaning quickly: it WAS a man moaning quickly.
+   *
+   * Measured, before this table existed, over nine renders of each enemy's tell:
+   * all fifteen pairs sat within a third of an octave of each other in
+   * brightness and length, and the spectral-shape similarity between any two of
+   * them ran 0.87 to 0.995 against a scale where 1.0 is the same filter bank.
+   * Pitch cannot move that number. Only the bank can.
+   *
+   * So the bank moves. Each throat below owns its own formants, its own
+   * register, its own length and its own way of falling apart, and
+   * `voicePitch` goes back to being what it always claimed to be: which body
+   * this is, not which species.
+   *
+   *   shambler  the original, unchanged, so the enemy the whole game is tuned
+   *             against sounds exactly as it did.
+   *   husk      dry and fast. Formants an octave up, a third of the length, and
+   *             a papery breath over the top - it is a desiccated thing and it
+   *             shrieks rather than moans.
+   *   bound     enormous and slow. Formants down to a closed vowel, a sub sine
+   *             under it, and nearly three seconds long.
+   *   censer    NOT a groan at all. It is the only enemy that stands still and
+   *             watches, and its tell has to carry across a room over the
+   *             bodies in front of the player, so it intones: near-monotone,
+   *             vibrato'd, narrow high-Q formants. A chant, not a moan.
+   *
+   * A caller that names no throat gets the shambler, so `enemies/boss.js` -
+   * which is not this pass's to touch - keeps the voice it was tuned with.
+   */
+  const THROATS = {
+    shambler: {
+      base: [62, 104], dur: [0.75, 1.5],
+      formants: [[570, 9, 1.0], [1100, 11, 0.55], [2410, 14, 0.22]],
+      lean: [[570, 9, 1.0], [1100, 11, 0.50]],
+      peak: 0.30, attack: 0.10, hold: 0.35, decay: 0.65,
+      sagUp: [1.02, 1.14], sagDown: [0.78, 0.94],
+      detune: [-11, 14],
+    },
+
+    /**
+     * Dried out. The formants sit where a mouth with no soft tissue left in it
+     * would resonate, the whole event is a third of a shambler's length, and
+     * `breath` is the layer that does most of the work: bandpassed noise riding
+     * the same envelope, which is the sound of air moving through something
+     * that has no business breathing.
+     */
+    husk: {
+      base: [150, 205], dur: [0.26, 0.46],
+      /**
+       * The top formant is 0.18 rather than the shambler's 0.22, and the breath
+       * is narrow (Q 1.8) rather than the wide band it started as, and both of
+       * those were pulled DOWN after measuring rather than chosen by ear.
+       *
+       * The first draft put the husk's spectral centroid at 3060 Hz. That is a
+       * perfectly good shriek and it broke the roster: the scarab has to sit a
+       * clear octave above every voice in the game or the tap on stone starts
+       * competing with the brightest throat, and at 3060 the husk had eaten most
+       * of the gap. A wide breath band is where it went - Q 0.8 at 2.1 kHz is
+       * most of an octave of noise sitting directly under the scarab.
+       */
+      formants: [[790, 8, 1.0], [1620, 10, 0.55], [2800, 12, 0.18]],
+      lean: [[790, 8, 1.0], [1620, 10, 0.50]],
+      peak: 0.26, attack: 0.018, hold: 0.18, decay: 0.82,
+      sagUp: [1.00, 1.06], sagDown: [0.58, 0.74],
+      detune: [-23, 27],
+      breath: { amt: 0.26, hz: 1600, q: 1.8 },
+    },
+
+    /**
+     * The big one. Everything is lower and longer, and the sub sine is not
+     * decoration: at 0.62 voicePitch the fundamental lands near 30 Hz, which is
+     * felt rather than heard, and the half-frequency sine is what puts the mass
+     * back into the part of the spectrum a laptop speaker can actually move.
+     */
+    bound: {
+      base: [58, 80], dur: [1.7, 2.7],
+      formants: [[300, 8, 1.0], [640, 10, 0.42], [1150, 13, 0.10]],
+      lean: [[300, 8, 1.0], [640, 10, 0.40]],
+      peak: 0.30, attack: 0.22, hold: 0.40, decay: 0.60,
+      sagUp: [1.01, 1.08], sagDown: [0.72, 0.88],
+      detune: [-7, 9],
+      sub: 0.42,
+    },
+
+    /**
+     * A CHANT, AND THE STEADINESS IS THE WHOLE CUE.
+     *
+     * Every other throat here sags: the pitch falls across the sound, because a
+     * body running out of air does that, and constant pitch reads as mechanical.
+     * This one deliberately does not. It holds its note, wavers on a slow
+     * vibrato, and that is what the ear separates first - long before it gets to
+     * timbre, it has already heard that this one is not dying, it is singing.
+     *
+     * The formants are narrow (Q 14 to 18 against the shambler's 9 to 14) and
+     * low, which is a closed, nasal intonation rather than an open vowel. It has
+     * to be tellable from the bodies actually in front of the player, because
+     * this enemy's threat is that it is somewhere else.
+     */
+    censer: {
+      base: [128, 150], dur: [1.2, 1.9],
+      formants: [[430, 14, 1.0], [880, 16, 0.45], [1800, 18, 0.12]],
+      lean: [[430, 14, 1.0], [880, 16, 0.42]],
+      peak: 0.28, attack: 0.26, hold: 0.50, decay: 0.50,
+      sagUp: [1.00, 1.02], sagDown: [0.96, 1.00],
+      detune: [-5, 6],
+      vibrato: { hz: [4.6, 6.2], depth: 0.017 },
+    },
+  };
+
+  /**
+   * A voice: detuned sawtooths through parallel bandpass formants.
+   *
+   * The formants are what make it read as a throat rather than a synthesiser,
+   * and the detune between the two sawtooths gives the beat that makes it sound
+   * like a body rather than an oscillator. Which formants, which register and
+   * how long is the throat's business; everything below is the same machine
+   * driven by the table above.
    */
   function groan(opts = {}) {
+    const T = THROATS[opts.throat] || THROATS.shambler;
+
     const v = voice({ dest: opts.dest, send: opts.send ?? 0.45, gain: opts.gain ?? 1 });
     if (!v) return false;
 
     const t = now();
-    const base = rand(62, 104) * (opts.pitch ?? 1);
-    const dur = rand(0.75, 1.5);
+    const base = rand(T.base[0], T.base[1]) * (opts.pitch ?? 1);
+    const dur = rand(T.dur[0], T.dur[1]);
 
     const out = gain(v);
-    out.connect(v.out);
+    // A throat is a body in a room. Nothing about the elevation cue is right
+    // for it, but routing it through the same helper costs one branch and keeps
+    // every enemy sound on one path to the output.
+    out.connect(skyward(v, opts.elev));
 
     // The sawtooths meet here and fan out into the formants. Nothing reaches
     // the output unfiltered, which is the point: raw saw is a synth patch.
@@ -1166,9 +1405,7 @@ export function createAudio(options = {}) {
 
     // Low fidelity drops to two formants, which halves the filter count across
     // a whole horde and is barely audible on any single enemy.
-    const formants = highFidelity
-      ? [[570, 9, 1.0], [1100, 11, 0.55], [2410, 14, 0.22]]
-      : [[570, 9, 1.0], [1100, 11, 0.50]];
+    const formants = highFidelity ? T.formants : T.lean;
 
     for (const [hz, q, amt] of formants) {
       const f = filt(v, 'bandpass', hz * rand(0.9, 1.12), q);
@@ -1176,16 +1413,512 @@ export function createAudio(options = {}) {
       mix.connect(f); f.connect(fg); fg.connect(out);
     }
 
-    const end = env(out.gain, t, 0.30, 0.10, dur * 0.35, dur * 0.65);
+    const end = env(out.gain, t, T.peak, T.attack, dur * T.hold, dur * T.decay);
 
-    for (const detune of [-11, 14]) {
+    // The vibrato, if this throat holds a note rather than losing one. Wired
+    // into the oscillators' frequency as a signal, so it sums with the glide
+    // automation instead of fighting it for the same AudioParam.
+    let vib = null;
+    if (T.vibrato && highFidelity) {
+      const lfo = osc(v, 'sine', rand(T.vibrato.hz[0], T.vibrato.hz[1]));
+      vib = gain(v, base * T.vibrato.depth);
+      lfo.connect(vib);
+      fire(v, lfo, t, end + 0.03);
+    }
+
+    for (const detune of T.detune) {
       const o = osc(v, 'sawtooth', base);
       o.detune.value = detune;
-      // A slow sag in pitch across the groan. Constant pitch sounds mechanical.
-      glide(o.frequency, t, base * rand(1.02, 1.14), base * rand(0.78, 0.94), dur);
+      // The sag: pitch falling across the sound. A throat that holds its note
+      // has a sagDown near 1.0 and this becomes the near-flat line it wants.
+      glide(o.frequency, t, base * rand(T.sagUp[0], T.sagUp[1]),
+            base * rand(T.sagDown[0], T.sagDown[1]), dur);
+      if (vib) vib.connect(o.frequency);
       o.connect(mix);
       fire(v, o, t, end + 0.03);
     }
+
+    // Air moving through it, for the throats that have any.
+    if (T.breath && highFidelity) {
+      const n = noiseSrc(v);
+      const nf = filt(v, 'bandpass', T.breath.hz, T.breath.q);
+      const ng = gain(v);
+      n.connect(nf); nf.connect(ng); ng.connect(out);
+      env(ng.gain, t, T.peak * T.breath.amt, T.attack, dur * T.hold, dur * T.decay);
+      fire(v, n, t, end + 0.03, noiseOffset(dur + 0.1));
+    }
+
+    // The mass under the big one.
+    if (T.sub) {
+      const s = osc(v, 'sine', base * 0.5);
+      const sg = gain(v);
+      glide(s.frequency, t, base * 0.5, base * 0.4, dur);
+      s.connect(sg); sg.connect(v.out);
+      env(sg.gain, t, T.peak * T.sub, T.attack, dur * T.hold, dur * T.decay);
+      fire(v, s, t, end + 0.03);
+    }
+
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // the things that are not throats
+  // ---------------------------------------------------------------------------
+
+  /**
+   * THE ELEVATION CUE, AND WHY IT IS A FILTER RATHER THAN A PANNER SETTING.
+   *
+   * Gold scarabs crawl walls and ceilings, so for the first time in this game a
+   * sound can be directly over the player's head. A PannerNode on HRTF is good
+   * at left and right and poor at up and down, and equal-power - which is what
+   * low fidelity falls back to - has no elevation information at all. Neither
+   * of them can tell you that the scuttling is on the ceiling.
+   *
+   * The ear does it with the pinna. Sound arriving from above reaches the ear
+   * canal without the shadowing the outer ear applies to sound from in front,
+   * and the result is a broad rise around seven to eight kilohertz - one of
+   * Blauert's directional bands, and the reason a sound EQ'd there is heard as
+   * higher even over headphones with no head movement at all.
+   *
+   * So that is what this does: one peaking filter at 7.4 kHz, scaled by how far
+   * overhead the source actually is, and nothing at all when the source is level
+   * with or below the player. One node, only when it is needed, and it stacks on
+   * top of whatever the panner is already doing rather than replacing it.
+   *
+   * The caller supplies `elev` as the sine of the elevation angle: the vertical
+   * component of the unit vector from the listener to the source, so straight
+   * overhead is 1 and level is 0.
+   */
+  const ELEV_HZ = 7600;
+  const ELEV_DB = 9.0;
+  // The band the pinna emphasises for sources in FRONT of the listener. Taking
+  // it out is the other half of the same cue and it doubles the contrast for
+  // one more node: measured, the boost alone moved a step's spectral centroid
+  // by 3 per cent, which is inside the draw-to-draw spread and therefore not a
+  // cue at all. The pair moves it by enough to survive being measured.
+  const ELEV_FRONT_HZ = 4000;
+  const ELEV_FRONT_DB = -5.5;
+  const ELEV_FLOOR = 0.12;
+
+  function skyward(v, elev) {
+    const e = clamp(elev || 0, -1, 1);
+    if (e <= ELEV_FLOOR) return v.out;
+    const p = filt(v, 'peaking', ELEV_HZ, 1.0);
+    p.gain.value = ELEV_DB * e;
+    p.connect(v.out);
+    const f = filt(v, 'peaking', ELEV_FRONT_HZ, 1.2);
+    f.gain.value = ELEV_FRONT_DB * e;
+    f.connect(p);
+    return f;
+  }
+
+  /**
+   * CHITIN.
+   *
+   * "The bug should sound like little steps on brick, coming toward you,
+   * because that's what they are." That is the brief, and it is also a very good
+   * fit for synthesis: a leg tapping stone is a short filtered transient, which
+   * is the one thing synthesis does better than anything else. There is nothing
+   * to model here - no glottis, no vocal tract, no vowel - just a small hard
+   * thing hitting a big hard thing.
+   *
+   * FOUR THINGS MAKE IT AN ANIMAL RATHER THAN A METRONOME:
+   *
+   *   IT IS A GROUP, NOT A TICK. Insects walk in alternating tripods - three
+   *   legs down, three legs swinging - so one step event is three taps, not one.
+   *   That is why `taps` is three and why they share a voice.
+   *
+   *   THE TAPS ARE NOT EVENLY SPACED and they are not the same colour. Each one
+   *   gets its own gap, its own centre frequency and its own length out of the
+   *   ranges below. A perfectly even tick is a machine; three taps at 14, 31 and
+   *   22 milliseconds with three different resonances is a creature.
+   *
+   *   THE RATE IS NOT IN HERE. It belongs to the actor, and enemies/mummy.js
+   *   drives it off distance covered rather than off a timer, so a scarab
+   *   charging you patters and one picking its way does not. Putting a loop in
+   *   this function would be the same mistake the old code made in a new place.
+   *
+   *   IT LIVES ABOVE EVERYTHING ELSE IN THE MIX. The taps sit at 3.4 to 7 kHz,
+   *   which is the 'high' band and above. The gunshot's weight is at 60 to 200,
+   *   its crack at 800 to 3000, and codecTick - which carries every word of
+   *   story text in this game - is a 336 Hz square through a 2.1 kHz bandpass or
+   *   a 168 through an 820. Nothing about a scarab is allowed in there.
+   *
+   * The body thump is the only low content and it is deliberately tiny: a
+   * 200 Hz sine at a twentieth of the tap level for thirty milliseconds, which
+   * is the mass behind the leg rather than a footfall. It comes off entirely
+   * when the source is overhead, because a body on a ceiling is not coupled to
+   * the floor the player is standing on.
+   */
+  const CHITIN = {
+    scarab: {
+      taps: 3,
+      gap: [0.014, 0.036],
+      // The floor is 3.8 kHz and it is a MIXING constraint, not a taste one:
+      // the band from 800 to 3000 Hz belongs to the gunshot's crack and to
+      // codecTick, and a tap centred at 3.4 with its envelope's sidebands
+      // either side of it was putting energy squarely in the middle of it.
+      hz: [3800, 7200], q: [6, 13],
+      dur: [0.004, 0.010],
+      gain: [0.22, 0.38],
+      bodyHz: [180, 260], bodyGain: 0.050, bodyDur: 0.030,
+      ring: 0,
+      // Stridulation: the shell rasp it makes when it rears to bite. Fast
+      // amplitude modulation on filtered noise, which is what a file drawn
+      // across a ridge actually is.
+      rasp: { hz: [2600, 4300], q: 2.2, am: [46, 78], dur: [0.16, 0.30], gain: 0.17 },
+
+      /**
+       * A ROUND OFF THE CARAPACE. No sine under it, and that is the whole point.
+       *
+       * bodyHit is a 620 Hz lowpass over a 105 Hz sine, and that sine is exactly
+       * what makes it read as meat: a wet mass absorbing a round. A beetle has
+       * no such mass. It has a thin hard shell over a void, so the impact is a
+       * knock plus a short resonance, and there is nothing underneath to thud.
+       *
+       * The two ring partials are deliberately not in a whole-number ratio. A
+       * ratio is a pitched note; a carapace is a lumpy irregular cavity that
+       * rings at whatever its geometry says rather than at a fundamental with a
+       * harmonic series stacked over it.
+       */
+      // The partials sit at 1.68 and 2.48 kHz rather than the 1.15 and 1.72 they
+      // started at. A cavity resonates higher the smaller it is, and the thing
+      // being struck is a shell the size of a dog's back, not a chest - the
+      // first draft measured a spectral centroid of 2200 Hz against the 1163 of
+      // the flesh thud it replaced, which is under an octave of separation and
+      // not enough to be sure of by ear.
+      hit: { hz: 3100, q: 3.5, dur: 0.018, gain: 0.30,
+             ring: [1680, 2480], ringGain: 0.09, ringDecay: 0.055 },
+
+      /**
+       * THE ORDINARY SCARAB'S CRIT IS ITS SKULL, and the roster is NOT uniform
+       * about that - see the gold scarab's block below, where it is not.
+       *
+       * buildScarab tags the head, the sockets and the jaws 'head', so a crit
+       * here is the same act it is on every humanoid in the game: a hard thing
+       * broken. It gets the shatter treatment - a dry bright entry, the
+       * descending ping that is this game's shared "you earned 100" marker, and
+       * fragments leaving.
+       */
+      crit: { hz: 3000, q: 4.0, dur: 0.014, gain: 0.34,
+              pingFrom: 2600, pingTo: 1000, pingMs: 100, pingGain: 0.20,
+              vent: false, fragHz: [3000, 6200], fragGain: 0.13 },
+    },
+
+    /**
+     * Plated, and heavier. Same creature, three changes: the taps are lower and
+     * longer because the leg hitting the stone is armoured and has mass behind
+     * it, the gaps are wider because the body is slower, and there is a genuine
+     * metallic ring on top - two inharmonic partials, short, which is what gold
+     * plate over chitin does that bare chitin does not.
+     *
+     * The ring is dropped at low fidelity. It is four of the fourteen nodes a
+     * gold scarab's step costs and it is the layer whose absence is least
+     * noticeable in a fight.
+     */
+    goldscarab: {
+      taps: 3,
+      gap: [0.022, 0.050],
+      // Lower than the scarab's because the leg is armoured and has mass behind
+      // it, and it stops exactly at the highpass corner the tap group runs
+      // through. Below 3 kHz is the gunshot's crack and the codec's speech, and
+      // a tap placed there would only be attenuated back out again - the weight
+      // this variant needs comes from the body thump and the ring, both of
+      // which have their own route.
+      hz: [3000, 5400], q: [9, 18],
+      dur: [0.008, 0.018],
+      gain: [0.24, 0.40],
+      bodyHz: [120, 185], bodyGain: 0.075, bodyDur: 0.045,
+      ring: 0.075, ringHz: [3300, 5200], ringDecay: [0.050, 0.090],
+      rasp: { hz: [1500, 2700], q: 3.0, am: [26, 44], dur: [0.22, 0.42], gain: 0.19 },
+
+      // A round off GOLD PLATE. Higher and longer-ringing than bare chitin,
+      // because that is what a metal skin over a cavity does - it is the same
+      // argument the step's ring block makes, at the moment of impact.
+      hit: { hz: 3400, q: 4.5, dur: 0.022, gain: 0.32,
+             ring: [2200, 3150], ringGain: 0.12, ringDecay: 0.085 },
+
+      /**
+       * THE GOLD SCARAB'S CRIT IS NOT ITS HEAD, AND THIS IS THE ONE SOUND IN THE
+       * GAME THAT HAS TO TEACH THAT.
+       *
+       * buildGoldScarab re-tags the skull, the sockets and the jaws to 'body'
+       * and hands 'head' to the abdomen and the vent panel on the back of it.
+       * The entire variant is built to punish the headshot habit the first six
+       * waves spend teaching, and the payout follows the region - so a player who
+       * hears the crit cue when they shoot the skull has been taught a lie about
+       * where the hundred comes from.
+       *
+       * Two consequences, and both fall out of the region tags for free:
+       *
+       *   A SKULL HIT GETS `hit`, not `crit`, because the skull is region
+       *   'body' on this variant. The armour-plate knock is the correct and
+       *   honest answer: nothing happened, try somewhere else.
+       *
+       *   THE VENT GETS A PUNCTURE RATHER THAN A SHATTER. It is the one gap in
+       *   the armour, so the round goes IN rather than off - low, wet and
+       *   hollow where the scarab's skull crit is high and dry, with the shared
+       *   descending ping over it so it still reads as the crit, and a hiss
+       *   venting out of the hole afterwards instead of fragments scattering.
+       */
+      // The escaping gas sits at 3.4 kHz, not the 2.4 it started at, and that is
+      // the physically honest place for it as well as the polite one: a jet
+      // through a small aperture is high and hissy, not midrange. At 2.4 it was
+      // sitting on top of codecTick's band and measured 2.4 dB hotter there than
+      // headshotHit, which is the cue this game already fires on every crit and
+      // therefore the ceiling this one has to live under.
+      /**
+       * THE PING IS AN OCTAVE UNDER THE SCARAB'S, and it was measurement rather
+       * than taste that put it there.
+       *
+       * It started at 1500 sweeping to 520, and the band table said this sound
+       * carried 11 dB MORE energy in 800-3000 Hz than in the octave below it -
+       * which was the tell. The low entry is not what sits in the codec's band;
+       * a triangle whose fundamental sweeps from 1500 spends its whole 154 ms
+       * crossing the middle of it, and it measured 2.25 dB hotter there than
+       * headshotHit, the loudest crit cue in the game and this one's ceiling.
+       *
+       * Sweeping 1100 to 380 puts the fundamental under the band for most of its
+       * life. It also buys the thing the design wanted anyway: the scarab's
+       * skull crit pings 2600 to 1000 and this one now answers a full octave
+       * below it, so the two crits are told apart by register before anything
+       * else - which is correct, because one is a small skull breaking and the
+       * other is a round going into a body the size of a wheelbarrow.
+       */
+      crit: { hz: 700, q: 2.2, dur: 0.032, gain: 0.26,
+              pingFrom: 1100, pingTo: 380, pingMs: 140, pingGain: 0.22,
+              vent: true, ventHz: 3800, ventQ: 1.0, ventDur: 0.18, ventGain: 0.085 },
+    },
+  };
+
+  /**
+   * ONE STEP: a tripod of leg taps on stone.
+   *
+   * opts.dist is how far the body is from the player, in metres, and it is not
+   * optional in the game - it is what the step pool allocates on. A caller that
+   * omits it is treated as standing on the player, which is the right default
+   * for a bench and the wrong one for a horde.
+   */
+  function chitinStep(opts = {}) {
+    const C = CHITIN[opts.chitin] || CHITIN.scarab;
+    const dist = opts.dist ?? 0;
+
+    if (!stepSlotOpen(dist)) return false;
+
+    const elev = clamp(opts.elev || 0, -1, 1);
+    const v = voice({
+      dest: opts.dest,
+      // A ceiling couples a tick into the room more than a floor does, and the
+      // extra send is most of what sells "that is above me" once the filter has
+      // told the ear where to look.
+      send: opts.send ?? (0.16 + 0.14 * Math.max(elev, 0)),
+      gain: opts.gain ?? 1,
+    });
+    if (!v) return false;
+    claimStepSlot(v, dist);
+
+    const t = now();
+    const pitch = opts.pitch ?? 1;
+    const skyOut = skyward(v, elev);
+
+    /**
+     * THE BAND PLAN, ENFORCED RATHER THAN INTENDED, and it took a measurement
+     * to find out it was not being honoured.
+     *
+     * The taps are bandpassed at three and a half to seven kilohertz, so on
+     * paper nothing about them is anywhere near codecTick's 820 to 2100 Hz.
+     * Measured, a single step put as much energy in the 800-3000 Hz band as a
+     * codec tick did, and six of them - the step pool's whole budget - lifted
+     * that band by nearly eight decibels underneath a line of story text.
+     *
+     * The leak is not the filters, it is the ENVELOPE. Gating a signal with a
+     * 0.6 ms attack is multiplying it by an edge, and an edge that fast has
+     * sidebands more than a kilohertz wide; the gain node sits after the
+     * bandpass, so the sidebands are generated downstream of the thing that was
+     * supposed to contain them. Sharpening a tick past a certain point stops
+     * making it sharper and starts making it broadband.
+     *
+     * Three corrections, and the first two were not enough on their own -
+     * measured, they left the pool lifting the codec's band by ten decibels.
+     *
+     *   THE ATTACK goes to 1.5 ms. Still far shorter than the ear resolves as
+     *   an onset, and it more than halves the sideband width. Softer than that
+     *   and the tap stops being a tap.
+     *
+     *   THE TAP FLOOR moves up, so the sidebands that remain have somewhere to
+     *   land that is not the codec's band. See CHITIN: the scarab now starts at
+     *   3.8 kHz rather than 3.4, which puts its skirt above 3 kHz instead of
+     *   through it.
+     *
+     *   TWO HIGHPASSES, not one, AT THE TOP OF THE PROTECTED BAND. A single
+     *   pole pair at 1800 is barely a decibel down at 2 kHz, which is the middle
+     *   of the band being protected - it looked like a fix and measured like
+     *   nothing, twice. The corner is 3 kHz because that is exactly where the
+     *   crack band ends, which turns the whole arrangement into a rule anyone
+     *   can check rather than a number somebody picked: NOTHING A SCARAB'S LEGS
+     *   DO IS ALLOWED BELOW 3 kHz. Cascaded there it is sixteen decibels down at
+     *   2 kHz and six at the corner itself.
+     *
+     * The body thump deliberately bypasses all of it - it is the one part of
+     * this sound that is allowed to be low, and it goes straight to the voice.
+     */
+    const out = filt(v, 'highpass', 3000, 0.7);
+    const out2 = filt(v, 'highpass', 3000, 0.7);
+    out.connect(out2); out2.connect(skyOut);
+
+    // One noise source for the whole group, read once and gated three times.
+    // Three separate sources would be three more nodes per step for a
+    // difference nobody can hear, and this is the sound that happens most often
+    // in the game.
+    const span = 0.02 + C.gap[1] * C.taps;
+    const n = noiseSrc(v);
+
+    let at = t;
+    let last = t;
+    for (let i = 0; i < C.taps; i++) {
+      const dur = rand(C.dur[0], C.dur[1]);
+      const f = filt(v, 'bandpass', rand(C.hz[0], C.hz[1]) * pitch, rand(C.q[0], C.q[1]));
+      const g = gain(v);
+      n.connect(f); f.connect(g); g.connect(out);
+      // The first leg down is the loudest; the two behind it are lighter, which
+      // is what stops three taps reading as three separate animals.
+      const amp = rand(C.gain[0], C.gain[1]) * (i === 0 ? 1 : rand(0.45, 0.78));
+      last = env(g.gain, at, amp, 0.0015, 0, dur);
+      at += rand(C.gap[0], C.gap[1]);
+    }
+    fire(v, n, t, Math.max(last, at) + 0.02, noiseOffset(span + 0.05));
+
+    // The mass behind the leg. It fades out continuously as the body climbs -
+    // a scarab on a ceiling is not coupled to the floor the player is standing
+    // on - and is skipped outright once the fade has taken it under a sixth,
+    // which is two nodes saved on exactly the bodies that are furthest away.
+    if (highFidelity && elev < 0.85) {
+      const o = osc(v, 'sine', rand(C.bodyHz[0], C.bodyHz[1]) * pitch);
+      const og = gain(v);
+      glide(o.frequency, t, rand(C.bodyHz[0], C.bodyHz[1]) * pitch, C.bodyHz[0] * 0.7 * pitch,
+            C.bodyDur);
+      o.connect(og); og.connect(v.out);
+      const oEnd = env(og.gain, t, C.bodyGain * (1 - Math.max(elev, 0)), 0.002, 0, C.bodyDur);
+      fire(v, o, t, oEnd + 0.02);
+    }
+
+    // Gold plate over chitin. Two partials, deliberately not in a ratio, so it
+    // rings rather than chimes.
+    if (C.ring && highFidelity) {
+      const hz = rand(C.ringHz[0], C.ringHz[1]) * pitch;
+      for (const [mul, amt] of [[1, 1], [1.41, 0.55]]) {
+        const o = osc(v, 'sine', hz * mul);
+        const og = gain(v);
+        o.connect(og); og.connect(out);
+        const d = rand(C.ringDecay[0], C.ringDecay[1]);
+        const e = env(og.gain, t + 0.001, C.ring * amt, 0.0008, 0, d);
+        fire(v, o, t + 0.001, e + 0.02);
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * The rasp: stridulation, and the scarab's whole vocabulary above the legs.
+   *
+   * It replaces the groan on a scarab - the wind-up tell and the idle tell both
+   * - and it has to be structurally incapable of sounding like a mouth, so it
+   * has no oscillator in it at all. Bandpassed noise, amplitude modulated in the
+   * forties to seventies, which is a file drawn across a ridge and is exactly
+   * what the animal is doing.
+   *
+   * The modulation is an oscillator wired into a gain param rather than
+   * scheduled automation, the same trick deathRattle uses: it is cheaper and it
+   * is the only way to get a fast irregular-sounding tremolo without scheduling
+   * dozens of ramps.
+   */
+  function chitinRasp(opts = {}) {
+    const C = CHITIN[opts.chitin] || CHITIN.scarab;
+    const R = C.rasp;
+
+    const v = voice({ dest: opts.dest, send: opts.send ?? 0.28, gain: opts.gain ?? 1 });
+    if (!v) return false;
+
+    const t = now();
+    const pitch = opts.pitch ?? 1;
+    const dur = rand(R.dur[0], R.dur[1]);
+    const out = skyward(v, opts.elev);
+
+    const g = gain(v);
+    g.connect(out);
+
+    const f = filt(v, 'bandpass', rand(R.hz[0], R.hz[1]) * pitch, R.q);
+    f.connect(g);
+
+    // The teeth. 0.55 static plus a 0.45 swing means the gain reaches nearly
+    // zero between strokes, which is what makes it a rasp and not a warble.
+    const trem = gain(v, 0.55);
+    trem.connect(f);
+    const end = env(g.gain, t, R.gain, 0.008, dur * 0.25, dur * 0.75);
+
+    const lfo = osc(v, 'square', rand(R.am[0], R.am[1]));
+    const lfoAmt = gain(v, 0.45);
+    lfo.connect(lfoAmt); lfoAmt.connect(trem.gain);
+    fire(v, lfo, t, end + 0.02);
+
+    const n = noiseSrc(v);
+    n.connect(trem);
+    fire(v, n, t, end + 0.02, noiseOffset(dur + 0.1));
+
+    return true;
+  }
+
+  /**
+   * A shell coming apart: the scarab's death, and the one place it is allowed
+   * to be loud.
+   *
+   * Three layers and none of them is a voice. A dry snap high up, a crunch
+   * sweeping down under it as the carapace folds, and then the legs and the
+   * pieces scattering - which is the layer that says this was a thing with an
+   * exoskeleton rather than a thing with lungs.
+   */
+  function shellCrack(opts = {}) {
+    const C = CHITIN[opts.chitin] || CHITIN.scarab;
+
+    const v = voice({ dest: opts.dest, send: opts.send ?? 0.42, gain: opts.gain ?? 1 });
+    if (!v) return false;
+
+    const t = now();
+    const pitch = opts.pitch ?? 1;
+    const out = skyward(v, opts.elev);
+
+    // The snap.
+    const s = noiseSrc(v);
+    const sf = filt(v, 'highpass', 2300 * pitch, 0.9);
+    const sg = gain(v);
+    s.connect(sf); sf.connect(sg); sg.connect(out);
+    const sEnd = env(sg.gain, t, 0.36, 0.0006, 0, 0.030);
+    fire(v, s, t, sEnd + 0.02, noiseOffset(0.05));
+
+    // The crunch: the carapace folding, which is a resonance collapsing.
+    const c = noiseSrc(v);
+    const cf = filt(v, 'bandpass', 1900 * pitch, 3.2);
+    const cg = gain(v);
+    glide(cf.frequency, t, 1900 * pitch, 520 * pitch, 0.14);
+    c.connect(cf); cf.connect(cg); cg.connect(out);
+    const cEnd = env(cg.gain, t, 0.26, 0.003, 0, 0.15);
+    fire(v, c, t, cEnd + 0.02, noiseOffset(0.18));
+
+    // The pieces. Same tap machinery as a step, scattered wide and falling
+    // quiet, so a death is audibly made of the same material as a footstep.
+    const p = noiseSrc(v);
+    let at = t + 0.05, last = at;
+    const pieces = highFidelity ? 4 : 2;
+    for (let i = 0; i < pieces; i++) {
+      const f = filt(v, 'bandpass', rand(C.hz[0], C.hz[1]) * pitch, rand(C.q[0], C.q[1]));
+      const g = gain(v);
+      p.connect(f); f.connect(g); g.connect(out);
+      last = env(g.gain, at, rand(0.06, 0.17) * (1 - i / (pieces + 1)), 0.0008, 0,
+                 rand(0.006, 0.016));
+      at += rand(0.030, 0.095);
+    }
+    fire(v, p, t + 0.05, Math.max(last, at) + 0.02, noiseOffset(0.5));
 
     return true;
   }
@@ -1234,15 +1967,28 @@ export function createAudio(options = {}) {
     const v = voice({ dest: opts.dest, send: opts.send ?? 0.50, gain: opts.gain ?? 1 });
     if (!v) return false;
 
+    /**
+     * The throat this body had while it was alive, if it named one.
+     *
+     * A death that came out of a different mouth than the groan did is the same
+     * bug as the horde sharing one throat, played once per enemy instead of
+     * every four seconds. The register is taken from the throat and dropped to
+     * about two thirds - which is what a larynx does when it stops being held
+     * up - and the resonance the rattle sweeps down from is the throat's own
+     * first formant rather than a fixed 480 Hz.
+     */
+    const T = THROATS[opts.throat] || THROATS.shambler;
+    const top = T.formants[0][0] * 0.85;
+
     const t = now();
-    const base = rand(44, 66) * (opts.pitch ?? 1);
-    const dur = rand(1.1, 1.7);
+    const base = rand(T.base[0], T.base[1]) * 0.68 * (opts.pitch ?? 1);
+    const dur = rand(T.dur[0], T.dur[1]) * 1.25;
 
     const out = gain(v);
-    out.connect(v.out);
+    out.connect(skyward(v, opts.elev));
 
-    const f = filt(v, 'bandpass', 480, 4.5);
-    glide(f.frequency, t, 480, 180, dur);
+    const f = filt(v, 'bandpass', top, 4.5);
+    glide(f.frequency, t, top, top * 0.38, dur);
     f.connect(out);
 
     const end = env(out.gain, t, 0.30, 0.06, dur * 0.2, dur * 0.8);
@@ -1331,6 +2077,137 @@ export function createAudio(options = {}) {
     c.connect(cf); cf.connect(cg); cg.connect(v.out);
     const cEnd = env(cg.gain, t, 0.24, 0.003, 0, 0.12);
     fire(v, c, t, cEnd + 0.02, noiseOffset(0.14));
+
+    return true;
+  }
+
+  /**
+   * A ROUND INTO A CARAPACE, which is the chitin answer to bodyHit.
+   *
+   * bodyHit and headshotHit were played for every enemy in the game, exactly as
+   * groan was, and they are built out of the same assumption: that the thing
+   * being shot is a wrapped human body. A 620 Hz lowpass over a 105 Hz sine IS
+   * meat - a wet mass absorbing a round - and it is the wrong physics for an
+   * insect. A beetle is a thin hard shell over a void.
+   *
+   * So this has no sine in it at all. A knock, and then the cavity ringing
+   * behind it, which is what a hard hollow object does when you hit it and what
+   * a body emphatically does not.
+   *
+   * NOT ROUTED THROUGH A PANNER, deliberately and exactly as bodyHit is not.
+   * systems/damage.js plays hit confirmation dry and centred because it is
+   * feedback about the player's own trigger pull, not an event in the room; the
+   * body's own reaction - the stagger, the shell coming apart - is the part that
+   * arrives positionally, from the actor's emitter.
+   */
+  function chitinHit(opts = {}) {
+    const C = CHITIN[opts.chitin] || CHITIN.scarab;
+    const H = C.hit;
+
+    const v = voice({ dest: opts.dest, send: opts.send ?? 0.22, gain: opts.gain ?? 1 });
+    if (!v) return false;
+
+    const t = now();
+    const pitch = (opts.pitch ?? 1) * rand(0.94, 1.08);
+    const out = skyward(v, opts.elev);
+
+    // The knock: the round arriving on plate.
+    const n = noiseSrc(v);
+    const f = filt(v, 'bandpass', H.hz * pitch, H.q);
+    const g = gain(v);
+    n.connect(f); f.connect(g); g.connect(out);
+    const end = env(g.gain, t, H.gain, 0.0008, 0, H.dur);
+    fire(v, n, t, end + 0.02, noiseOffset(H.dur + 0.02));
+
+    // The shell behind it. Two partials, not in a ratio - see the table.
+    if (highFidelity) {
+      for (let i = 0; i < H.ring.length; i++) {
+        const o = osc(v, 'sine', H.ring[i] * pitch * rand(0.97, 1.03));
+        const og = gain(v);
+        o.connect(og); og.connect(out);
+        const rEnd = env(og.gain, t, H.ringGain * (i === 0 ? 1 : 0.62), 0.001, 0,
+                         H.ringDecay * rand(0.85, 1.15));
+        fire(v, o, t, rEnd + 0.02);
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * THE CRIT ON A CHITIN BODY, AND IT IS NOT THE SAME ACT ON BOTH OF THEM.
+   *
+   * `region === 'head'` does not mean a skull here. It means whatever
+   * enemies/variants.js tagged 'head', and the two chitin variants tag it
+   * differently ON PURPOSE:
+   *
+   *   the scarab      tags its actual head, sockets and jaws. A crit is a skull
+   *                   broken, like everywhere else in the game.
+   *   the gold scarab tags the ABDOMEN and the vent panel, and re-tags the skull
+   *                   to 'body'. Its whole design is that the headshot habit the
+   *                   first six waves teach is the wrong play against it.
+   *
+   * Both of those are the 100 payout, so both get the descending ping - that is
+   * the cue the player has learned means a crit, and it is the one layer these
+   * two share. What differs underneath it is what actually happened: a hard
+   * thing shattering, or a round finding the one hole in the armour. `vent`
+   * picks which, and it comes off the table rather than off a variant name, so
+   * a third chitin body would declare its own answer rather than inherit one.
+   */
+  function chitinCrit(opts = {}) {
+    const C = CHITIN[opts.chitin] || CHITIN.scarab;
+    const K = C.crit;
+
+    const v = voice({ dest: opts.dest, send: opts.send ?? 0.30, gain: opts.gain ?? 1 });
+    if (!v) return false;
+
+    const t = now();
+    const pitch = (opts.pitch ?? 1) * rand(0.96, 1.05);
+    const out = skyward(v, opts.elev);
+
+    // The entry. High and dry through a skull, low and wet through a vent.
+    const n = noiseSrc(v);
+    const f = filt(v, 'bandpass', K.hz * pitch, K.q);
+    const g = gain(v);
+    n.connect(f); f.connect(g); g.connect(out);
+    const end = env(g.gain, t, K.gain, 0.0008, 0, K.dur);
+    fire(v, n, t, end + 0.02, noiseOffset(K.dur + 0.02));
+
+    // The ping. The shared marker, and the reason a crit is legible as a crit
+    // rather than merely as a different noise: it is the same descending
+    // gesture headshotHit makes, at this body's own pitch.
+    const o = osc(v, 'triangle', K.pingFrom * pitch);
+    const og = gain(v);
+    glide(o.frequency, t, K.pingFrom * pitch, K.pingTo * pitch, K.pingMs / 1000);
+    o.connect(og); og.connect(out);
+    const pEnd = env(og.gain, t, K.pingGain, 0.001, 0, K.pingMs / 1000 * 1.1);
+    fire(v, o, t, pEnd + 0.02);
+
+    if (!highFidelity) return true;
+
+    if (K.vent) {
+      // Pressure leaving through the hole that was just made.
+      const h = noiseSrc(v);
+      const hf = filt(v, 'bandpass', K.ventHz * pitch, K.ventQ);
+      const hg = gain(v);
+      h.connect(hf); hf.connect(hg); hg.connect(out);
+      const hEnd = env(hg.gain, t + 0.006, K.ventGain, 0.010, 0, K.ventDur);
+      fire(v, h, t + 0.006, hEnd + 0.02, noiseOffset(K.ventDur + 0.05));
+    } else {
+      // Fragments. Two, sharing one source, on the step's own tap machinery -
+      // so a skull coming apart is audibly made of the same material the legs
+      // are.
+      const p = noiseSrc(v);
+      let at = t + 0.012, last = at;
+      for (let i = 0; i < 2; i++) {
+        const ff = filt(v, 'bandpass', rand(K.fragHz[0], K.fragHz[1]) * pitch, rand(5, 11));
+        const fg = gain(v);
+        p.connect(ff); ff.connect(fg); fg.connect(out);
+        last = env(fg.gain, at, K.fragGain * (i === 0 ? 1 : 0.7), 0.0008, 0, rand(0.006, 0.014));
+        at += rand(0.018, 0.045);
+      }
+      fire(v, p, t + 0.012, Math.max(last, at) + 0.02, noiseOffset(0.12));
+    }
 
     return true;
   }
@@ -1898,6 +2775,10 @@ export function createAudio(options = {}) {
 
   const SOUNDS = {
     groan, footfall, swipe, deathRattle, bodyHit, headshotHit,
+    // The horde's non-vocal half. A scarab plays no groan and no deathRattle at
+    // all; these are its entire vocabulary, and none of them contains an
+    // oscillator that could be mistaken for a mouth.
+    chitinStep, chitinRasp, shellCrack, chitinHit, chitinCrit,
     waveStart, bossHorn, boxJingle, shrineChime, purchaseDenied, roundEnd,
     // One per revealed character, from ui/pacer.js. It goes through the same
     // router as everything else rather than getting a private entry point,
@@ -1916,9 +2797,17 @@ export function createAudio(options = {}) {
   function play(name, opts = {}) {
     ensure();
     if (!ctx) return false;
-    if (WEAPONS[name]) return shot(name, opts);
-    const fn = SOUNDS[name];
-    return fn ? fn(opts) : false;
+
+    // Both numbers, and the gap between them is the point. See playCounts.
+    let rec = playCounts.get(name);
+    if (!rec) { rec = { tried: 0, played: 0 }; playCounts.set(name, rec); }
+    rec.tried++;
+
+    const ok = WEAPONS[name] ? shot(name, opts)
+      : SOUNDS[name] ? SOUNDS[name](opts)
+        : false;
+    if (ok) rec.played++;
+    return ok;
   }
 
   // ---------------------------------------------------------------------------
@@ -2024,17 +2913,29 @@ export function createAudio(options = {}) {
 
     play,
 
+    /** Every sound the router knows, so a caller can find out rather than guess. */
+    soundNames() { return Object.keys(SOUNDS); },
+
     stats() {
+      const plays = {};
+      for (const [k, v] of playCounts) plays[k] = { tried: v.tried, played: v.played };
       return {
         state: ctx ? ctx.state : 'uncreated',
         voices: voices.size,
         cap,
+        // How much of the voice count is the horde's legs. Reported separately
+        // because it is the one class of sound with its own budget, and a
+        // number that is always at the pool limit means the limit is the thing
+        // being heard rather than the scarabs.
+        stepVoices: stepVoices.size,
+        stepPool: highFidelity ? STEP_POOL.high : STEP_POOL.low,
         space: spaceName,
         ambience: ambienceProfile,
         handles: handles.size,
         fidelity: highFidelity ? 'high' : 'low',
         bakeMs,
         reportBanks: reports.size,
+        plays,
       };
     },
 
@@ -2049,6 +2950,8 @@ export function createAudio(options = {}) {
       mechBank = [];
       ringBuf = null;
       lastReport.voice = null;
+      stepVoices.clear();
+      playCounts.clear();
       if (bed) {
         try { bed.rumbleSrc.stop(); bed.airSrc.stop(); } catch { /* not started */ }
         bed = null;

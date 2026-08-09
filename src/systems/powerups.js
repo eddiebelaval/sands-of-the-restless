@@ -337,6 +337,37 @@ export const SECOND_DEATH_GOLD = 400;
 /** Hit records for the Second Death. Sized past the director's live cap. */
 const NUKE_RECORDS = 40;
 
+/**
+ * What THE SECOND DEATH takes off a god, as a fraction of its MAX health.
+ *
+ * It used to take all of it. `detonate()` built every record with
+ * `damage = Math.max(1, a.health)` for everything in `director.live`, and the
+ * comment above it presented the boss dying that way as a feature - "the boss
+ * bar empties through the same path that empties it when you shoot the god".
+ * The owner found the other end of that on 2026-08-08, playing: a twenty-five
+ * wave climb with a delete button on it.
+ *
+ * WHY THIS IS A FRACTION AND NOT ZERO, while Insta-Kill against a boss is
+ * simply ignored. Insta-Kill is a WINDOW - refuse it on a god and the player
+ * still has their gun, still lands shots, still makes progress for the rest of
+ * the timer. The Second Death is a CONSUMABLE with nothing behind it: refuse it
+ * on a god and the rarest drop in the game, picked up during the encounter it
+ * is most likely to appear in, does nothing at all and cannot be saved.
+ *
+ * MAX health rather than remaining, so the value of the drop does not climb as
+ * the god weakens. A fraction of REMAINING health can never finish a boss, which
+ * sounds like the same rule and plays completely differently: it would make the
+ * drop worth least exactly when the player is closest to winning.
+ *
+ * 12 percent against gods running 11,000 to 58,000 is a real bite and about
+ * eight nukes to a kill, which will not happen inside one boss wave.
+ *
+ * And the field still clears, which is the actual rescue: during a god the adds
+ * are what kill you. A player who watches everything in the room fall while the
+ * god keeps walking has learned what a god is, for the price of a pickup.
+ */
+const NUKE_BOSS_FRACTION = 0.12;
+
 /** How close the player has to be to walk one up. */
 const PICKUP_RADIUS = 1.75;
 const PICKUP_HEIGHT = 2.4;
@@ -1133,11 +1164,14 @@ export function createPowerups({
   /**
    * The Second Death.
    *
-   * Everything alive dies, and it is resolved through combat.applyBlast rather
-   * than by reaching into the actors, so a nuked body topples away from the
-   * player exactly as a grenaded one does, `killed` is written back by the same
-   * code that writes it for a bullet, and the boss bar empties through the same
-   * path that empties it when you shoot the god.
+   * Everything alive dies EXCEPT A GOD, and it is resolved through
+   * combat.applyBlast rather than by reaching into the actors, so a nuked body
+   * topples away from the player exactly as a grenaded one does and `killed` is
+   * written back by the same code that writes it for a bullet.
+   *
+   * This comment used to end "and the boss bar empties through the same path
+   * that empties it when you shoot the god", which was true and was the bug.
+   * A god now takes NUKE_BOSS_FRACTION of its max health and keeps walking.
    *
    * IT PAYS ONCE. The per-kill payout is suppressed at the source - `silent` on
    * the record stops the kill listener, so it cannot roll twenty more drops -
@@ -1154,7 +1188,10 @@ export function createPowerups({
       const rec = nukeHits[n++];
       rec.enemy = a;
       rec.region = 'body';
-      rec.damage = Math.max(1, a.health);
+      // A god is bitten, not emptied. See NUKE_BOSS_FRACTION.
+      rec.damage = (director && a === director.boss)
+        ? Math.max(1, (a.maxHealth || a.health) * NUKE_BOSS_FRACTION)
+        : Math.max(1, a.health);
       rec.killed = false;
       rec.dirX = a.position.x - player.position.x;
       rec.dirZ = a.position.z - player.position.z;
@@ -1418,6 +1455,20 @@ export function createPowerups({
     SUPPLY,
 
     update,
+
+    /**
+     * Fire THE SECOND DEATH directly, without waiting for the drop to roll.
+     *
+     * Exposed for `test/bossexec.mjs`, which has to prove the nuke clears the
+     * field WITHOUT emptying a god's health bar - and the only other way in is
+     * to roll a weighted drop table until `seconddeath` comes up, which is a
+     * harness that fails intermittently for reasons that have nothing to do
+     * with the rule it is testing.
+     *
+     * The shipped path still goes through collect(), and this is the same
+     * function it calls. Nothing on screen reads this.
+     */
+    detonate,
 
     /**
      * What the HUD paints, newest first.

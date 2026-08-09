@@ -18,7 +18,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome, GL_ARGS } from './chrome.mjs';
+import { resolveChrome, GL_ARGS, dismissBriefing } from './chrome.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 // See the note in crouchslide.mjs: 4177 is what `npm start` serves and what the
@@ -39,6 +39,8 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${e.stack}`));
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2600);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 await page.waitForTimeout(1200);
 
 await page.addScriptTag({

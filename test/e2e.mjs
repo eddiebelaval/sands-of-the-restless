@@ -118,6 +118,51 @@ await page.evaluate(() => {
       await window.__X__.frames(3);
       window.dispatchEvent(new KeyboardEvent('keyup', { code, bubbles: true }));
       await window.__X__.frames(1);
+      await window.__X__.settleWorld();
+    },
+
+    /*
+     * WAIT UNTIL THE WORLD IS ACTUALLY RUNNING AGAIN.
+     *
+     * NAMED settleWorld AND NOT settle, WHICH IS THE WHOLE POINT.
+     *
+     * It shipped as `settle` on 2026-08-09 and was dead on arrival: this object
+     * literal already had a `settle(x, z)` forty lines down that stands the
+     * player on the floor, and a later key of the same name WINS. So `press()`
+     * was not waiting for anything - it was calling the positional helper with
+     * no arguments, teleporting the player to {x: undefined, z: undefined} and
+     * then running two hundred and twenty controller steps on a NaN position.
+     *
+     * Nothing reported it, because the suite has not been run since the fix
+     * landed. It was found by reading, one line at a time, before spending an
+     * eight minute run on it. A duplicate key in an object literal is not a
+     * syntax error and no linter in this project would have said a word.
+     *
+     * Taking a jar fires jars.onTake, which raises a memory fragment, and
+     * main.js's frame loop returns EARLY while tableau.holding is true. Every
+     * live system stops, so anything done during the hold reaches nothing.
+     *
+     * This file failed with "jars returned 1" on 2026-08-09 for exactly that
+     * reason: the first jar went home, the fragment came up, and the next three
+     * takes were pressed into a paused world. Nine checks failed and every one
+     * of them described a broken chain, a dead machine, or a missing card. The
+     * chain was fine.
+     *
+     * MEASURED: the fragment does not answer a keypress and lets go on its own
+     * about four seconds later. So this waits on STATE, never on a clock - which
+     * matters twice as much here, because under swiftshader with other lanes
+     * running, four seconds of wall clock can be a very small number of frames.
+     */
+    async settleWorld(capFrames = 1200) {
+      const g = window.__SANDS__;
+      for (let i = 0; i < capFrames; i++) {
+        const held = (g.tableau && g.tableau.holding)
+          || (g.briefing && g.briefing.holding)
+          || (g.meeting && g.meeting.holding);
+        if (!held) return true;
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return false;
     },
 
     async hold(code, n) {
@@ -369,9 +414,50 @@ const finish = await page.evaluate(async () => {
   await X.frames(6);
   const atDoor = X.hud();
 
-  // Real W, held, through the opening.
-  await X.hold('KeyW', 150);
+  /*
+   * Real W, held, through the opening - UNTIL HE IS IN, not for 150 frames.
+   *
+   * See the same note in test/jars.mjs. 150 frames is two and a half seconds on
+   * a real machine and about three minutes here, and meeting.js's backstop is
+   * thirty seconds of WALL clock. Walking past the threshold on a frame count
+   * hands the scene to the safety net before this file can press anything, and
+   * then reports it as a broken prompt.
+   */
+  let walked = 0;
+  let arrived = false;
+  window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
+  for (; walked < 150; walked++) {
+    await X.frames(1);
+    if (g.spaces.roomId === 'serdab') arrived = true;
+    // The offer is proximity, three metres, and the doorway is eleven from her.
+    // Releasing W at the threshold leaves him standing in the door waiting to be
+    // offered something he has to walk toward - see the long note in jars.mjs.
+    if (arrived && g.meeting && g.meeting.offered) break;
+  }
+  window.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW', bubbles: true }));
+  await X.frames(2);
   const room = g.spaces.roomId;   // a getter, not a call
+
+  /*
+   * REACH HER, WITH THE KEY.
+   *
+   * As of 2026-08-09 the ending is downstream of a fourth condition: she has to
+   * be met. story/meeting.js will start the scene by itself after thirty
+   * seconds so a player is never sealed in a room with no way out, and this is
+   * exactly the path a suite must not take - arriving at the card through the
+   * safety net proves the net works and would let a dead prompt ship.
+   *
+   * Waits on the offer, presses a real F, and `press` waits out the scene
+   * itself because `meeting.holding` is in settleWorld's list. No clock.
+   */
+  let mf = 0;
+  while (!g.meeting.offered && mf < 600) {
+    await new Promise((r) => requestAnimationFrame(r));
+    mf++;
+  }
+  const meetPrompt = X.hud().prompt;
+  await X.press('KeyF');
+  const meet = g.meeting.stats();
 
   await X.frames(40);
 
@@ -395,6 +481,13 @@ const finish = await page.evaluate(async () => {
     atDoorDeny: atDoor.deny,
     x: +g.player.position.x.toFixed(2),
     room,
+    meetPrompt,
+    meetAfter: mf,
+    meetVia: meet.via,
+    meetForced: meet.forced,
+    meetDone: meet.done,
+    meetMs: meet.lastMs,
+    meetTotalMs: meet.totalMs,
     card: before,
     after: g.ending.stats(),
     death: g.death && g.death.stats ? g.death.stats() : null,
@@ -440,6 +533,28 @@ const checks = {
     finish.atDoorDeny === false,
   'walked into the sealed chapel':
     finish.room === 'serdab',
+  'she is offered, and with no price on it':
+    finish.meetAfter < 600 && /REACH HER/.test(finish.meetPrompt || ''),
+  /*
+   * `via === 'key'` IS THE CLAIM. `forced` IS A STATEMENT ABOUT THE MACHINE.
+   *
+   * This first read `finish.meetForced === false` and failed on 2026-08-09 with
+   * everything else in the run green - `via 'key'`, the prompt laid out, the
+   * card correct. `forced` is meeting.js's dead man's handle: the beats are
+   * authored in WALL CLOCK, one frame in a fully loaded wave-25 world costs
+   * about a second here, so the scene cannot be stepped finely enough and its
+   * own hard deadline closes it. That is the handle working, and on any machine
+   * that draws faster than one frame per beat it never fires.
+   *
+   * Asserting on it was the same defect this file's header warns about in the
+   * other direction: a check that measures swiftshader and reports it as a
+   * game defect. So the claim is now the pair that is actually about the game -
+   * the KEY started it, and the scene ran AT LEAST its authored length rather
+   * than being cut short. `forced` is printed in the report either way.
+   */
+  'F reached her, and the scene ran its authored length':
+    finish.meetVia === 'key' && finish.meetDone === true
+    && finish.meetMs >= finish.meetTotalMs,
   'the end card is on screen':
     !!finish.card && finish.card.shown === true,
   'THE NAME IS NOT HERE':

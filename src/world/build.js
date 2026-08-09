@@ -18,8 +18,11 @@
 
 import * as THREE from 'three';
 import { buildMaterials, materialsForBase } from './materials.js';
+import { buildTextures } from './textures.js';
+import { weather } from './weathering.js';
 import { box, plane, cylinderUV } from './uv.js';
 import { ROOMS, ENTRY } from './rooms.js';
+import { SERDAB_PROPS } from './serdab.js';
 
 /** Tiles per world unit, per surface. Matches the courtyard exactly. */
 const DENSITY = {
@@ -427,6 +430,10 @@ export function buildInterior(scene, rooms = ROOMS) {
   // in a second one that agrees with it today. See wallChalk().
   const chalk = wallChalk(M);
 
+  // The painted soffit, built ONCE and shared by every room that takes it. See
+  // ceilingMaterial() for why the ceiling stopped being the wall's material.
+  const ceilMat = ceilingMaterial();
+
   /**
    * Fill.
    *
@@ -497,7 +504,7 @@ export function buildInterior(scene, rooms = ROOMS) {
       // wrong - rather than one that silently reads `room.base` as undefined.
       base,
       addCollider: makeAddCollider(base),
-      chalk, power, POWER_LIFT,
+      chalk, power, POWER_LIFT, ceilMat,
       // Filled by the brazier prop, read by the lighting pass. Collected here
       // rather than written back onto the room record: rooms.js is data the
       // node harness reads, and a builder that scribbles on it stops being
@@ -777,6 +784,80 @@ function slab(w, h, d, mat, density) {
   return m;
 }
 
+/**
+ * THE PAINTED CEILING, AS ONE SHARED MATERIAL FOR THE WHOLE PYRAMID.
+ *
+ * WHY THE CEILING GETS ITS OWN MATERIAL AT ALL. It was `M.limestone`, the same
+ * object as the walls, because for the life of this project the ceiling was a
+ * lid: the player never looked at it, so it cost nothing to be the same stone
+ * as everything else. enemies/wallcrawl.js ended that. A gold scarab now climbs
+ * a wall, crosses the ceiling, and drops on the player from over their head,
+ * which makes the ceiling the BACKGROUND OF A FIGHT - and a background's first
+ * duty is that the thing in front of it can be told from it.
+ *
+ * WHAT MAKES THE NEW SURFACE THE RIGHT ONE IS MEASURED, NOT ASSERTED, and the
+ * argument reverses the obvious one. A gold scarab is metalness 0.90 at
+ * roughness 0.26, so in this interior it renders as a DARK body with a bright
+ * rim - its own pixels come in at a median luminance of 4.3. The background it
+ * needs is therefore a LIGHT one, and the ceiling is a pale limewashed plaster
+ * for that reason before any other. The full measurement, including the dark
+ * night-sky version that was tried first and lost 69 per cent of the body into
+ * the ceiling, is in textures.js over `paintCeiling` and in test/wallart.mjs.
+ *
+ * ONE MATERIAL, NOT ONE PER ROOM, and the count is the point. Nine rooms share
+ * this object, so the change is +1 material and +0 draw calls: the ceiling was
+ * already its own mesh in every room (buildShell has always built a separate
+ * plane for it), so nothing that was batched has been split and nothing that
+ * was one draw is now two. The interior is not run through world/batch.js at
+ * all - that pass is the courtyard's - so there is no merge for a second
+ * material to break.
+ *
+ * WEATHERED FOR THE MOTTLE AND NOTHING ELSE, which is the `sand` recipe. The
+ * grime term wicks up from the floor and dies long before it reaches a
+ * seven-metre ceiling, and the bleach term is gated on an upward-facing normal
+ * which a ceiling by definition does not have. What is left is the world-space
+ * variation, and that is the only thing standing between the Great Gallery's
+ * 52 x 38 m soffit and eight-by-six copies of one visible stamp.
+ *
+ * THE VARIATION IS 0.26 RATHER THAN THE LIMESTONE'S 0.44, and the reason is the
+ * beetle again. The term is a MULTIPLY on albedo, so on a surface this pale it
+ * has real absolute reach: at 0.44 it takes a 240 ground down to 134 in its
+ * dark lobes, and a 134 blotch a couple of metres across is precisely the
+ * beetle-sized hole `paintCeiling`'s rule 3 exists to keep off this surface.
+ * 0.26 measured as enough to break the repeat at gallery size while leaving the
+ * darkest excursion above 175.
+ */
+function ceilingMaterial() {
+  const tex = buildTextures();
+
+  const mat = new THREE.MeshStandardMaterial({
+    ...tex.ceiling,
+    // White. Unlike every stone material in the registry this map carries its
+    // own colour rather than standing in for one, because it is paint: there is
+    // no scanned set behind it waiting to replace the tint (upgradeMaterials
+    // does not know this key), so a multiplier here would be a second, hidden
+    // place the ceiling's value is decided.
+    color: 0xffffff,
+    roughness: 1.0,
+    metalness: 0.0,
+    normalScale: new THREE.Vector2(0.9, 0.9),
+  });
+  mat.name = 'ceiling';
+  // applyFidelity walks the material registry, which this is deliberately not
+  // in. Recording the authored scale means a future pass that does walk it
+  // restores the right number rather than flattening to 1.
+  mat.userData.authoredNormalScale = 0.9;
+
+  weather(mat, {
+    dirtHeight: 3.2,
+    variation: 0.26,
+    dirtStrength: 0.0,
+    bleachStrength: 0.0,
+  });
+
+  return mat;
+}
+
 function buildShell(ctx, portals) {
   const { room, M, group, base } = ctx;
   const { x, z, w, d } = room.bounds;
@@ -804,10 +885,33 @@ function buildShell(ctx, portals) {
   floor.receiveShadow = true;
   group.add(floor);
 
-  const ceil = new THREE.Mesh(plane(w, d, 2, DENSITY.limestone), M.limestone);
+  /**
+   * THE CEILING, AND THE ONE ROOM THAT DOES NOT GET IT.
+   *
+   * `ctx.ceilMat` is the painted soffit built by ceilingMaterial() above. The
+   * Serdab is excluded and the exclusion is not a taste call: its art is being
+   * authored in another lane that is in flight, and a shared material dropped
+   * across every room in the map would silently overwrite whatever that lane
+   * decides its five-metre ceiling should be. It keeps the limestone it has
+   * always had until that lane lands and can say what it wants.
+   *
+   * The mesh keeps its prior material on userData rather than that being
+   * reconstructible from the room record. test/wallart.mjs swaps the two back
+   * and forth in one page to measure the before and the after against an
+   * IDENTICAL beetle, camera and light phase; a harness that rebuilt the old
+   * material from scratch would be comparing against a reconstruction, which is
+   * exactly the class of control this project has been burned by.
+   */
+  const priorCeilMat = M.limestone;
+  const ceilMat = room.id === 'serdab' ? priorCeilMat : (ctx.ceilMat || priorCeilMat);
+
+  const ceil = new THREE.Mesh(plane(w, d, 2, DENSITY.limestone), ceilMat);
   ceil.rotation.x = Math.PI / 2;
   ceil.position.set(x, ceilY, z);
   ceil.receiveShadow = true;
+  ceil.name = `ceiling-${room.id}`;
+  ceil.userData.ceiling = room.id;
+  ceil.userData.priorMaterial = priorCeilMat;
   group.add(ceil);
 
   // Openings on this room's own wall lines, from portals in either direction.
@@ -879,19 +983,64 @@ function buildShell(ctx, portals) {
   }
 }
 
+/**
+ * THE STONE A ROOM'S WALLS ARE CUT FROM, AND WHY IT IS NO LONGER THE FLOOR'S.
+ *
+ * The owner asked for hieroglyphics on the interior walls. They could not
+ * physically appear: world/textures.js has painted a register band and a scatter
+ * of carved marks for some time, and world/materials.js throws that whole canvas
+ * away at boot - `applyMaps(m.limestone, sets.limestone)` replaces every map on
+ * the wall material with the bricks083 photograph, and `assetsFailed` is empty
+ * in every normal run. The carving rendered on the asset-404 path and nowhere
+ * else.
+ *
+ * `M.frieze` is the fix and it is the SAME SCAN the wall already wore, with the
+ * inscription composited into its albedo and its normal. The full argument for
+ * compositing rather than swapping, and the measurement that chose it over the
+ * two obvious alternatives, is over `applyFrieze` in world/materials.js.
+ *
+ * THE SERDAB IS EXCLUDED, on the same terms and for the same reason its ceiling
+ * is: its art is being authored in another lane that is in flight, and a
+ * material dropped across every room in the map would silently overwrite
+ * whatever that lane decides its walls should be.
+ *
+ * WHAT IT COSTS IS +1 MATERIAL AND +0 DRAW CALLS. The interior is not run
+ * through world/batch.js - that pass is the courtyard's - so every span emitWall
+ * produces was already its own mesh with its own world-scaled UVs and its own
+ * draw call. Nothing that was batched has been split. Measured at a fixed pose,
+ * before and after, in test/frieze.mjs.
+ *
+ * Each wall mesh carries its prior material on userData rather than that being
+ * reconstructible, exactly as the ceiling does: test/frieze.mjs swaps the whole
+ * map's walls between the two IN ONE FRAME, so the beetle, the pose, the camera
+ * and the light phase are identical across the comparison and the material is
+ * the only variable. A harness that rebuilt the old material from scratch would
+ * be comparing against a reconstruction.
+ */
+function wallMaterial(ctx) {
+  const { M, room } = ctx;
+  if (room.id === 'serdab') return M.limestone;
+  return M.frieze || M.limestone;
+}
+
 function emitWall(ctx, side, lo, hi, y0, y1) {
-  const { M, group, walls } = ctx;
+  const { M, group, walls, room } = ctx;
   const len = hi - lo;
   const mid = (lo + hi) / 2;
   const h = y1 - y0;
 
+  const mat = wallMaterial(ctx);
+
   const mesh = side.axis === 'x'
-    ? slab(WALL_T, h, len, M.limestone, DENSITY.limestone)
-    : slab(len, h, WALL_T, M.limestone, DENSITY.limestone);
+    ? slab(WALL_T, h, len, mat, DENSITY.limestone)
+    : slab(len, h, WALL_T, mat, DENSITY.limestone);
 
   const wx = side.axis === 'x' ? side.inner : mid;
   const wz = side.axis === 'x' ? mid : side.inner;
   mesh.position.set(wx, y0 + h / 2, wz);
+  mesh.name = `wall-${room.id}`;
+  mesh.userData.wall = room.id;
+  mesh.userData.priorMaterial = M.limestone;
   group.add(mesh);
 
   walls.push({
@@ -1471,6 +1620,25 @@ const PROPS = {
     addCollider(slot.x, slot.z, 0.62, 1.9);
     return g;
   },
+
+  /**
+   * THE SERDAB'S FOUR, AND THEY LIVE IN THEIR OWN FILE.
+   *
+   * The ten rock-cut figures, the empty eleventh niche, the archaeologist and
+   * her lamp are the whole art budget of the room World 1 ends in, and they are
+   * built in world/serdab.js the way world/canal.js and world/quarry.js build
+   * their spaces: one file that owns one place, with the argument for its
+   * composition in it rather than spread across a registry shared by nine
+   * rooms.
+   *
+   * SPREAD RATHER THAN Object.assign'd AFTER, so the registry is still one
+   * object literal that can be read top to bottom, and so a name collision
+   * between a room module and this table is a visible overwrite at the point of
+   * the spread instead of a silent one at boot. Nothing else about this file
+   * changes: the four entries have the same (ctx, slot) => Group contract every
+   * prop above has, and buildProps positions, rotates and tags them identically.
+   */
+  ...SERDAB_PROPS,
 };
 
 // ---------------------------------------------------------------------------

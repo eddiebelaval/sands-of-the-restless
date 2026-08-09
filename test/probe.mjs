@@ -5,7 +5,7 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome } from './chrome.mjs';
+import { resolveChrome, dismissBriefing } from './chrome.mjs';
 
 /**
  * The build under test. argv[2] or SANDS_URL, defaulting to the dev server.
@@ -29,6 +29,8 @@ page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForTimeout(2500);
 await page.evaluate(() => document.getElementById('begin').click());
+// BEGIN raises the briefing card now; the world is held behind it. See chrome.mjs.
+await dismissBriefing(page);
 await page.waitForTimeout(1200);
 
 const report = await page.evaluate(() => {

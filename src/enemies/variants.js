@@ -642,10 +642,24 @@ function animateCenser(rig, spec, s) {
 // the table
 // ---------------------------------------------------------------------------
 
-/** Shallow merge one level down, which is all these records are ever nested. */
+/**
+ * Shallow merge one level down, which is all these records are ever nested.
+ *
+ * `sound` joined that list when the roster stopped sharing one throat, and it
+ * had to: nearly every variant changes ONE thing about how it sounds - the husk
+ * swaps its vocal tract and keeps the shambler's footsteps, ranges and cadences
+ * - and without the merge each of those would be a full copy of the base block.
+ * The copies would drift, and the half that drifted would be the half nobody
+ * was listening to.
+ *
+ * `sound.step` is a level deeper and is NOT merged, so a variant that overrides
+ * it states the whole thing. That is deliberate: a step block is four numbers
+ * that only mean anything together, and half a step block is a stride with
+ * somebody else's audible range on it.
+ */
 function extend(base, over) {
   const out = { ...base, ...over };
-  for (const key of ['palette', 'proportions', 'gait']) {
+  for (const key of ['palette', 'proportions', 'gait', 'sound']) {
     if (over[key]) out[key] = { ...base[key], ...over[key] };
   }
   return out;
@@ -679,6 +693,21 @@ export const HUSK = extend(MUMMY, {
   radius: 0.34,
   sepRadius: 0.85,
   voicePitch: 1.45,
+
+  /**
+   * A different throat, and nothing else.
+   *
+   * The husk's whole design is READ EARLY - it arrives before the shamblers and
+   * it punishes a reload - and that budget was spent entirely on the silhouette
+   * and the ember sockets, both of which are useless when it is behind you. The
+   * `husk` throat is the same argument in the other channel: formants an octave
+   * above the shambler's, a third of the length, and a papery breath over the
+   * top, so "something quick is coming" arrives by ear as well as by eye.
+   *
+   * Its steps, ranges and cadences are the shambler's, merged in. A husk is a
+   * body with the same number of feet.
+   */
+  sound: { throat: 'husk', idleEvery: [3, 8] },
 
   // Charred rather than black. The husk has to be visibly DARKER than the
   // shambler, which is what says burnt, and it still needs a lit half or it
@@ -789,6 +818,24 @@ export const BOUND = extend(MUMMY, {
   sepRadius: 1.5,
   voicePitch: 0.62,
 
+  /**
+   * The `bound` throat: formants down into a closed vowel, a sub sine under
+   * them, and nearly three seconds long. At 0.62 voicePitch the fundamental
+   * lands near 30 Hz, which is felt rather than heard, and the sub is what puts
+   * the mass back where a laptop speaker can actually move it.
+   *
+   * The stride is the only other change and it is not a preference: this body
+   * walks at 1.32 m/s on legs 24 per cent longer than a shambler's, so 1.1 m a
+   * step would have it taking more than one step a second at a shuffle. 1.7 m
+   * is one slow deliberate footfall about every second and a third, which is
+   * what the animation is already doing.
+   */
+  sound: {
+    throat: 'bound',
+    idleEvery: [6, 14],
+    step: { name: 'footfall', stride: 1.7, range: 22, chance: 0.9 },
+  },
+
   palette: {
     wrap: 0xa2946f,
     wrapDark: 0x60513a,
@@ -882,6 +929,56 @@ export const SCARAB = extend(MUMMY, {
   radius: 0.30,
   sepRadius: 0.55,
   voicePitch: 2.0,
+
+  /**
+   * THE SCARAB LEAVES THE THROAT ENTIRELY, AND THIS IS THE POINT OF THE WHOLE
+   * TABLE.
+   *
+   * It named no `throat` and it never will. Every sound below is in
+   * core/audio.js's chitin family, which contains no oscillator that could be
+   * mistaken for a mouth: the step is a tripod of filtered noise transients, the
+   * tell is stridulation - amplitude-modulated noise, which is what a file drawn
+   * across a ridge actually is - and the death is a carapace coming apart. Play
+   * any of them at any pitch and none of them can become a vowel, which is a
+   * property of the synthesis and not of the tuning.
+   *
+   * WHAT THE STEP NUMBERS MEAN, because they are the ones that carry it:
+   *
+   *   stride 0.62 m. The cadence is metres covered, so this IS the rate: at
+   *   its 5.0 m/s charge it patters eight times a second, and at the crawl of a
+   *   staggered one it patters twice. Chosen off the rig - the animator runs a
+   *   0.45 m stride on a tripod gait - and then opened up a little, because
+   *   three taps land inside each step and the ear counts groups rather than
+   *   feet.
+   *
+   *   range 22 m against the humanoids' 18. These are the quietest sounds in
+   *   the game and the only ones a player is expected to navigate by; a swarm
+   *   you cannot hear until it is on top of you is a swarm that arrives from
+   *   nowhere.
+   *
+   *   near 11 / far 17. Past eleven metres every other step is dropped and past
+   *   seventeen three in four. One scarab asks for eight steps a second and the
+   *   director will put twenty-four of them on the floor, so without this the
+   *   horde alone would ask for nearly two hundred voices a second against a cap
+   *   of twenty-eight. Thinned nearest-first it lands inside the six-slot step
+   *   pool with the gunshot untouched, and a distant patter reads as texture
+   *   anyway.
+   *
+   * `pitch: 1` because a shell has no larynx. See say() in mummy.js.
+   */
+  sound: {
+    throat: null,
+    chitin: 'scarab',
+    pitch: 1,
+    idle: 'chitinRasp',
+    idleEvery: [3, 9],
+    idleRange: 20,
+    attack: 'chitinRasp',
+    attackPitch: 1,
+    swipe: 'chitinRasp',
+    death: 'shellCrack',
+    step: { name: 'chitinStep', stride: 0.62, range: 22, chance: 1, near: 11, far: 17 },
+  },
 
   palette: {
     wrap: 0x5a4630,
@@ -984,6 +1081,37 @@ export const GOLD_SCARAB = extend(SCARAB, {
   sepRadius: 0.55,
   voicePitch: 1.5,
 
+  /**
+   * The same creature, plated, and it has to sound plated.
+   *
+   * `chitin: 'goldscarab'` swaps the shell table: the taps drop about an octave
+   * and get longer because the leg hitting the stone is armoured and has mass
+   * behind it, the gaps widen because the body is slower, and a genuine metallic
+   * ring goes on top - two inharmonic partials, fifty to ninety milliseconds,
+   * which is what gold plate over chitin does that bare chitin does not.
+   *
+   * THE STRIDE IS NOT A TASTE DECISION. This body is 1.18x a scarab and walks at
+   * 3.9 m/s against its 5.0, so 0.82 m puts it at under five steps a second
+   * where the scarab is at eight. A player who has learned the swarm's patter
+   * hears a heavier, slower one and knows what walked in before it is in frame -
+   * which is the same job the gold shell does at twenty metres, done in the
+   * channel that works when it is behind you.
+   *
+   * AND IT IS THE ONE ENEMY THAT CAN BE OVERHEAD. `near`/`far` run wider than
+   * the scarab's because there are never twenty-four of these, and the range
+   * runs to 26 m because a body crossing a sixteen-metre gallery ceiling is
+   * further away than any floor enemy ever gets while still being directly
+   * above the player. The elevation cue that makes that legible is in
+   * core/audio.js's skyward(); what this table has to get right is being
+   * audible at all from up there.
+   */
+  sound: {
+    chitin: 'goldscarab',
+    idleEvery: [4, 10],
+    idleRange: 24,
+    step: { name: 'chitinStep', stride: 0.82, range: 26, chance: 1, near: 14, far: 20 },
+  },
+
   palette: {
     // Gold, and metal rather than a yellow-painted object: mummy.js reads
     // accentMetal into metalness and accentRough into roughness on the accent
@@ -999,6 +1127,53 @@ export const GOLD_SCARAB = extend(SCARAB, {
     accent: 0xe8bf55,
     accentMetal: 0.90,
     accentRough: 0.26,
+    /**
+     * THE PARAGRAPH ABOVE DIAGNOSED IT AND STOPPED ONE STEP SHORT.
+     *
+     * It is right that a low-roughness metal in this room has nothing to
+     * reflect, and 0.26 is the correct answer to the question it asked. The
+     * question it did not ask is what 0.90 METALNESS costs in the same room: a
+     * standard material's diffuse term is albedo x (1 - metalness), so the
+     * shell keeps a tenth of its own gold under the two point lights and takes
+     * the other nine tenths off an environment that systems/spaces.js pins at
+     * 0.05 the moment the player steps inside. Roughness spreads a highlight;
+     * it cannot conjure one.
+     *
+     * MEASURED, on the pixels the beetle itself covers, six metres in front of
+     * the camera in the Hall of Offerings, against the wall behind it:
+     *
+     *     the shell        p50 luma 21.4
+     *     the wall         p50 luma 53.8
+     *
+     * Two and a half times darker than the stone. That is the owner's "black
+     * with blue eyes", and no adjustment to `accent`, `accentMetal` or
+     * `accentRough` reaches it - dropping metalness to 0.55 was swept and lands
+     * the shell at 59.4, which is the wall's own value and a different way to
+     * disappear. The full table and the argument are on chamberGlow() in
+     * mummy.js.
+     *
+     * So the two numbers above are UNCHANGED and this is added beside them: an
+     * emissive floor on the accent, the same instrument EMISSIVE_FLOOR already
+     * applies to the linen, applied to the one material that note explicitly
+     * excluded because on every other body in the roster the accent is trim. On
+     * this one it is the whole animal.
+     *
+     * 0.30 INDOORS, NOTHING OUTDOORS, and mummy.js reads `ctx.walls` to tell
+     * them apart. It buys +68.9 luma of separation from the chamber wall and
+     * takes the body from 6.3 per cent flat black to 5.5, while the courtyard -
+     * where the owner agrees the beetle already reads - is left byte-identical.
+     * A constant could not do both: 0.30 applied outdoors closes the sand's
+     * separation from 61 luma to 4.7.
+     *
+     * IT DOES NOT FLATTEN THE SHELL, which was the risk and was checked rather
+     * than assumed. Standard deviation across the body goes UP, 24.3 to 37.7,
+     * because the floor lifts the crushed end into the range where the form is
+     * visible at all. Saturation stays at 0.63 against the shipped 0.72, and
+     * the mean channels come out 120 / 98 / 42 - a red-to-blue ratio of 2.9,
+     * which is gold and not a bright grey.
+     */
+    accentEmissive: 0xe8bf55,
+    accentGlow: 0.30,
     // The legs and the skull go DARKER than the scarab's, so the gold shell is
     // the only bright mass on the body and the outline at range is a single
     // hovering plate. `deep` also paints the abdomen on this variant, which is
@@ -1194,6 +1369,35 @@ export const CENSER = extend(MUMMY, {
   // every wind-up is this enemy's off-screen tell, and it has to be tellable
   // from the bodies actually in front of the player.
   voicePitch: 0.80,
+
+  /**
+   * JUDGED AND KEPT VOCAL, BUT IT IS NOT A GROAN.
+   *
+   * The question on this variant was whether it belongs in the throat at all,
+   * and the answer is yes for a reason that is specific to it: this is the only
+   * enemy in the game that STANDS STILL AND WATCHES, and its threat is a line of
+   * sight from somewhere the player is not looking. A tell has to travel across
+   * a room, over the bodies in front of the player, and be identifiable as
+   * coming from a thing rather than from the building - which is a voice's job
+   * and not a transient's.
+   *
+   * So it is a voice, and it is a CHANT. The `censer` throat holds its note
+   * where every other one sags, wavers on a slow vibrato, and runs narrow
+   * high-Q formants low down - a closed, nasal intonation. The steadiness is
+   * the cue the ear gets first: long before it resolves the timbre it has
+   * already heard that this one is not dying, it is singing. Nothing else in
+   * the horde does that, which is exactly what an off-screen tell needs.
+   *
+   * It also gets the longest interval and the longest reach in the roster. It
+   * plants at eight metres and stops, so it is a landmark rather than an
+   * approach, and a landmark that speaks every four seconds is a nuisance.
+   */
+  sound: {
+    throat: 'censer',
+    idleEvery: [7, 15],
+    idleRange: 30,
+    step: { name: 'footfall', stride: 0.85, range: 16, chance: 0.45 },
+  },
 
   palette: {
     /**

@@ -21,6 +21,7 @@ import { batchStatics } from './batch.js';
 import { buildWallBuyFixture } from './build.js';
 import { buildQuarry, QUARRY } from './quarry.js';
 import { buildCanal, canalDepthAt, cutCanalIntoGround, CANAL } from './canal.js';
+import { buildCamp } from './camp.js';
 
 /** Tiles per world unit, per surface. Roughly one masonry course per metre. */
 const DENSITY = {
@@ -168,6 +169,18 @@ export function buildCourtyard(scene) {
    * of this that stays true.
    */
   const qrand = rng(30731);
+
+  /**
+   * A FOURTH stream, for the expedition camp and the downed helicopter.
+   *
+   * Same argument as `brand` and `qrand` above and it does not weaken with
+   * repetition: the camp is built last, so today it could share `qrand`
+   * safely, and "safely today" is a property of the current line ordering that
+   * nothing enforces. The day somebody inserts a prop above it, a shared stream
+   * silently redresses the canal's silt drifts and the failure arrives as a
+   * screenshot that looks subtly wrong with no diff to explain it.
+   */
+  const crand = rng(60815);
 
   const group = new THREE.Group();
   group.name = 'courtyard';
@@ -2744,6 +2757,45 @@ export function buildCourtyard(scene) {
   const canal = buildCanal(act1);
 
   /**
+   * THE EXPEDITION CAMP AND THE WRECK.
+   *
+   * `docs/NARRATIVE.md` calls this the one genuinely new space World 1
+   * requires - the only place in the trilogy before Area 51 where the
+   * institution that caused all of this is physically present - and the
+   * courtyard is where it has to go, because the story needs it read on the
+   * walk from the spawn to the sealed doorway.
+   *
+   * IT DOES NOT AUTHOR A SPACE, IT DRESSES ONE. The quarry and the canal above
+   * are rooms with their own bounds, their own floors and their own prices.
+   * The camp is furniture standing on the avenue's existing floor inside the
+   * avenue's existing walls: it moves no bound, opens no perimeter, adds no
+   * deck and takes no purchase. That is the difference between this call being
+   * two lines and it being a third module the walkable-bound contract has to
+   * know about.
+   *
+   * WHERE IT SITS IN THE ORDER, and every clause is load bearing:
+   *   - AFTER `dressAvenue` and after the scatter, so the exclusion list those
+   *     two sampled against is exactly the list they used to sample against.
+   *     Three hundred new colliders arriving earlier would reshuffle the ground
+   *     detail down the whole avenue.
+   *   - AFTER the last draw taken from `rand`, `brand` and `qrand`, and on its
+   *     own stream besides.
+   *   - BEFORE `batchStatics`, so the camp's several hundred meshes are merged
+   *     with everything else rather than shipping as several hundred draws.
+   *   - BEFORE the sub-body-width slot sealer, so a slot formed between a tent
+   *     and a wall that never knew about each other is still caught. That is
+   *     the same reason the sealer runs last for the quarry and the canal.
+   *
+   * It is handed the collider ARRAY as well as `addCollider`, which nothing
+   * else in this file needs, because the camp is the only builder placing props
+   * into a region that is already finished, dressed work. Its siting guard
+   * reads the list and refuses a position that overlaps or that would form a
+   * sub-metre slot against something already there, and reports what it
+   * refused. Three of the first six positions tried were caught that way.
+   */
+  const camp = buildCamp({ ...act1, rand: crand, colliders });
+
+  /**
    * Adopt the backdrop props that now stand inside a room.
    *
    * See `backdropProps` above for why they cannot simply be moved. A ruin or a
@@ -3042,6 +3094,19 @@ export function buildCourtyard(scene) {
     quarry,
     canal,
 
+    /**
+     * The expedition camp and the wreck.
+     *
+     * Published for the same reason the two spaces above are, plus one this
+     * file cannot make on its own: `camp.rejected` is the list of props its
+     * siting guard refused to build because something was already there, and
+     * `camp.doorFilterMatches` is the count of colliders in the WHOLE world
+     * that answer doors.js's two shape filters. Both are claims about this
+     * file's interaction with finished work, both are checked by
+     * `test/camp.mjs`, and neither can be read from a screenshot.
+     */
+    camp,
+
     /** How many backdrop ruins the Act 1 pass had to make solid, and how many
      *  it had to delete. Reported rather than silent: if either number moves,
      *  the mid-ground loops have started landing somewhere new. */
@@ -3143,6 +3208,11 @@ export function buildCourtyard(scene) {
 
     update(dt, t) {
       for (const b of braziers) b.update(dt, t);
+      // The generator's fan, its charge lamp, the recorder drum and the mains
+      // ripple on the two work lamps. The whole beat is that this equipment is
+      // STILL RUNNING with nobody left to switch it off, and a camp that is
+      // only running in the comments is a camp that is switched off.
+      camp.update(dt, t);
       dust.update(dt);
       scatter.update(dt, t);
       // Off the clamped delta like every other rate in the game, so a
@@ -3155,6 +3225,7 @@ export function buildCourtyard(scene) {
       for (const b of braziers) b.setFidelity(high);
       scatter.setFidelity(high);
       dressing.setFidelity(high);
+      camp.setFidelity(high);
     },
   };
 }

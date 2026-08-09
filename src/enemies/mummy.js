@@ -793,10 +793,22 @@ function makeMaterials(spec) {
     emissiveIntensity: 0.9,
   });
 
+  /**
+   * The gilding, and on one variant the entire body.
+   *
+   * `accentEmissive` / `accentGlow` are OPT-IN AND DEFAULT TO NOTHING, so this
+   * line is a no-op for every spec that does not ask for it - the Bound's trim,
+   * the gods' plate and the shambler's fittings all render exactly as they did.
+   * The intensity starts at zero and is written per frame by chamberGlow()
+   * below, because the whole point of the number is that it depends on which
+   * room the body is standing in.
+   */
   const accent = new THREE.MeshStandardMaterial({
     color: spec.palette.accent,
     roughness: spec.palette.accentRough ?? 0.55,
     metalness: spec.palette.accentMetal ?? 0.7,
+    emissive: new THREE.Color(spec.palette.accentEmissive ?? 0x000000),
+    emissiveIntensity: 0,
   });
 
   /**
@@ -1870,6 +1882,23 @@ export function createEnemy(spec, index) {
     footIn: 0,
     speedScale: 1,
 
+    /**
+     * WHERE THIS BODY IS RELATIVE TO THE EAR, cached once a frame for the sound
+     * calls.
+     *
+     * Both are read by `say()` below and by nothing else. They are cached
+     * rather than recomputed because the death rattle fires out of the damage
+     * path, which has no player position and no distance to hand - and the
+     * alternative, threading `ctx` through beginDeath into a sound call, would
+     * put the audio layer inside the damage layer to save one square root.
+     *
+     * `sndElev` is the vertical component of the unit vector from the ear to
+     * this body: 0 level, 1 straight overhead. It exists because gold scarabs
+     * cross ceilings and a PannerNode cannot say so.
+     */
+    sndDist: 0,
+    sndElev: 0,
+
     // Wedge escape. `wedge` is seconds of holding velocity without covering
     // ground, `detour` is seconds left on a committed sideways heading,
     // `detourSide` the hand it committed to, `detourFrom` the distance to the
@@ -1931,6 +1960,76 @@ export function createEnemy(spec, index) {
       : 0.25);
 
   // -------------------------------------------------------------------------
+  // sound
+  // -------------------------------------------------------------------------
+
+  /**
+   * EVERY NOISE THIS BODY MAKES GOES THROUGH ONE FUNCTION, AND IT READS THE
+   * ANSWER OUT OF THE SPEC.
+   *
+   * This file used to make five sound calls and every one of them was the same
+   * shape: a hardcoded router name and `{ pitch: spec.voicePitch }`. Four of the
+   * five names were `groan`, `swipe` and `deathRattle`, which are three
+   * formant-filtered sawtooths, so the entire roster - shambler, husk, Bound,
+   * scarab, gold scarab, Censer - came out of one throat with one scalar
+   * separating them. The scarab is a beetle and it was a man moaning at double
+   * speed. That is not a mixing problem, it is this line of code.
+   *
+   * So the NAMES move into the spec, next to the palette and the gait, where
+   * everything else that makes a variant a variant already lives. A scarab's
+   * spec says `chitinStep` and `shellCrack` and names no throat at all; a
+   * Censer's says `groan` and names the `censer` throat. This function's whole
+   * job is to attach the four things every enemy sound wants and hand it over.
+   */
+  const SND = spec.sound || {};
+
+  /**
+   * Where the ear is above the player's feet.
+   *
+   * `ctx.playerPos` is the capsule's origin, which is on the floor. The
+   * listener is on the camera, which is not. This is the only place in this
+   * file that cares, and it is used for one thing: deciding whether a body is
+   * ABOVE the player, which is a question the game only started being able to
+   * ask when gold scarabs got onto ceilings.
+   */
+  const EAR_ABOVE_FEET = 1.6;
+
+  function say(name, extra) {
+    const e = actor.emitter;
+    if (!name || !e) return false;
+    /**
+     * `voicePitch` IS A LARYNX, AND A SHELL DOES NOT HAVE ONE.
+     *
+     * The scarab's 2.0 was the whole reason it sounded like a man at double
+     * speed, and left in place it would do the identical damage to the new
+     * sound: chitinStep's taps run 3.4 to 7 kHz, and doubling them lands the
+     * animal on a hi-hat. So a spec may state its own `sound.pitch`, and the
+     * two chitinous variants state 1 - their species is in the CHITIN table
+     * where it belongs, and the per-body variation they used to get from a
+     * scalar they now get from the tap ranges being randomised per call.
+     *
+     * Everything vocal leaves this alone and keeps the number it was tuned with.
+     */
+    const o = {
+      pitch: (SND.pitch ?? spec.voicePitch) * ((extra && extra.pitch) || 1),
+      dist: st.sndDist,
+      elev: st.sndElev,
+    };
+    // A throat, a shell, or neither. A variant naming neither gets whatever the
+    // sound's own default is, which for groan() is the shambler - the voice
+    // every caller had before throats existed.
+    if (SND.throat) o.throat = SND.throat;
+    if (SND.chitin) o.chitin = SND.chitin;
+    return e.play(name, o);
+  }
+
+  /** The idle tell's interval, in seconds, for this species. */
+  function idleGap() {
+    const r = SND.idleEvery || [4, 11];
+    return r[0] + Math.random() * (r[1] - r[0]);
+  }
+
+  // -------------------------------------------------------------------------
   // lifecycle
   // -------------------------------------------------------------------------
 
@@ -1955,8 +2054,10 @@ export function createEnemy(spec, index) {
     st.deathHead = 0;
     st.spinY = 0;
     st.speedScale = speedScale;
-    st.groanIn = 1.5 + Math.random() * 4;
+    st.groanIn = 1.5 + Math.random() * (SND.idleEvery ? SND.idleEvery[0] : 4);
     st.footIn = 0;
+    st.sndDist = 0;
+    st.sndElev = 0;
     st.wedge = st.detour = st.detourFrom = st.forceSide = 0;
     st.detourSide = 1;
     st.routeX = st.routeZ = 0;
@@ -2205,7 +2306,10 @@ export function createEnemy(spec, index) {
     st.sag = low ? 0.34 : head ? 0.14 : 0.05;
     st.deathHead = head ? 1 : 0;
 
-    actor.emitter?.play('deathRattle', { pitch: spec.voicePitch });
+    // A shambler groans its way out; a scarab's shell comes apart. Which one is
+    // in the spec, because a death that came out of a different mouth than the
+    // idle tell is the same bug the tell had, played once per body.
+    say(SND.death || 'deathRattle');
   }
 
   // -------------------------------------------------------------------------
@@ -2240,11 +2344,106 @@ export function createEnemy(spec, index) {
     anim.hitHead = st.hitHead;
   }
 
+  /**
+   * THE CHAMBER FLOOR, FOR A BODY WHOSE GILDING IS THE WHOLE OF IT.
+   *
+   * ---------------------------------------------------------------------------
+   * THE REPORT
+   * ---------------------------------------------------------------------------
+   *
+   * The owner, playing: "they're not golden. I think they might have... I think
+   * I may have seen them, and they were black with blue eyes."
+   *
+   * ---------------------------------------------------------------------------
+   * WHAT THE EMISSIVE FLOOR NOTE ABOVE GOT RIGHT, AND THE ONE CASE IT MISSED
+   * ---------------------------------------------------------------------------
+   *
+   * EMISSIVE_FLOOR ends with a sentence that is correct for every body it was
+   * measured on and wrong for exactly one: "It goes on the linen and the rags
+   * only. `deep` stays a void ... and `accent` is metal that already catches a
+   * highlight." True of a shambler, whose accent is a strip of gilding on a
+   * dark linen body that carries its own floor. Not true of a gold scarab,
+   * whose accent IS the carapace, the jaws and the entire read of the enemy -
+   * so the one material that was excluded from the floor is the only one that
+   * variant has.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY A METAL GOES BLACK IN A ROOM, WHICH IS NOT A PALETTE PROBLEM
+   * ---------------------------------------------------------------------------
+   *
+   * A MeshStandardMaterial's diffuse term is albedo x (1 - metalness). At the
+   * palette's measured 0.90 the shell keeps one tenth of its own colour under a
+   * point light and takes the other nine tenths off the environment - and the
+   * environment INDOORS is `INTERIOR_ENV = 0.05` in systems/spaces.js, not the
+   * 0.17 main.js sets for the courtyard. Three and a half times less than the
+   * number anybody quotes, on the material that needs it most.
+   *
+   * Measured with test/goldscarab.mjs, which photographs the beetle twice and
+   * keeps the pixels that changed, so these are the beetle and not the room.
+   * One actor, one pose, repainted in place; the sweep's last row repaints the
+   * shipped values and came back BYTE-IDENTICAL to the first, so the column is a
+   * true A/B and not eight different stagings:
+   *
+   *                     INTERIOR (wall p50 53.8)      COURTYARD (sand p50 146.7)
+   *                     p50    vs wall   sat   sd     p50    vs sand   sat
+   *     shipped         21.4    -32.4   0.72  24.3    85.5    -61.2   0.67
+   *     glow 0.08       58.9     +5.1   0.69  21.2   105.3    -41.4   0.65
+   *     glow 0.18       93.8    +40.0   0.66  28.0   126.2    -20.5   0.62
+   *     glow 0.30      122.7    +68.9   0.63  37.7   142.0     -4.7   0.59
+   *     glow 0.45      148.7    +94.9   0.59  47.6   160.2    +13.5   0.56
+   *     metal 0.55      59.4     +5.6   0.67  21.6   140.8     -5.9   0.61
+   *
+   * THE SHIPPED ROW IS THE BUG IN ONE NUMBER: 21.4 against a wall at 53.8. The
+   * beetle is two and a half times DARKER than the stone behind it. "Black with
+   * blue eyes" is not an impression, it is the histogram.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY THE PALETTE'S 0.90 / 0.26 IS NOT TOUCHED
+   * ---------------------------------------------------------------------------
+   *
+   * The obvious fix is to stop pretending it is a mirror and drop metalness so
+   * the point lights can light it. It was tried and it is on the table above:
+   * metalness 0.55 lands the shell at 59.4 against a wall at 53.8. It does not
+   * fix the beetle, it just moves it onto the wall's own value, which is the
+   * OTHER way to be invisible and is the exact failure the EMISSIVE_FLOOR sweep
+   * rejected 0.11 for. So the measured decision in variants.js stands unchanged
+   * at 0.90 / 0.26. Nothing here overrules it.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY IT IS GATED ON THE ROOM, AND NOT A CONSTANT
+   * ---------------------------------------------------------------------------
+   *
+   * Look at the last column. A floor big enough to fix the chamber - 0.30, which
+   * buys +68.9 of separation from the wall - costs the COURTYARD almost all of
+   * its: the beetle goes from 61 luma below the sand to 4.7 below it, which is
+   * the same beetle disappearing into a different background. A constant cannot
+   * satisfy both, because the two spaces differ by 3.4x in the very term the
+   * material is made of.
+   *
+   * `ctx.walls` is the signal, and it is not a new one: variants.js already
+   * documents that it is populated for the interior's room shells and null in
+   * the courtyard and the quarry, and the wall crawl is opt-in on exactly that
+   * basis. So a gold scarab inside gets the floor, a gold scarab outside is the
+   * enemy it always was - and the exterior column of that table is byte-identical
+   * to shipped by construction rather than by measurement.
+   *
+   * ONE WRITE PER FRAME PER ACTOR, next to setFlash for the same reason: both
+   * are properties of the room the body is in this frame rather than of the body,
+   * and a spawn-time write would be wrong the moment anything alive crosses a
+   * threshold.
+   */
+  function chamberGlow(ctx) {
+    const glow = spec.palette.accentGlow;
+    if (!glow) return;
+    mats.accent.emissiveIntensity = (ctx.walls && ctx.walls.length) ? glow : 0;
+  }
+
   function update(dt, ctx) {
     if (!actor.live) return;
 
     st.flash = Math.max(0, st.flash - dt * 6.5);
     setFlash(st.flash);
+    chamberGlow(ctx);
 
     if (actor.dying) { updateDeath(dt, ctx); return; }
 
@@ -2257,6 +2456,19 @@ export function createEnemy(spec, index) {
     const tz = ctx.playerPos.z - pos.z;
     const distSq = tx * tx + tz * tz;
     const dist = Math.sqrt(distSq) || 1;
+
+    // What the sound calls need, computed once. `dist` above is horizontal, and
+    // for a body on a ceiling sixteen metres up that is most of the way to
+    // wrong, so the elevation is taken against the real slant range. The centre
+    // of the body rather than its feet: a gold scarab hanging upside down has
+    // its feet ABOVE the rest of it.
+    {
+      const dy = (pos.y + spec.height * spec.scale * 0.5)
+               - (ctx.playerPos.y + EAR_ABOVE_FEET);
+      const slant = Math.sqrt(distSq + dy * dy) || 1;
+      st.sndDist = slant;
+      st.sndElev = dy / slant;
+    }
 
     /**
      * WHICH WAY IS THE PLAYER, AS OPPOSED TO WHERE IS THE PLAYER.
@@ -2486,12 +2698,15 @@ export function createEnemy(spec, index) {
         st.windup = 0;
         st.strike = 1;
         st.struck = false;
-        actor.emitter?.play('swipe', { pitch: spec.voicePitch });
+        say(SND.swipe || 'swipe');
       }
     } else if (dist <= reach && st.cooldown <= 0) {
       st.windup = 0.001;
       st.cooldown = spec.cooldown;
-      actor.emitter?.play('groan', { pitch: spec.voicePitch * 0.9 });
+      // The tell that a swing is coming. A humanoid drops a ninth below its own
+      // register for it; a scarab has no register to drop, so `attackPitch`
+      // defaults to 1 and the spec supplies the rasp instead.
+      say(SND.attack || 'groan', { pitch: SND.attackPitch ?? 0.9 });
     }
 
     // --- move ---------------------------------------------------------------
@@ -2678,21 +2893,55 @@ export function createEnemy(spec, index) {
     publishHit();
     spec.animate(rig, spec, anim);
 
-    // --- voice --------------------------------------------------------------
+    // --- the tell -----------------------------------------------------------
     st.groanIn -= dt;
     if (st.groanIn <= 0) {
-      st.groanIn = 4 + Math.random() * 7;
-      // Only the near ones. Twenty-four groans layered at every distance is
-      // mud, and the whole point of the positional bus is knowing where the
-      // one behind you is.
-      if (dist < 26) actor.emitter?.play('groan', { pitch: spec.voicePitch });
+      st.groanIn = idleGap();
+      // Only the near ones. Twenty-four tells layered at every distance is mud,
+      // and the whole point of the positional bus is knowing where the one
+      // behind you is.
+      if (st.sndDist < (SND.idleRange ?? 26)) say(SND.idle || 'groan');
     }
 
-    st.footIn -= dt * speed;
-    if (st.footIn <= 0) {
-      st.footIn = 1.1;
-      if (dist < 18 && Math.random() < 0.55) {
-        actor.emitter?.play('footfall', { pitch: spec.voicePitch });
+    /**
+     * --- the legs -----------------------------------------------------------
+     *
+     * THE CADENCE IS DISTANCE COVERED, NOT TIME ELAPSED, and that is the whole
+     * reason a charging scarab sounds different from one picking its way.
+     *
+     * `footIn` counts DOWN BY METRES: `dt * speed` is how far the body actually
+     * moved this frame, and a step fires every `stride` metres of it. Nothing
+     * here reads a speed and picks a tempo, which is the version that goes
+     * wrong the moment an actor is staggered, wedged against a pillar, or
+     * standing still mid-swing - a timer keeps ticking through all three and a
+     * body walking on the spot keeps making footsteps. `speed` is real
+     * horizontal velocity, so a pinned actor covers no ground and is silent,
+     * and a scarab at a quarter speed patters at a quarter the rate for free.
+     *
+     * THE THINNING IS THE HORDE'S BUDGET, and it is spent nearest-first on
+     * purpose. A scarab's stride is 0.62 m against a shambler's 1.1, and its top
+     * speed is 5 m/s, so ONE of them at a charge asks for eight steps a second;
+     * twenty-four of them ask for nearly two hundred. Past `near` metres every
+     * other step is dropped and past `far` three in four, which costs almost
+     * nothing to the ear - a distant patter is a texture, not a location - and
+     * takes the request rate down to something the pool in core/audio.js can
+     * serve without ever starving the gunshot.
+     *
+     * A variant with no `step` block makes no step sound at all, which is what
+     * the base spec's `footfall` entry exists to avoid.
+     */
+    const STEP = SND.step;
+    if (STEP) {
+      st.footIn -= dt * speed;
+      if (st.footIn <= 0) {
+        st.footIn = STEP.stride ?? 1.1;
+        const d = st.sndDist;
+        if (d < (STEP.range ?? 18)) {
+          const near = STEP.near ?? Infinity;
+          const far = STEP.far ?? Infinity;
+          const chance = (STEP.chance ?? 1) * (d <= near ? 1 : d <= far ? 0.5 : 0.25);
+          if (chance >= 1 || Math.random() < chance) say(STEP.name);
+        }
       }
     }
   }
@@ -2814,6 +3063,47 @@ export const MUMMY = {
   radius: 0.42,
   sepRadius: 1.05,
   voicePitch: 1.0,
+
+  /**
+   * WHAT THIS THING SOUNDS LIKE, as a table, next to what it looks like and how
+   * it walks.
+   *
+   * `voicePitch` above used to be the ENTIRE audio identity of an enemy: one
+   * scalar on one shared groan. Six variants, one throat, and the beetle came
+   * out of it at double speed. The names now live here so that a variant can
+   * leave the throat entirely rather than being transposed out of it - which is
+   * the only way a scarab was ever going to sound like a scarab - and
+   * `voicePitch` goes back to meaning which body this is rather than which
+   * species.
+   *
+   *   throat     which vocal tract, in core/audio.js's THROATS table. Omit it
+   *              and groan() gives you the shambler, which is what every caller
+   *              had before the table existed.
+   *   chitin     which shell, for the variants that have one instead of a
+   *              throat. Never both.
+   *   idle       the off-screen tell, and the sound the player navigates by.
+   *   attack     the wind-up tell, at `attackPitch` of the register.
+   *   swipe      the swing.
+   *   death      the last sound it makes.
+   *   step       one footfall's worth. `stride` is METRES COVERED per step, not
+   *              seconds, so the rate is the body's real speed by construction;
+   *              `range` is the audible radius, and `near`/`far` thin the far
+   *              ones so a full horde cannot flood the mix. See the block in
+   *              update() for why it is spent nearest-first.
+   */
+  sound: {
+    throat: 'shambler',
+    idle: 'groan',
+    idleEvery: [4, 11],
+    idleRange: 26,
+    attack: 'groan',
+    attackPitch: 0.9,
+    swipe: 'swipe',
+    death: 'deathRattle',
+    // 1.1 m and a 55 per cent chance inside 18 m: the numbers this file has
+    // always used, moved rather than changed.
+    step: { name: 'footfall', stride: 1.1, range: 18, chance: 0.55 },
+  },
 
   /**
    * MEASURED AGAINST THE GROUND IT STANDS ON, TWICE.

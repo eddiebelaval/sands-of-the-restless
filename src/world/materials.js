@@ -7,7 +7,7 @@
  */
 
 import * as THREE from 'three';
-import { buildTextures } from './textures.js';
+import { buildTextures, inscribeScan } from './textures.js';
 import { weather, weatherVariant, syncWeatherVariants } from './weathering.js';
 import { applyMaps } from './assets.js';
 
@@ -33,6 +33,42 @@ export function buildMaterials() {
       ...tex.block,
       // Pale, slightly cool limestone. Kept distinct in hue from the warm sand
       // so wall and ground never merge into one tone at distance.
+      color: 0xded3bb,
+      roughness: 1.0,
+      metalness: 0.0,
+      normalScale: new THREE.Vector2(1.1, 1.1),
+    }),
+
+    /**
+     * THE INTERIOR WALL, WITH THE CARVING ON IT.
+     *
+     * WHY THIS IS A MATERIAL AND NOT A FLAG ON `limestone`. The inscription
+     * belongs on the flat dressed faces the player walks between and nowhere
+     * else: `limestone` is also the floor of eight rooms, the ramps, the ledge
+     * slabs, the column bases and abaci, the canal kerbs and the courtyard's
+     * rubble. A register band cut into a floor is nonsense, and a band on a
+     * 2-unit rubble chunk is a smear. Splitting the wall off is what lets the
+     * carving be authored against the one surface it is read on.
+     *
+     * IT COSTS NOTHING IT DID NOT ALREADY COST. The interior is not run through
+     * world/batch.js - that pass is the courtyard's - so every wall span
+     * emitWall() produces was already its own draw call wearing its own
+     * geometry. Moving them off `limestone` splits no batch and merges none.
+     * Measured before and after at the same pose in test/frieze.mjs.
+     *
+     * IT IS A FULL REGISTRY MEMBER, and that is the fix for the bug this lane
+     * was opened on. `upgradeMaterials` sees it, so the scan lands on it;
+     * `applyFidelity` walks Object.values of this registry, so the LOW setting
+     * zeroes its normalScale like every other stone; `materialsForBase` makes it
+     * a weathering variant, so the Act 3 rooms at -6 get their grime measured
+     * from their own floor. A material that lives outside all three is the shape
+     * of the defect that made this lane necessary.
+     */
+    frieze: new THREE.MeshStandardMaterial({
+      ...tex.frieze,
+      // The wall's own limestone. Same tint as `limestone` on both paths,
+      // because a doorway's jamb and the wall it is cut into are one stone and
+      // any difference between them reads as a join.
       color: 0xded3bb,
       roughness: 1.0,
       metalness: 0.0,
@@ -238,6 +274,18 @@ export function buildMaterials() {
     bleachStrength: 0.13,
   });
 
+  // The frieze takes the LIMESTONE profile verbatim, not a profile of its own.
+  // It is the same wall; the only difference is that part of it has been cut
+  // into. Two profiles would put a visible change of grime across the join
+  // between a wall span and the lintel above the doorway beside it.
+  weather(m.frieze, {
+    dirtHeight: 3.2,
+    dirt: new THREE.Color(0x7a6547),
+    variation: 0.44,
+    dirtStrength: 0.60,
+    bleachStrength: 0.13,
+  });
+
   weather(m.carved, {
     dirtHeight: 2.8,
     dirt: new THREE.Color(0x74603f),
@@ -327,6 +375,7 @@ export function materialsForBase(base = 0) {
   const out = {
     ...m,
     limestone: weatherVariant(m.limestone, base),
+    frieze: weatherVariant(m.frieze, base),
     carved: weatherVariant(m.carved, base),
     granite: weatherVariant(m.granite, base),
   };
@@ -379,6 +428,10 @@ export function upgradeMaterials(sets) {
   // scale the eye can resolve.
   applyMaps(m.granite,   sets.rock,      { normalScale: 0.62, aoIntensity: 1.0 });
 
+  // THE WALL FRIEZE IS UPGRADED THROUGH THE SCAN RATHER THAN AROUND IT. This is
+  // the line the whole lane exists for; see applyFrieze.
+  applyFrieze(m.frieze, sets.limestone);
+
   // `doorstone` IS NOT UPGRADED, ON PURPOSE, and this line exists so that reads
   // as a decision rather than as an omission.
   //
@@ -394,11 +447,14 @@ export function upgradeMaterials(sets) {
   // standing in for it must go back to white or they double up.
   m.sand.color.setHex(0xffffff);
   m.limestone.color.setHex(0xd8c39a);
+  // The frieze IS the limestone wall. Same scan, same tint, so the inscribed
+  // span and the plain lintel over the doorway beside it are one stone.
+  m.frieze.color.setHex(0xd8c39a);
   m.carved.color.setHex(0xd6bb90);   // sandstone, not quarry grey
   m.granite.color.setHex(0x9fa9b6);
 
   // The authored normalScale is the new baseline for the fidelity toggle.
-  for (const mat of [m.sand, m.limestone, m.carved, m.granite]) {
+  for (const mat of [m.sand, m.limestone, m.frieze, m.carved, m.granite]) {
     mat.userData.authoredNormalScale = mat.normalScale.x;
   }
 
@@ -411,6 +467,114 @@ export function upgradeMaterials(sets) {
   syncWeatherVariants();
 
   return m;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE ONE FUNCTION THAT HAD TO SURVIVE upgradeMaterials
+ * ---------------------------------------------------------------------------
+ *
+ * THE BUG, STATED PLAINLY. Everything this project paints procedurally for a
+ * stone surface is thrown away at boot. `applyMaps(m.limestone, sets.limestone)`
+ * and `applyMaps(m.carved, sets.rock)` REPLACE the map, the normal, the
+ * roughness and the AO of both stone materials with downloaded photographic
+ * scans, and `assetsFailed` is empty in every normal run. So
+ * `paintMasonry(..., { hieroglyphs: true, register: true })` in textures.js has
+ * been dead code at runtime for as long as those scans have loaded: it renders
+ * on the asset-404 path and nowhere else. The owner asked for carving on the
+ * interior walls, and in the shipped build it could not physically appear.
+ *
+ * A material that is merely SKIPPED by the upgrade - which is what `doorstone`
+ * does, and it is right to - would fix the bug and lose the argument. The scans
+ * are better stone than we can paint: bricks083 carries bedding, mortar depth
+ * and a baked normal from real geometry, against a normal we infer by running a
+ * Sobel filter over our own albedo, which is a guess that a dark stain is a
+ * dent. Trading that away to get an inscription is a bad trade and it was
+ * measured as one - see the report and test/frieze.mjs, where the wholly
+ * procedural frieze lost 38 per cent of the wall's high-frequency detail.
+ *
+ * So the inscription is composited INTO the scan instead:
+ *
+ *   ALBEDO   the scan's own photograph, with the recess multiplied down over it
+ *            so the grain survives inside the band, and the marks drawn on top.
+ *   NORMAL   the scan's baked normal, with a Sobelled detail normal of the mark
+ *            geometry added in tangent space. Carving is relief; an inscription
+ *            that exists only in the albedo does not change as the player walks.
+ *   ROUGH    the scan's, SHARED BY REFERENCE with `limestone`.
+ *   AO       the scan's, SHARED BY REFERENCE with `limestone`.
+ *
+ * which is +2 GPU textures and not +4, and is also what a real Egyptian wall is:
+ * dressed stone first, sunk relief cut into a face that already had the quarry
+ * in it.
+ *
+ * `userData.friezeSource` records which path ran. A harness that measures the
+ * inscription on the fallback path is measuring the code that was already
+ * working, which is the exact trap this lane was opened to escape, so the value
+ * is asserted from outside the page in test/frieze.mjs.
+ */
+function applyFrieze(mat, maps) {
+  if (!mat) return mat;
+
+  // No scan: keep the procedural set built in textures.js, which already has
+  // the inscription in it. This is the asset-404 path and it is the ONLY path
+  // the old code ever ran on.
+  if (!maps || !maps.map || !maps.map.image) {
+    mat.userData.friezeSource = 'procedural';
+    return mat;
+  }
+
+  // `lime` and not `sunk`, and that is a MEASURED choice rather than a default.
+  // The dark-recess reading is the physically obvious one and it failed the
+  // beetle control: staged with a gold scarab standing on the band it took the
+  // background behind the body from 14.4 to 4.8 luminance and lost 78.2 per cent
+  // of the body into it, against 48.8 on plain stone. See BAND_GROUNDS in
+  // textures.js for the argument and test/frieze.mjs for the numbers, which are
+  // taken with both grounds built in the same run so the comparison survives.
+  const { albedo, normal } = inscribeScan(
+    maps.map.image, maps.normalMap?.image || null, { ground: 'lime' });
+
+  const wrap = (canvas, colorSpace) => {
+    const t = new THREE.CanvasTexture(canvas);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    // Texel density is baked into the geometry's UVs by world/uv.js, exactly as
+    // for every other map in this game, so repeat stays 1.
+    t.repeat.set(1, 1);
+    t.colorSpace = colorSpace;
+    t.anisotropy = 8;
+    t.needsUpdate = true;
+    return t;
+  };
+
+  // Dispose the procedural maps being replaced or they leak on the GPU, the
+  // same contract applyMaps honours.
+  for (const slot of ['map', 'normalMap', 'roughnessMap', 'aoMap']) {
+    if (mat[slot] && mat[slot].isCanvasTexture) mat[slot].dispose();
+  }
+
+  mat.map = wrap(albedo, THREE.SRGBColorSpace);
+  if (normal) {
+    mat.normalMap = wrap(normal, THREE.NoColorSpace);
+    // 1.00, matching what upgradeMaterials gives `limestone` for the same scan.
+    // The chisel is carried by the detail term already added into the map, not
+    // by scaling the whole wall's relief up to find it.
+    mat.normalScale.setScalar(1.00);
+  }
+
+  // SHARED BY REFERENCE with limestone's, on purpose. These two slots are the
+  // scan's own and the inscription does not change them, so a copy would be a
+  // megabyte of VRAM to hold the identical bytes twice.
+  if (maps.roughnessMap) {
+    mat.roughnessMap = maps.roughnessMap;
+    mat.roughness = 1.0;
+  }
+  if (maps.aoMap) {
+    mat.aoMap = maps.aoMap;
+    mat.aoMapIntensity = 1.0;
+  }
+
+  mat.userData.friezeSource = 'scan';
+  mat.needsUpdate = true;
+  return mat;
 }
 
 /**

@@ -1,6 +1,45 @@
 /**
- * DOES THE GOLD SCARAB ACTUALLY LEAVE THE FLOOR, AND DOES IT STAND UP ON WHAT
- * IT LEAVES IT FOR.
+ * DOES THE GOLD SCARAB ACTUALLY LEAVE THE FLOOR, DOES IT STAND UP ON WHAT IT
+ * LEAVES IT FOR, AND IS THE HEIGHT IT GAINS FOR ANYTHING.
+ *
+ * ---------------------------------------------------------------------------
+ * THE SECOND HALF OF THIS FILE IS NEWER THAN THE FIRST AND IT IS WHY THE FIRST
+ * HALF WAS NOT ENOUGH
+ * ---------------------------------------------------------------------------
+ *
+ * Everything below the swarm section passed for the whole life of the wall
+ * crawl, and the owner still had nothing to answer. The checks proved a body
+ * got onto stone, oriented to it, and came back down; none of them asked what
+ * the climb BOUGHT. It bought a route: the wall led to a ceiling and the ceiling
+ * led to a point over the player's head. Measured, the crawler spent 28 per cent
+ * of its life off the floor and the wall leg was pure transit.
+ *
+ * The owner's design: "what if they run up the walls and jump at me? So they're
+ * basically trying to get a good height so that they can jump on top of me."
+ *
+ * So there is now a LEAP, and it gets its own four claims, each of which fails
+ * on its own and none of which is satisfiable by a body that simply fell:
+ *
+ *   5. IT LEAPS, and the mechanism was armed. `crawl.leaps` counts launches,
+ *      the surface enum reaches SURF_LEAP, and the arc's APEX IS ABOVE THE
+ *      POINT IT LEFT THE WALL. That last one is the whole difference between a
+ *      pounce and losing your grip, and it is the claim a build where the leap
+ *      silently did nothing would fail.
+ *   6. IT IS READABLE. The coil is a dead stop, so it is measured as one: the
+ *      body's position must not move by more than a centimetre across the whole
+ *      tell, and the tell plus the flight must add up to about 1.3 s.
+ *   7. IT IS SURVIVABLE, AND THIS IS A PAIRED RUN RATHER THAN AN OPINION. The
+ *      identical scenario is played twice. In the first the player is pinned and
+ *      the leap has to arrive on them. In the second the player steps sideways
+ *      at their own walk speed FROM THE FRAME THE COIL OPENS, and the leap has
+ *      to miss. One run alone proves nothing: a leap that always lands on you
+ *      passes the first, and a leap that always misses passes the second.
+ *   8. IT IS NOT A CEILING AMBUSH. Every launch is recorded with the surface it
+ *      left from, and none of them may be the roof; and the launch height above
+ *      the player's own floor is bounded, so a 16 m gallery does not produce a
+ *      dive nobody can see the start of.
+ *
+ * ---------------------------------------------------------------------------
  *
  * THE CONTROL IS THE POINT OF THIS FILE, and it is written that way because
  * this project has now shipped three green harnesses through the defect they
@@ -35,9 +74,9 @@
  */
 
 import { chromium } from 'playwright';
-import { resolveChrome } from './chrome.mjs';
+import { resolveChrome, dismissBriefing } from './chrome.mjs';
 
-const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4177/index.html';
+const BASE = process.argv[2] || process.env.SANDS_URL || 'http://127.0.0.1:4191/index.html';
 
 const browser = await chromium.launch({
   executablePath: resolveChrome(),
@@ -51,18 +90,69 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.goto(BASE, { waitUntil: 'load' });
 await page.waitForFunction(() => !!window.__SANDS__, null, { timeout: 60000 });
 await page.evaluate(() => window.__SANDS__.start && window.__SANDS__.start());
-await page.waitForTimeout(1200);
+/**
+ * THE BOOT CONTRACT. `__SANDS__.start()` finishes the briefing card itself, but
+ * this call is what keeps the file correct if that seam ever moves: on
+ * 2026-08-08 a card landed in front of the world and main.js's frame loop began
+ * returning early while it was up, and three lanes spent a night reporting
+ * confident, specific, fictional bugs about a simulation that had never
+ * started. dismissBriefing is deliberately tolerant of a page with no briefing.
+ */
+await dismissBriefing(page);
+await page.waitForFunction(() => window.__SANDS__.frameNo > 3, null, { timeout: 120000 });
 
 const out = await page.evaluate(async () => {
   const g = window.__SANDS__;
 
-  const PLAYER = { x: -45, z: -144 };
-  const START = { x: -34, z: -145 };
   const SECONDS = 45;
   const dt = 1 / 60;
+  /**
+   * The player's own walk speed, in m/s.
+   *
+   * Not a number this file gets to choose: it is what player/controller.js
+   * moves at, and the dodge is only evidence of survivability if the thing
+   * doing the dodging moves the way a player does.
+   */
+  const WALK = 5.4;
 
   /** The crawl's surface enum, spelled out for the trace. */
-  const NAME = ['floor', 'wall', 'ceiling'];
+  const NAME = ['floor', 'wall', 'ceiling', 'air'];
+
+  /**
+   * TWO ROOMS, AND THE SECOND ONE IS NOT A NICETY.
+   *
+   * The leap took the Hall of Offerings' ceiling leg away, and correctly: with
+   * the player eight metres out, the launch window opens at 4.2 m and the lip
+   * is at 8.5, so a crawler now dives before it ever gets there. That turned two
+   * of this file's shipped checks red - "reaches the ceiling" and "on the
+   * ceiling it inverts" - and the tempting fix was to relax them.
+   *
+   * Relaxing them would have deleted a shipped feature and closed the only
+   * instrument that could have noticed. The ceiling crawl is still the fallback
+   * for a player the leap window does not cover, so the checks move to a room
+   * where that is the case rather than being weakened where it is not.
+   *
+   * THE GREAT GALLERY IS THAT ROOM BY ARITHMETIC. It is 52 x 38, so a player at
+   * its centre is 19 m from the nearest wall face and 26 from the far ones -
+   * outside LEAP_MAX_R's 9 from every climbable surface in the room. A crawler
+   * there cannot arm a dive, so it does what it always did: over the lip at
+   * 15.5 m, across the roof, and down.
+   */
+  const ROOMS = {
+    // `pen` is the room's own bounds from world/rooms.js with two metres taken
+    // off every side. A dodging player who walked into a wall would be standing
+    // still, and a stationary player is the OTHER run.
+    hall: {
+      player: { x: -45, z: -144 }, start: { x: -34, z: -145 },
+      at: { x: -45, z: -144, rot: 0 },
+      pen: { minX: -54, maxX: -20, minZ: -156, maxZ: -142 },
+    },
+    gallery: {
+      player: { x: 0, z: -177 }, start: { x: -18, z: -190 },
+      at: { x: 0, z: -177, rot: 0 },
+      pen: { minX: -24, maxX: 24, minZ: -194, maxZ: -160 },
+    },
+  };
 
   if (!g.director.placeAt) return { fatal: 'director.placeAt not available' };
 
@@ -91,10 +181,23 @@ const out = await page.evaluate(async () => {
     };
   }
 
-  /** One variant, one placement, one pinned player. */
-  async function run(id) {
+  /**
+   * One variant, one placement, one player.
+   *
+   * `dodge` is the paired half of claim 7. False pins the player exactly where
+   * they started, so every metre closed is the crawler's own doing. True pins
+   * them the same way until the instant the coil opens and then walks them
+   * sideways at WALK m/s - the player's real speed, out of the same tables the
+   * controller uses - perpendicular to the line the crawler is about to throw
+   * itself down. Nothing else differs between the two runs.
+   */
+  async function run(id, dodge = false, roomId = 'hall') {
+    const R = ROOMS[roomId];
+    const PLAYER = R.player;
+    const START = R.start;
+
     g.director.reset();
-    g.spaces.enter('interior', { x: PLAYER.x, z: PLAYER.z, rot: 0 });
+    g.spaces.enter('interior', R.at);
     openEverything();
     await new Promise((r) => requestAnimationFrame(r));
 
@@ -124,12 +227,27 @@ const out = await page.evaluate(async () => {
     const trace = [];
     let lastKey = '';
 
+    // --- the leap ----------------------------------------------------------
+    /** Where the player is this frame. Written by the dodge, read by the pin. */
+    let plx = PLAYER.x, plz = PLAYER.z;
+    let dodging = false;
+    let dodgeX = 0, dodgeZ = 0;
+
+    let coilFrames = 0;
+    let coilDrift = 0;          // metres the body moved during the whole tell
+    let coilAnchor = null;
+    let lastLeaps = 0;
+    let leapFrames = 0;
+    /** One record per launch, closed out when the body lands. */
+    const leaps = [];
+    let open = null;
+    let prevSurf = 0;
+
     const frames = Math.round(SECONDS / dt);
     for (let i = 0; i < frames; i++) {
       clock += dt;
-      // Pinned. Every metre closed is the crawler's own doing.
-      g.player.position.x = PLAYER.x;
-      g.player.position.z = PLAYER.z;
+      g.player.position.x = plx;
+      g.player.position.z = plz;
       g.director.update(dt, clock);
       if (!actor.live) break;
 
@@ -146,10 +264,80 @@ const out = await page.evaluate(async () => {
       if (c && c.transit <= 0) {
         if (c.surf === 1) { wallFrames++; wallUpAbs = Math.max(wallUpAbs, Math.abs(up.y)); }
         if (c.surf === 2) { roofFrames++; roofUpY = Math.min(roofUpY, up.y); }
+        if (c.surf === 3) leapFrames++;
         if (c.surf > surfMax) { surfMax = c.surf; if (mountedAt < 0) mountedAt = clock; }
       }
 
-      const d = Math.hypot(p.x - PLAYER.x, p.z - PLAYER.z);
+      if (c) {
+        // --- the tell -------------------------------------------------------
+        // Measured as a DEAD STOP, which is the claim: a coil that crept would
+        // be a wind-up the player cannot read as one.
+        if (c.coil > 0) {
+          coilFrames++;
+          if (!coilAnchor) {
+            coilAnchor = { x: p.x, y: p.y, z: p.z, at: clock, surf: prevSurf };
+            // The dodge starts HERE, on the frame the tell opens - the first
+            // moment a player could possibly have known.
+            if (dodge && !dodging) {
+              dodging = true;
+              const dx = plx - p.x, dz = plz - p.z;
+              const l = Math.hypot(dx, dz) || 1;
+              // Perpendicular to the line of the throw, so the player stays the
+              // same distance away and the leap window cannot close for a
+              // reason other than the dodge itself.
+              dodgeX = -dz / l; dodgeZ = dx / l;
+            }
+          } else {
+            coilDrift = Math.max(coilDrift,
+              Math.hypot(p.x - coilAnchor.x, p.y - coilAnchor.y, p.z - coilAnchor.z));
+          }
+        }
+
+        // --- a launch -------------------------------------------------------
+        if (c.leaps > lastLeaps) {
+          lastLeaps = c.leaps;
+          open = {
+            at: +clock.toFixed(2),
+            from: coilAnchor ? coilAnchor.surf : prevSurf,
+            coil: coilAnchor ? +(clock - coilAnchor.at).toFixed(2) : 0,
+            coilDrift: +coilDrift.toFixed(3),
+            launchY: +c.launchY.toFixed(2),
+            launchR: +c.launchR.toFixed(2),
+            y0: p.y,
+            apex: p.y,
+            playerAt: { x: plx, z: plz },
+          };
+          coilAnchor = null;
+          coilDrift = 0;
+        }
+
+        if (open) {
+          if (p.y > open.apex) open.apex = p.y;
+          if (c.surf !== 3) {
+            // Landed. The miss distance is measured against where the player is
+            // NOW, which for the dodge run is not where they were aimed at.
+            open.flight = +(clock - open.at).toFixed(2);
+            open.rise = +(open.apex - open.y0).toFixed(2);
+            open.landed = +Math.hypot(p.x - plx, p.z - plz).toFixed(2);
+            open.landedAtAim = +Math.hypot(p.x - open.playerAt.x, p.z - open.playerAt.z).toFixed(2);
+            delete open.y0; delete open.apex; delete open.playerAt;
+            leaps.push(open);
+            open = null;
+            dodging = false;
+          }
+        }
+
+        prevSurf = c.transit > 0 ? prevSurf : c.surf;
+      }
+
+      if (dodging) {
+        plx += dodgeX * WALK * dt;
+        plz += dodgeZ * WALK * dt;
+        plx = Math.min(R.pen.maxX, Math.max(R.pen.minX, plx));
+        plz = Math.min(R.pen.maxZ, Math.max(R.pen.minZ, plz));
+      }
+
+      const d = Math.hypot(p.x - plx, p.z - plz);
       if (d < closest) closest = d;
 
       /**
@@ -164,7 +352,8 @@ const out = await page.evaluate(async () => {
        * not.
        */
       if (c) {
-        const key = c.transit > 0 ? `turning onto the ${NAME[c.surf]}` : `on the ${NAME[c.surf]}`;
+        const key = c.coil > 0 ? 'coiled to leap'
+          : c.transit > 0 ? `turning onto the ${NAME[c.surf]}` : `on the ${NAME[c.surf]}`;
         if (key !== lastKey) {
           lastKey = key;
           trace.push(`${clock.toFixed(2).padStart(6)} s  ${key.padEnd(26)}`
@@ -182,6 +371,7 @@ const out = await page.evaluate(async () => {
 
     return {
       id,
+      dodge,
       maxAbove: +maxAbove.toFixed(2),
       secondsOff: +(framesOff * dt).toFixed(2),
       minUpY: +minUpY.toFixed(3),
@@ -190,6 +380,10 @@ const out = await page.evaluate(async () => {
       wallUpAbs: +wallUpAbs.toFixed(3),
       roofFrames,
       roofUpY: +roofUpY.toFixed(3),
+      leapFrames,
+      leaps,
+      coilFrames,
+      coilSeconds: +(coilFrames * dt).toFixed(2),
       surfMax,
       mountedAt: mountedAt < 0 ? null : +mountedAt.toFixed(2),
       closest: +closest.toFixed(2),
@@ -231,36 +425,61 @@ const out = await page.evaluate(async () => {
    * arrived at 1.8 m. A control is the difference between fixing this and
    * filing it against the flow field.
    */
-  async function swarm(id) {
+  /**
+   * SIX AT ONCE, AND THE SECOND ROOM IS ABOUT THE LEAP RATHER THAN THE ROUND.
+   *
+   * The gallery run above answers "does the round end". It cannot answer the
+   * question the leap raises, because a player standing at the gallery's centre
+   * is outside LEAP_MAX_R of every wall in it and no dive is ever armed there.
+   *
+   * The Hall of Offerings is 38 x 18: a player in it is inside the window of
+   * the long walls almost everywhere. Six crawlers in that room is the
+   * realistic worst case for the new move, and the failure it is watching for is
+   * not "does one leap work" - that is answered above - it is CONCURRENCY. Six
+   * readable dives that all land in the same 1.3 s are one unreadable dive, and
+   * a tell nobody can act on is the same as no tell.
+   */
+  async function swarm(id, roomId = 'gallery') {
+    const R = ROOMS[roomId];
+    const P = R.player;
+
     g.director.reset();
-    g.spaces.enter('interior', { x: 0, z: -177, rot: 0 });
+    g.spaces.enter('interior', R.at);
     openEverything();
     await new Promise((r) => requestAnimationFrame(r));
     g.director.state.timer = 1e9;
 
-    const P = { x: 0, z: -177 };
     g.player.position.x = P.x;
     g.player.position.z = P.z;
 
-    const at = [
-      { x: -18, z: -190 }, { x: 18, z: -190 }, { x: -18, z: -164 },
-      { x: 18, z: -164 }, { x: 0, z: -192 }, { x: 0, z: -163 },
-    ];
+    const at = roomId === 'gallery'
+      ? [{ x: -18, z: -190 }, { x: 18, z: -190 }, { x: -18, z: -164 },
+        { x: 18, z: -164 }, { x: 0, z: -192 }, { x: 0, z: -163 }]
+      // Spread down the Hall's long axis and across its width, all of them
+      // outside MOUNT_MIN_M so every one of them is free to go for a wall.
+      : [{ x: -33, z: -145 }, { x: -33, z: -152 }, { x: -55, z: -145 },
+        { x: -55, z: -152 }, { x: -44, z: -155 }, { x: -46, z: -142 }];
+
     const crew = [];
     for (const p of at) {
       const a = g.director.placeAt(id, p.x, p.z);
-      if (a) crew.push({ a, closest: Infinity, off: 0 });
+      if (a) crew.push({ a, closest: Infinity, off: 0, leaps: 0, last: 0 });
     }
     if (crew.length < at.length) return { fatal: `only placed ${crew.length} of ${at.length}` };
 
     const ctx = g.director.ctx;
     const frames = Math.round(SECONDS / dt);
     let clock = 0;
+    let peakAir = 0;        // most bodies in the air on any one frame
+    let peakTell = 0;       // most bodies coiled on any one frame
+    const landings = [];    // the clock at every touchdown, for the spacing check
+
     for (let i = 0; i < frames; i++) {
       clock += dt;
       g.player.position.x = P.x;
       g.player.position.z = P.z;
       g.director.update(dt, clock);
+      let air = 0, tell = 0;
       for (const c of crew) {
         if (!c.a.live) continue;
         const p = c.a.position;
@@ -268,32 +487,66 @@ const out = await page.evaluate(async () => {
         if (p.y - floor > 0.6) c.off++;
         const d = Math.hypot(p.x - P.x, p.z - P.z);
         if (d < c.closest) c.closest = d;
+
+        const cr = c.a.crawl;
+        if (cr) {
+          if (cr.surf === 3) air++;
+          if (cr.coil > 0) tell++;
+          if (cr.leaps > c.leaps) c.leaps = cr.leaps;
+          if (cr.surf !== 3 && c.last === 3) landings.push(+clock.toFixed(2));
+          c.last = cr.surf;
+        }
       }
+      if (air > peakAir) peakAir = air;
+      if (tell > peakTell) peakTell = tell;
+    }
+
+    // The tightest gap between two touchdowns anywhere in the run. This is the
+    // number that says whether six dives arrived as six events or as one.
+    let tightest = Infinity;
+    landings.sort((a, b) => a - b);
+    for (let i = 1; i < landings.length; i++) {
+      tightest = Math.min(tightest, +(landings[i] - landings[i - 1]).toFixed(2));
     }
 
     return {
       id,
+      room: roomId,
       n: crew.length,
       closest: crew.map((c) => +c.closest.toFixed(2)),
       offPct: crew.map((c) => Math.round((c.off / frames) * 100)),
       arrived: crew.filter((c) => c.closest < 2.5).length,
       climbed: crew.filter((c) => c.off > 0).length,
+      leapt: crew.filter((c) => c.leaps > 0).length,
+      leapTotal: crew.reduce((s, c) => s + c.leaps, 0),
+      peakAir,
+      peakTell,
+      landings,
+      tightest: landings.length > 1 ? tightest : null,
     };
   }
 
   const gold = await run('goldscarab');
   const plain = await run('scarab');
+  // The paired half of claim 7. Same seed, same tile, same everything - the
+  // only difference is that this player walks when the tell opens.
+  const dodged = await run('goldscarab', true);
+  // The ceiling leg, in the one room on the map where a dive cannot be armed.
+  const roof = await run('goldscarab', false, 'gallery');
   const sixGold = await swarm('goldscarab');
   const sixPlain = await swarm('scarab');
-  return { gold, plain, sixGold, sixPlain };
+  // The concurrency question, in the room where dives actually arm.
+  const sixHall = await swarm('goldscarab', 'hall');
+  return { gold, plain, dodged, roof, sixGold, sixPlain, sixHall };
 });
 
 if (out.fatal) { console.log(`FATAL  ${out.fatal}`); await browser.close(); process.exit(1); }
-for (const r of [out.gold, out.plain, out.sixGold, out.sixPlain]) {
+for (const r of [out.gold, out.plain, out.dodged, out.roof, out.sixGold, out.sixPlain, out.sixHall]) {
   if (r && r.fatal) { console.log(`FATAL  ${r.fatal}`); await browser.close(); process.exit(1); }
 }
 
-const G = out.gold, P = out.plain, S = out.sixGold, SP = out.sixPlain;
+const G = out.gold, P = out.plain, D = out.dodged, RF = out.roof;
+const S = out.sixGold, SP = out.sixPlain, SH = out.sixHall;
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log(`PASS  ${m}`); } else { fail++; console.log(`FAIL  ${m}`); } };
 
@@ -317,7 +570,7 @@ console.log('');
 
 // 1. it leaves the floor, and the control does not.
 ok(G.maxAbove > 3, `the gold scarab climbs (peak ${G.maxAbove} m above its own floor)`);
-ok(G.surfMax === 2, `and reaches the ceiling (deepest surface ${G.surfMax}, 2 = roof)`);
+ok(G.surfMax >= 2, `and gets past the wall onto something (deepest surface ${G.surfMax})`);
 ok(G.secondsOff > 3, `and stays up there long enough to be seen (${G.secondsOff} s off the floor)`);
 
 // THE CONTROL. If this passes, nothing above is measuring a wall crawl.
@@ -330,9 +583,35 @@ ok(G.hasCrawl, 'and the gold scarab is (actor.crawl is allocated)');
 // 2. the body orients to the surface rather than staying +Y.
 ok(G.wallFrames > 30 && G.wallUpAbs < 0.2,
   `on a wall its up-axis lies flat with the normal (worst |up.y| ${G.wallUpAbs} over ${G.wallFrames} frames)`);
-ok(G.roofFrames > 30 && G.roofUpY < -0.9,
-  `on the ceiling it inverts (worst up.y ${G.roofUpY} over ${G.roofFrames} frames)`);
 ok(G.minUpY < -0.9, `so the up-axis genuinely tracks the surface, it does not stay +Y (min ${G.minUpY})`);
+
+/**
+ * THE CEILING LEG IS STILL THERE, and it is checked in the Great Gallery
+ * because it cannot be checked in the Hall any more.
+ *
+ * These two assertions used to run against the Hall run and went red the moment
+ * the leap landed - not because the ceiling crawl broke, but because a crawler
+ * in that room now dives at 4.2 m instead of climbing to 8.5. Weakening them
+ * where they stood would have retired the only check that can see a ceiling
+ * crawl regress. See ROOMS above for why the gallery's centre is the room that
+ * still produces one.
+ */
+console.log('');
+console.log('the Great Gallery, 45 s, player pinned at its centre (0, -177) - '
+  + '19 m from the nearest wall, so no dive can be armed:');
+show(RF, 'goldscarab');
+console.log('\nits route:');
+for (const t of RF.trace) console.log(`  ${t}`);
+console.log('');
+
+ok(RF.surfMax === 2,
+  `out there it still takes the CEILING instead (deepest surface ${RF.surfMax}, 2 = roof)`);
+ok(RF.roofFrames > 30 && RF.roofUpY < -0.9,
+  `and it inverts on it (worst up.y ${RF.roofUpY} over ${RF.roofFrames} frames)`);
+ok(RF.leaps.length === 0,
+  `and it does NOT leap from out there (${RF.leaps.length} launches at 19 m, `
+  + `against LEAP_MAX_R of 9)`);
+ok(RF.closest < 2.5, `and it still arrives (closest ${RF.closest} m)`);
 
 // 3. it still gets to the player.
 ok(G.closest < 2.5, `and it still arrives (closest ${G.closest} m)`);
@@ -342,6 +621,84 @@ ok(P.closest < 2.5, `CONTROL: so does the ordinary scarab (closest ${P.closest} 
 ok(G.vent === 'head', `the vent is still tagged a crit (region ${G.vent})`);
 ok(G.heads === 2, `and only the abdomen and the vent are (${G.heads} crit meshes)`);
 ok(G.neckHeads === 0, `the skull is still NOT a crit (${G.neckHeads} crit meshes on the neck)`);
+
+// ---------------------------------------------------------------------------
+// THE LEAP
+// ---------------------------------------------------------------------------
+
+const SURF = ['floor', 'wall', 'ceiling', 'air'];
+const showLeaps = (r, label) => {
+  console.log(`  ${label}`);
+  if (!r.leaps.length) { console.log('    none'); return; }
+  for (const L of r.leaps) {
+    console.log(`    ${String(L.at).padStart(6)} s  launched off the ${SURF[L.from].padEnd(8)}`
+      + `from ${String(L.launchY).padStart(5)} m up, ${String(L.launchR).padStart(5)} m out`
+      + `   tell ${String(L.coil).padStart(5)} s (drifted ${L.coilDrift} m)`
+      + `   flight ${String(L.flight).padStart(5)} s  rose ${String(L.rise).padStart(5)} m`
+      + `   landed ${String(L.landed).padStart(5)} m from the player`);
+  }
+};
+
+console.log('');
+console.log('the leap:');
+showLeaps(G, 'PINNED player, the same run as above');
+showLeaps(D, 'DODGING player, identical scenario, walks at 5.4 m/s from the frame the tell opens');
+console.log('');
+
+const gl = G.leaps;
+const dl = D.leaps;
+const first = gl[0];
+
+// 5. it leaps, and it threw itself rather than fell.
+ok(gl.length > 0, `it leaps (${gl.length} launch${gl.length === 1 ? '' : 'es'} in ${45} s)`);
+ok(G.surfMax >= 3, `and the surface enum reaches the air (deepest ${G.surfMax}, 3 = leap)`);
+ok(G.leapFrames > 20, `and it is genuinely airborne (${G.leapFrames} frames in flight)`);
+if (first) {
+  ok(first.rise > 0.15,
+    `THE ARC RISES: it left the wall travelling upward and peaked ${first.rise} m above the launch `
+    + `point, which a body that fell cannot do`);
+  ok(first.flight >= 0.6 && first.flight <= 1.6,
+    `and the flight is a beat rather than an event (${first.flight} s)`);
+}
+
+// 6. it is readable.
+if (first) {
+  ok(first.coil >= 0.35 && first.coil <= 0.7,
+    `the tell runs its full length before anything commits (${first.coil} s)`);
+  ok(first.coilDrift < 0.01,
+    `and it is a DEAD STOP, not a slow wind-up (${first.coilDrift} m of drift across the whole tell)`);
+  ok(first.coil + first.flight >= 1.0,
+    `so the whole move is ${(first.coil + first.flight).toFixed(2)} s from the first sign to impact`);
+}
+
+// 7. SURVIVABLE. The paired run is the claim; neither half means anything alone.
+ok(dl.length > 0, `CONTROL: the dodging run also produced a leap to dodge (${dl.length})`);
+if (first && dl.length) {
+  const dodgedL = dl[0];
+  ok(first.landed < 2.5,
+    `a pinned player is landed on (${first.landed} m from the body at touchdown)`);
+  ok(dodgedL.landed > first.landed + 1.5,
+    `CONTROL: a player who walks when the tell opens is not `
+    + `(${dodgedL.landed} m against the pinned run's ${first.landed} m)`);
+  ok(dodgedL.landedAtAim < 2.5,
+    `and it landed where they WERE, which is the proof it never tracked them `
+    + `(${dodgedL.landedAtAim} m from the aim point)`);
+}
+
+// 8. not a ceiling ambush.
+ok(gl.every((L) => L.from === 1) && dl.every((L) => L.from === 1),
+  `every launch came off a WALL, never the roof `
+  + `(${[...gl, ...dl].map((L) => SURF[L.from]).join(', ') || 'none'})`);
+ok([...gl, ...dl].every((L) => L.launchY <= 5.0),
+  `and none of them dived from out of sight (highest launch `
+  + `${Math.max(0, ...[...gl, ...dl].map((L) => L.launchY))} m above the player's floor)`);
+ok([...gl, ...dl].every((L) => L.launchR >= 3.0 && L.launchR <= 9.5),
+  `every arc was lateral enough to cross the player's view `
+  + `(ranges ${[...gl, ...dl].map((L) => L.launchR).join(', ') || 'none'})`);
+
+// THE CONTROL FOR THE WHOLE OF IT.
+ok(P.leaps.length === 0 && P.leapFrames === 0,
+  `CONTROL: the ordinary scarab never leaps (${P.leaps.length} launches, ${P.leapFrames} air frames)`);
 
 console.log('');
 console.log('the same six points in the Great Gallery, 45 s, player pinned at (0, -177):');
@@ -361,6 +718,38 @@ ok(S.arrived >= SP.arrived,
   `climbing costs the clutch no arrivals (${S.arrived} of ${S.n} against the control's ${SP.arrived})`);
 ok(Math.max(...S.offPct) < 70,
   `and none of them lives up there (worst spends ${Math.max(...S.offPct)}% of the run off the floor)`);
+ok(S.leapTotal === 0,
+  `CONTROL: nothing dives from the gallery's centre, so nothing above is a leap `
+  + `in disguise (${S.leapTotal} launches)`);
+
+// ---------------------------------------------------------------------------
+// SIX AT ONCE, IN THE ROOM WHERE DIVES ARM
+// ---------------------------------------------------------------------------
+
+console.log('');
+console.log('six gold scarabs in the Hall of Offerings, 45 s, player pinned at (-45, -144):');
+clutch(SH, 'goldscarab x6');
+console.log(`  ${''.padEnd(18)}${SH.leapt} of ${SH.n} leapt, ${SH.leapTotal} launches in total`);
+console.log(`  ${''.padEnd(18)}most in the air at once ${SH.peakAir}, most coiled at once ${SH.peakTell}`);
+console.log(`  ${''.padEnd(18)}touchdowns at ${SH.landings.join(', ') || 'none'} s`
+  + `   tightest gap ${SH.tightest === null ? 'n/a' : `${SH.tightest} s`}`);
+console.log('');
+
+ok(SH.leapTotal > 0,
+  `a realistic clutch does use the move (${SH.leapTotal} launches from ${SH.leapt} of ${SH.n} bodies)`);
+ok(SH.arrived >= 4, `and it still arrives (${SH.arrived} of ${SH.n})`);
+/**
+ * THE CONCURRENCY BAR, and it is the one that decides whether this is a
+ * readable move or an ambush wearing one.
+ *
+ * Not "how many leapt" - six leaps spread over forty-five seconds is a good
+ * fight. The number that matters is how many are in the air on the SAME frame,
+ * because the tell is 0.45 s long and a player cannot answer two of them.
+ */
+ok(SH.peakAir <= 2,
+  `and never more than ${SH.peakAir} of them is in the air on one frame, so the tell stays answerable`);
+ok(SH.peakTell <= 2,
+  `nor more than ${SH.peakTell} coiled at once (${SH.peakTell} is the most simultaneous tells)`);
 
 ok(errors.length === 0, 'no console errors');
 if (errors.length) for (const e of errors.slice(0, 5)) console.log(`  err ${e}`);

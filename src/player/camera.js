@@ -269,6 +269,37 @@ export function createCameraRig(camera) {
   return {
     get yaw() { return yaw; },
     get pitch() { return pitch; },
+
+    /**
+     * Point the camera at an absolute heading, in radians.
+     *
+     * `yaw` is a getter deliberately: it is integrated from mouse and stick
+     * deltas, and nothing in normal play should be able to assign it or the next
+     * look input would fight whatever wrote it.
+     *
+     * This exists because a HEADING has to be verifiable from outside the page.
+     * A sign error in a compass is invisible in a screenshot and obvious the
+     * instant somebody turns, and `ui/minimap.js` carries a note recording that
+     * this exact class of mistake was made twice inside that one file.
+     * `test/compass.mjs` drives the rig to each of the four cardinals and reads
+     * back what landed under the index; with no setter it could only check the
+     * compass against the same arithmetic the compass itself uses, which proves
+     * nothing at all.
+     *
+     * There is a real use waiting for it too: any sequence that PLACES the
+     * player - a descent, a respawn, a world transition - owns which way they
+     * are facing when they arrive, and none of them can currently say.
+     *
+     * Recoil, shake and the look offsets are left alone. They are transient
+     * values added on top of `yaw` in update(), and clobbering them here would
+     * make a heading assignment silently cancel a kick that was mid-flight.
+     */
+    setYaw(radians) {
+      if (!Number.isFinite(radians)) return false;
+      yaw = radians;
+      return true;
+    },
+
     /**
      * 0 at full ADS, 1 at hip. CLAMPED, and the clamp is the whole point.
      *
