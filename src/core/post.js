@@ -295,7 +295,27 @@ const GradeShader = {
     tDiffuse:   { value: null },
     uTime:      { value: 0 },
     uAberration:{ value: 0.00045 }, // widens when the player takes a hit
-    uDamage:    { value: 0.0 },     // 0..1 red wash
+    uDamage:    { value: 0.0 },     // 0..1 red wash, THE HIT. Transient.
+
+    /**
+     * 0..1 red vignette: THE CONDITION, not the event. How near death you are.
+     *
+     * SEPARATE FROM uDamage, AND NOT FOR TIDINESS. `uDamage` widens chromatic
+     * aberration sixfold - see uAberration's use in the fragment shader - which
+     * is right for the quarter second after something hits you and wrong for a
+     * state the player can sit in for a minute. Driving low health through
+     * uDamage would leave the frame permanently smeared and make being hurt
+     * nauseating to play rather than tense.
+     *
+     * This channel touches COLOUR ONLY, and it is a continuous function of
+     * health rather than a threshold, because the owner asked for both
+     * directions: "I wanna know when I'm dying and know when I'm reviving."
+     * A floor that only exists below a line can announce danger; it cannot
+     * announce recovery, because there is nothing above the line to recede
+     * from. See systems/damage.js.
+     */
+    uLowHealth: { value: 0.0 },
+
     // THIS IS WHERE THE RED/MAGENTA SPECKLE CAME FROM. It survived a full day
     // of work and two builds unnoticed, and it is not a lighting artefact, a
     // normal map, or chromatic aberration - all three were ablated one at a
@@ -487,6 +507,7 @@ const GradeShader = {
     uniform float uTime;
     uniform float uAberration;
     uniform float uDamage;
+    uniform float uLowHealth;
     uniform float uGrain;
     uniform float uVignette;
     uniform float uBlackPoint;
@@ -619,10 +640,51 @@ const GradeShader = {
       float vig = smoothstep(0.85, 0.22, dist);
       c.rgb *= mix(1.0, vig, uVignette);
 
-      // --- damage wash -----------------------------------------------------
+      // --- damage wash, THE HIT --------------------------------------------
       if (uDamage > 0.001) {
         float edge = smoothstep(0.15, 0.75, dist);
         c.rgb = mix(c.rgb, vec3(0.55, 0.04, 0.02), edge * uDamage * 0.85);
+      }
+
+      // --- low health, THE CONDITION ---------------------------------------
+      //
+      // AFTER the hit wash, so a hit taken at low health still reads as an
+      // event on top of the state rather than being swallowed by it.
+      //
+      // It reaches FURTHER IN than the hit wash - 0.95 to 0.10 against the
+      // hit's 0.15 to 0.75 - and that is the whole difference between the two
+      // effects. A corner tint says "something touched you". An iris closing
+      // toward the middle of the screen says "you are running out", and it is
+      // legible in peripheral vision while the player is looking at a mummy in
+      // the centre of the frame, which is precisely when they cannot spare a
+      // glance at the vitality plate.
+      //
+      // The darkening is doing as much work as the colour. Mixing toward a red
+      // that is DARKER than the frame closes the edges down; a bright red would
+      // wash a sunlit courtyard toward pink and read as a UI overlay stuck on
+      // top of the game rather than as something happening to the player.
+      if (uLowHealth > 0.001) {
+        float iris = smoothstep(0.95, 0.10, dist);
+        /*
+         * pow 1.4, AND IT WAS 2.0 FOR ONE BUILD.
+         *
+         * Squaring kept the top of the range and gutted the middle: at 20 of
+         * 100 vitality the term landed at 0.36 of full, which photographed as a
+         * warm edge on a desert that is already orange. The owner asked for
+         * this feature while sitting at exactly that health, so the middle of
+         * the range is not decoration - it is the entire request. 1.4 lifts 20
+         * hp by about a third while leaving a sliver of health where it was.
+         *
+         * Still above 1.0, because the alternative is a linear ramp that starts
+         * announcing danger at half health, and half health in this game is a
+         * normal Tuesday.
+         */
+        float k = pow(uLowHealth, 1.4);
+        c.rgb = mix(c.rgb, vec3(0.30, 0.012, 0.008), (1.0 - iris) * k * 0.92);
+        // And the centre loses a little blood too, so the whole frame turns
+        // rather than only its border. Kept small: the player still has to be
+        // able to SEE the thing that is killing them.
+        c.rgb = mix(c.rgb, c.rgb * vec3(1.06, 0.72, 0.70), k * 0.55);
       }
 
       gl_FragColor = c;
@@ -902,6 +964,18 @@ export function createPost(renderer, scene, camera) {
     update(dt) {
       grade.uniforms.uTime.value += dt;
     },
+
+    /**
+     * 0..1 red iris for HOW NEAR DEATH the player is. Colour only, no
+     * aberration. Driven every frame by systems/damage.js from health, in both
+     * directions, so it recedes as the player heals. See the uniform.
+     */
+    setLowHealth(v) {
+      grade.uniforms.uLowHealth.value = Math.max(0, Math.min(1, v));
+    },
+
+    /** What the shader is currently showing, for the harness. */
+    lowHealth() { return grade.uniforms.uLowHealth.value; },
 
     /** 0..1 red wash and aberration widening, driven by the damage system. */
     setDamage(v) {

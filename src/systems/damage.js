@@ -49,8 +49,85 @@ const REGEN_RATE = 14;
  * A damage indicator that only flashes tells the player they were hit. One that
  * stays on tells them they are about to die, which is the more useful fact and
  * the one a health bar in the corner is bad at communicating.
+ *
+ * SUPERSEDED AS THE LOW-HEALTH SIGNAL, kept for the hit wash's floor. The
+ * paragraph above was right about what the player needs and the implementation
+ * could not deliver it - see LOW_FROM below.
  */
 const CRITICAL = 0.35;
+
+/**
+ * WHERE THE FRAME STARTS GOING RED, as a fraction of maximum health.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS WHEN A LOW-HEALTH WASH ALREADY DID
+ * ---------------------------------------------------------------------------
+ *
+ * The owner played the shipped build on 2026-08-12 and asked for exactly the
+ * feature this file already had: "when my health is dying the screen needs to
+ * start getting really red". It was not a missing feature, it was an inaudible
+ * one, and the arithmetic says why.
+ *
+ * The old floor was `frac < 0.35 ? (1 - frac/0.35) * 0.45 : 0`, feeding a
+ * shader term that mixes at `edge * uDamage * 0.85` in the OUTER CORNERS only.
+ * At 20 of 100 vitality - a number the owner was actually sitting at - that is
+ * 0.19 of wash, so about a sixteen percent tint at the extreme edge of a
+ * sunlit desert frame. It was doing something. Nobody could see it.
+ *
+ * Two changes, and neither is "turn the number up":
+ *
+ *   IT STARTS AT HALF, not at a third. Half health is when the player's
+ *   decisions should change - back off, use the shrine, stop pushing - and a
+ *   signal that arrives at a third arrives after the decision that would have
+ *   saved them.
+ *
+ *   IT RUNS TO 0.92 OF A DARKER RED THAT REACHES THE MIDDLE OF THE SCREEN,
+ *   which is what makes it legible in peripheral vision while the player is
+ *   looking at the thing killing them. See the uLowHealth block in core/post.js.
+ *
+ * The curve is squared IN THE SHADER rather than here, so this stays a plain
+ * readable fraction of health and the taste lives next to the pixels it makes.
+ */
+const LOW_FROM = 0.50;
+
+/**
+ * How fast the red follows health, per second, and WHY IT IS ASYMMETRIC.
+ *
+ * The second half of the owner's ask was "I wanna see the red clear out, you
+ * know, and we get better - I wanna know when I'm dying and know when I'm
+ * reviving." Recovery has to be as legible as danger, and the two are not the
+ * same event.
+ *
+ * Going red is fast (4.5/s) because it accompanies a hit that already has its
+ * own flash: if the condition lagged behind the event, the frame would flash,
+ * clear, and then darken a beat later for no visible reason.
+ *
+ * Clearing is SLOWER (1.5/s) and that is the whole recovery read. Health regen
+ * is 14 a second after a 5 second delay, so a full heal from a sliver takes
+ * about six seconds; a red that snapped off the instant regen started would be
+ * gone before the player noticed it going. Draining it slowly turns healing
+ * into something you WATCH happen, which is the difference between being told
+ * you are safe and feeling it.
+ */
+const LOW_RISE = 4.5;
+const LOW_FALL = 1.5;
+
+/**
+ * Below this, the red breathes.
+ *
+ * A steady tint becomes wallpaper within about fifteen seconds - the eye adapts
+ * to any constant and stops reporting it, which is the failure mode that made
+ * the old wash invisible even to the person who wrote it. A slow pulse cannot
+ * be adapted to, and it reads as a pulse rather than as a flicker because it is
+ * near a resting heart rate.
+ *
+ * Deliberately NOT a gameplay-relevant number: nothing reads PULSE_BELOW to
+ * make a decision, it is 12 per cent of the amplitude and it is the difference
+ * between "you are hurt" and "you are about to die".
+ */
+const PULSE_BELOW = 0.22;
+const PULSE_HZ = 1.15;
+const PULSE_DEPTH = 0.12;
 
 /** How many body-hit cues one blast may play. See the note in applyBlast. */
 const BLAST_VOICES = 3;
@@ -92,8 +169,12 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
   let grenades = null;
 
   const state = {
-    /** 0..1 red wash, decayed every frame. */
+    /** 0..1 red wash, decayed every frame. THE HIT. */
     wash: 0,
+    /** 0..1 how near death, chasing a pure function of health. THE CONDITION. */
+    low: 0,
+    /** Seconds, for the pulse. Never reset by damage: a heartbeat has no start. */
+    pulseT: 0,
     sinceHit: REGEN_DELAY,
     downs: 0,
     dealt: 0,
@@ -629,6 +710,35 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
 
     state.wash = Math.max(floor, state.wash - dt * 1.6);
     post?.setDamage?.(state.wash);
+
+    // ---- HOW NEAR DEATH, on its own channel ------------------------------
+    //
+    // The TARGET is a pure function of health, so it is the same number whether
+    // the player got here by being hit or by healing - there is no state to get
+    // out of step with the health bar, and no path where the frame stays red
+    // after a full heal. What is stateful is only how fast it CATCHES UP.
+    const target = frac >= LOW_FROM ? 0 : (LOW_FROM - frac) / LOW_FROM;
+
+    const rate = target > state.low ? LOW_RISE : LOW_FALL;
+    const step = rate * dt;
+    // Snap when within a step rather than easing forever: an exponential
+    // approach never actually reaches zero, and "never actually reaches zero"
+    // on a full-screen red tint means a healthy player keeps a faint red frame
+    // for the rest of the run.
+    state.low = Math.abs(target - state.low) <= step
+      ? target
+      : state.low + Math.sign(target - state.low) * step;
+
+    // The pulse rides on the OUTPUT and is not stored, so it can never be the
+    // thing that stops `state.low` reaching zero, and a harness reading
+    // state.low gets the condition without the breathing.
+    state.pulseT += dt;
+    let shown = state.low;
+    if (state.low > 0 && frac < PULSE_BELOW) {
+      const breathe = Math.sin(state.pulseT * Math.PI * 2 * PULSE_HZ);
+      shown = state.low * (1 + breathe * PULSE_DEPTH);
+    }
+    post?.setLowHealth?.(Math.max(0, Math.min(1, shown)));
   }
 
   return {
