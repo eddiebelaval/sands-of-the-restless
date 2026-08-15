@@ -948,7 +948,31 @@ export function createDeath({
 
     // Then the body.
     player.heal(player.state.maxHealth);
-    if (combat && combat.state) combat.state.wash = 0;
+    if (combat && combat.state) {
+      combat.state.wash = 0;
+      /*
+       * AND THE LOW-HEALTH RED, WHICH CANNOT DRAIN ITSELF FROM HERE.
+       *
+       * `state.low` chases a target derived from health, so on any ordinary
+       * frame a full heal drains it in about half a second and no reset is
+       * needed. This is not an ordinary frame. `combat.update` runs inside the
+       * block main.js freezes while a card is up - see the note further down
+       * this file about regeneration being frozen for exactly that reason - so
+       * the sequence was:
+       *
+       *   death frame runs update once at zero health  ->  low climbs to ~0.9
+       *   `halted` true for the whole death card       ->  low FREEZES there
+       *   restart() heals to full                      ->  nothing drains it
+       *   the freeze lifts                             ->  half a second of
+       *                                                    full red, on a fresh
+       *                                                    run, at 100 health,
+       *                                                    standing at spawn
+       *
+       * Snapped for the same reason `wash` above it is snapped: a restart is a
+       * cut, and nothing about the last run should survive it.
+       */
+      combat.state.low = 0;
+    }
 
     rig?.endDeath?.();
     leaveFrame(0);

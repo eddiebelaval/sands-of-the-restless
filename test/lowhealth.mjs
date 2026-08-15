@@ -110,6 +110,23 @@ async function atHealth(hp, seconds = 3) {
       g.player.state.health = hp;
       g.combat.update(1 / 60);
     }
+    /*
+     * AND HELD PINNED AFTER THIS CALL RETURNS, WHICH IS THE PART THAT MATTERED.
+     *
+     * The screenshot is taken in a SEPARATE round trip, and the page's real
+     * animation frame keeps running `combat.update` in between with health
+     * nobody is pinning any more. Regeneration is 14 a second; on the
+     * swiftshader boxes this project targets, where one frame can cost a
+     * second, the row labelled "20 hp" could be photographed at thirty-something
+     * and the headline check would fail on a build where the feature is fine.
+     *
+     * `sinceHit = 0` is the repo's own idiom for this (test/hud.mjs does the
+     * same) and it buys REGEN_DELAY - five seconds of wall clock - with no
+     * regeneration at all, which covers the screenshot and the uniform read
+     * that follow. Health and `state.low` both stand still while they happen.
+     */
+    g.combat.state.sinceHit = 0;
+    g.player.state.health = hp;
     await new Promise((r) => requestAnimationFrame(r));
     await new Promise((r) => requestAnimationFrame(r));
   }, { hp, seconds });
@@ -124,8 +141,13 @@ const rows = [];
 for (const hp of LADDER) {
   await atHealth(hp);
   const m = await redness(hp === 100 || hp === 20 ? `lowhealth-${hp}` : null);
-  const low = await page.evaluate(() => window.__SANDS__.post.lowHealth());
-  rows.push({ hp, ...m, low: +low.toFixed(3) });
+  const chan = await page.evaluate(() => ({
+    low: window.__SANDS__.post.lowHealth(),
+    // The HIT channel, sampled at the same instant. See the check below.
+    wash: window.__SANDS__.combat.state.wash,
+  }));
+  const low = chan.low;
+  rows.push({ hp, ...m, low: +low.toFixed(3), wash: +chan.wash.toFixed(3) });
   console.log(`  ${String(hp).padStart(3)} hp   edge ${String(m.edge).padStart(7)}`
     + `   centre ${String(m.centre).padStart(7)}   luma ${String(m.luma).padStart(6)}`
     + `   uniform ${low.toFixed(3)}`);
@@ -187,6 +209,27 @@ ok(at(10).centre - at(100).centre > 3,
   + 'the point, the player is looking at what is killing them');
 ok(at(5).luma < at(100).luma,
   `and the frame closes DOWN rather than washing pink (luma ${at(5).luma} against ${at(100).luma})`);
+
+/*
+ * THE TWO CHANNELS STAY SEPARATE, AND THIS CHECK EXISTS BECAUSE THEY DID NOT.
+ *
+ * The first cut of this feature added uLowHealth and left the OLD health-driven
+ * floor on `state.wash` in place, so both ramps drove red from the same health
+ * at the same time. That is not merely redundant: `uDamage` widens chromatic
+ * aberration sixfold (core/post.js), so a floor holding it at ~0.19 for as long
+ * as the player sat at 20 health smeared the frame permanently - the exact
+ * failure the separate channel was written to prevent. It survived writing,
+ * measuring and a full green suite, because every check here measured REDNESS
+ * and redness looked correct with two ramps feeding it.
+ *
+ * So: with no hit for three seconds, the HIT channel must be at zero at every
+ * health on the ladder. If someone reintroduces a floor, this is what fails.
+ */
+const washAtRest = rows.filter((r) => r.wash > 0.001);
+ok(washAtRest.length === 0,
+  `the hit channel is silent when nothing has hit you, at every health `
+  + `(${washAtRest.length ? washAtRest.map((r) => `${r.hp}hp:${r.wash}`).join(' ') : 'all zero'}) `
+  + '- two ramps driving one colour is how the aberration bug shipped');
 
 console.log('');
 console.log('=== AND THE RED CLEARS OUT WHEN YOU GET BETTER ===');

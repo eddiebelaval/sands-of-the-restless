@@ -43,18 +43,25 @@ const REGEN_DELAY = 5.0;
 /** Health per second once it does. */
 const REGEN_RATE = 14;
 
-/**
- * Below this fraction of maximum health the red wash never fully clears.
+/*
+ * `CRITICAL` USED TO LIVE HERE AND IT IS GONE ON PURPOSE.
  *
- * A damage indicator that only flashes tells the player they were hit. One that
- * stays on tells them they are about to die, which is the more useful fact and
- * the one a health bar in the corner is bad at communicating.
+ * It held the wash off zero below 35 per cent health, on the reasoning that a
+ * damage indicator which only flashes tells the player they were hit while one
+ * that stays on tells them they are about to die. That reasoning was right and
+ * it is now LOW_FROM's job, done properly, on its own channel.
  *
- * SUPERSEDED AS THE LOW-HEALTH SIGNAL, kept for the hit wash's floor. The
- * paragraph above was right about what the player needs and the implementation
- * could not deliver it - see LOW_FROM below.
+ * Leaving it in place while the new channel shipped was an actual bug and it
+ * survived until the ship review. `uDamage` widens chromatic aberration
+ * SIXFOLD (core/post.js, `ab = uAberration * (1.0 + uDamage * 6.0)`), so a
+ * floor that pinned uDamage at ~0.19 for as long as the player stayed at 20
+ * health left the frame permanently smeared - which is precisely the failure
+ * the whole uLowHealth split was written to avoid. Two ramps drove one colour
+ * and the second one undid the first one's reason for existing.
+ *
+ * The wash is now purely the HIT: it goes up when something lands and decays
+ * to nothing.
  */
-const CRITICAL = 0.35;
 
 /**
  * WHERE THE FRAME STARTS GOING RED, as a fraction of maximum health.
@@ -703,12 +710,10 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
       player.heal(REGEN_RATE * dt);
     }
 
-    // Decay toward the floor the current health implies rather than toward
-    // zero, so the wash is a state readout at low health and an event at high.
+    // THE HIT, and only the hit. Decays to nothing - see the note where
+    // CRITICAL used to be for why this no longer has a health-driven floor.
     const frac = player.state.health / player.state.maxHealth;
-    const floor = frac < CRITICAL ? (1 - frac / CRITICAL) * 0.45 : 0;
-
-    state.wash = Math.max(floor, state.wash - dt * 1.6);
+    state.wash = Math.max(0, state.wash - dt * 1.6);
     post?.setDamage?.(state.wash);
 
     // ---- HOW NEAR DEATH, on its own channel ------------------------------
@@ -736,7 +741,18 @@ export function createCombat({ player, rig, post, audio, impacts, notice, direct
     let shown = state.low;
     if (state.low > 0 && frac < PULSE_BELOW) {
       const breathe = Math.sin(state.pulseT * Math.PI * 2 * PULSE_HZ);
-      shown = state.low * (1 + breathe * PULSE_DEPTH);
+      /*
+       * FADED IN OVER THE BAND RATHER THAN SWITCHED ON AT ITS EDGE.
+       *
+       * As a bare `if`, this was the one discontinuity in an otherwise
+       * continuous signal: crossing 22 per cent health while the sine happened
+       * to be at an extreme stepped the output by up to twelve per cent of
+       * `state.low` in a single frame - a visible pop, and worse, a pop that
+       * happens exactly when the player is being hit. Everything else here is
+       * smoothed; this now is too.
+       */
+      const gate = Math.min(1, (PULSE_BELOW - frac) / (PULSE_BELOW * 0.5));
+      shown = state.low * (1 + breathe * PULSE_DEPTH * gate);
     }
     post?.setLowHealth?.(Math.max(0, Math.min(1, shown)));
   }
