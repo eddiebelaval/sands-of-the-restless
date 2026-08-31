@@ -1,0 +1,10 @@
+import { chromium } from 'playwright';
+import { resolveChrome, GL_ARGS } from './chrome.mjs';
+const b = await chromium.launch({ executablePath: resolveChrome(), args: GL_ARGS });
+const p = await b.newPage({ viewport: { width: 640, height: 400 } });
+p.on('pageerror', (e) => console.log('PAGEERROR:', e.message.split('\n')[0]));
+p.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE:', m.text().slice(0, 300)); });
+await p.goto('http://127.0.0.1:4188/index.html', { waitUntil: 'load' });
+await p.waitForTimeout(6000);
+console.log('__SANDS__ present:', await p.evaluate(() => !!window.__SANDS__));
+await b.close();

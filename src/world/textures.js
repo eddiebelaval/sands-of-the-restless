@@ -167,6 +167,117 @@ function materialMaps(canvas, { repeat = 1, normalStrength = 2.4, rough = [0.55,
 // surface painters
 // ---------------------------------------------------------------------------
 
+/**
+ * HEAVY COTTON DUCK - the camp's tents and its tarpaulin.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS
+ * ---------------------------------------------------------------------------
+ *
+ * `world/camp.js` dressed its tents with `color: 0xd9d3c0, roughness: 0.97` and
+ * no maps at all. Standing at the spawn, a tent fills a third of the frame as a
+ * flat pale mass two metres from crates carrying stencilled names, edge wear and
+ * a roughness break. The crates are some of the best material work in the
+ * project; the tent beside them had none, and it is that INCONSISTENCY that
+ * reads as unfinished rather than any one surface being bad. An audit found 21
+ * standard materials carrying maps against 60 with none, and the largest single
+ * cluster of bare ones was the camp.
+ *
+ * It is also beat 1.2 in docs/PLAYTHROUGH.md - one of the first things a player
+ * looks at, ten seconds in.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT IT PAINTS, AND WHAT IT DELIBERATELY DOES NOT
+ * ---------------------------------------------------------------------------
+ *
+ * A plain weave - warp over weft, alternating - with the thread centres
+ * wandering slightly, because real duck is not graph paper. The threads are
+ * spun, so they vary in thickness along their length, and that variation is
+ * most of what the eye reads as cloth. Hence the wander and the SLUB, a fat
+ * stretch of yarn that shows as a bright line across a panel.
+ *
+ * NO DIRECTIONAL GRADIENT: no dirt gathered at a hem, no sun-bleached ridge.
+ * All of those are right on one tent and wrong here, because this map TILES,
+ * and a gradient that tiles is banding. Wear belonging to a particular place on
+ * a particular tent is the mesh's job. What tiles honestly is what is uniformly
+ * true of the cloth: weave, slubs, and soiling with no preferred direction.
+ *
+ * Painted NEUTRAL and near the top of the range, because camp.js tints it. The
+ * tent and the tarpaulin are the same cloth one shade apart - "so the two read
+ * as a set", says that file - and the relationship is authored in their
+ * `color`. A painter that baked its own colour in would silently delete it.
+ */
+function paintCanvasWeave(size = 512, { thread = 4 } = {}) {
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  const img = ctx.createImageData(size, size);
+  const d = img.data;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size, v = y / size;
+
+      // Thread centres wander by a fraction of a thread width. LOW frequency on
+      // the axis the thread runs along, so one thread bends over its length
+      // instead of shivering.
+      const wobbleX = fbm(u * 0.6, v * 3.0, 2, 3, 61) - 0.5;
+      const wobbleY = fbm(u * 3.0, v * 0.6, 2, 3, 17) - 0.5;
+      const fx = (x + wobbleX * thread * 0.9) / thread;
+      const fy = (y + wobbleY * thread * 0.9) / thread;
+
+      // Which yarn is on top. A plain weave alternates on both axes.
+      const warpOver = ((Math.floor(fx) + Math.floor(fy)) & 1) === 0;
+
+      // Position across the thread. The sine is its ROUNDNESS: a yarn is a
+      // cylinder, brightest along its crown, falling away into the gap beside
+      // it. This is the part normalFromCanvas turns into relief.
+      const across = warpOver ? fx - Math.floor(fx) : fy - Math.floor(fy);
+      const round = Math.sin(across * Math.PI);
+
+      // Thickness along the thread, which is what spun yarn does.
+      const slub = fbm(warpOver ? u * 1.4 : v * 1.4, warpOver ? v * 9 : u * 9, 3, 6, 91);
+
+      // The under-thread sits in the other one's shadow.
+      const shade = warpOver ? 1.0 : 0.86;
+
+      // Soiling: low-frequency blotches, no direction. Shallow on purpose -
+      // this camp is four days old, not a ruin.
+      const soil = fbm(u, v, 4, 3.5, 43);
+
+      const t = (0.62 + round * 0.30 + slub * 0.12) * shade * (0.90 + soil * 0.16);
+
+      /*
+       * CENTRED ON WHITE, NOT SCALED FROM BLACK, AND THIS IS THE WHOLE REASON
+       * THE FIRST VERSION TURNED THE TENT GREY.
+       *
+       * `t` has a mean around 0.79. Written straight out, every texel multiplies
+       * the material's authored 0xd9d3c0 by about four fifths - so adding a
+       * weave also dropped the tent a fifth in value and pulled the warmth out
+       * of it, which is the one thing the material's own comment says not to
+       * touch. An albedo map that is not centred on white is a tint nobody
+       * asked for.
+       *
+       * So the variation is re-centred: mean lands at 0.96 and the weave lives
+       * in a +/-0.09 band around it. The cloth still reads - a map does not need
+       * to be dark to be visible, it needs CONTRAST, and the normal map derived
+       * from this carries most of the relief anyway.
+       */
+      const l = Math.max(0, Math.min(1, 0.96 + (t - 0.79) * 0.55));
+
+      const i = (y * size + x) * 4;
+      // Very slightly warm: undyed cotton is not grey. Kept tiny, because the
+      // colour is the material's to decide and this is only a hair of it.
+      d[i]     = 255 * l;
+      d[i + 1] = 253 * l;
+      d[i + 2] = 248 * l;
+      d[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
 /** Wind-rippled desert sand. */
 function paintSand(size = 512) {
   const c = makeCanvas(size);
@@ -1776,6 +1887,22 @@ export function buildTextures() {
   // rubble chunk and a 100-unit wall alike without cloning the material.
   cache = {
     sand: materialMaps(sand, { normalStrength: 1.6, rough: [0.78, 0.98] }),
+
+    /*
+     * The camp's cloth. `repeat` is 1 here and set per MESH in world/camp.js,
+     * because a tent wall, a roof panel and a tarpaulin are three different
+     * sizes and one repeat across all of them would put a different thread
+     * count on each - which is the tell that a texture is a texture.
+     *
+     * normalStrength 2.2 rather than the stone's 3.0: the relief is a
+     * millimetre of yarn, and pushing it further gives cloth the shading of
+     * corrugated iron. The roughness range is tight and HIGH - cotton has no
+     * specular story to tell, and the small break that is there is the crowns
+     * of the threads catching a little more than the gaps between them.
+     */
+    canvasWeave: materialMaps(paintCanvasWeave(512), {
+      normalStrength: 2.2, rough: [0.86, 0.99],
+    }),
     block: materialMaps(block, { normalStrength: 3.0, rough: [0.62, 0.94] }),
 
     // Identical treatment to `block`, because it is `block` with an inscription
