@@ -94,6 +94,7 @@ import * as THREE from 'three';
 import { box, plane, cylinderUV } from './uv.js';
 import { chamferedBox, chamferFor } from './geometry.js';
 import { propMaterials, catenary } from './propkit.js';
+import { buildTextures } from './textures.js';
 
 // ---------------------------------------------------------------------------
 // the site
@@ -338,6 +339,33 @@ let matCache = null;
  * metallic surface has no diffuse response, and with the procedural path
  * running without an environment map it renders black.
  */
+/**
+ * The camp's cloth maps at a given thread count, CLONED.
+ *
+ * `buildTextures()` caches one set of canvas textures and hands the same three
+ * objects to everybody who asks. A THREE.Texture's `repeat` lives on the
+ * texture, not on the material, so setting it in place would change the thread
+ * count of every other thing sharing that map - the tarpaulin would silently
+ * re-scale the tents. `clone()` keeps the decoded image (the expensive part is
+ * shared) and gives each material its own repeat.
+ *
+ * Two numbers rather than one because tent panels are not square. A wall three
+ * metres long and two high wants more repeats across than up, or the weave
+ * stretches, and a stretched weave is the most obvious tell there is.
+ */
+function cloth(rx, ry) {
+  const w = buildTextures().canvasWeave;
+  const at = (t) => {
+    const c = t.clone();
+    c.repeat.set(rx, ry);
+    // A clone starts life with needsUpdate false and its own uuid; the image is
+    // already uploaded, but the repeat is a uniform that has to be pushed.
+    c.needsUpdate = true;
+    return c;
+  };
+  return { map: at(w.map), normalMap: at(w.normalMap), roughnessMap: at(w.roughnessMap) };
+}
+
 function campMaterials() {
   if (matCache) return matCache;
   const P = propMaterials();
@@ -403,15 +431,33 @@ function campMaterials() {
      * gradient in WORLD-1.md: weeks in this sun takes everything out of a
      * fabric. DoubleSide because a tent panel is a single sheet and its inside
      * is visible through the door.
+     *
+     * THE COLOUR IS UNCHANGED AND THE WEAVE IS NEW. `textures.js`'s
+     * `canvasWeave` is painted neutral precisely so these two hexes keep doing
+     * their job: the tent and the tarpaulin are one cloth a shade apart, and
+     * that relationship lives here, not in the painter.
+     *
+     * Until 2026-08-27 both of these were a flat colour with no maps, which is
+     * why a tent two metres from a stencilled ammunition crate read as a
+     * cardboard cutout standing next to a prop.
      */
     canvas: new THREE.MeshStandardMaterial({
       color: 0xd9d3c0, roughness: 0.97, metalness: 0.0,
+      // Thread count, not a style knob. At 2.2 x 3.0 a single yarn was about
+      // four millimetres on screen at two metres and the tent read as knitwear.
+      // Heavy duck is roughly 12 threads to the centimetre; these numbers put
+      // the weave just past the point where the eye stops resolving individual
+      // threads and starts reading "cloth", which is where it should sit.
+      ...cloth(7, 9),
       side: THREE.DoubleSide, name: 'camp-canvas',
     }),
 
     /** The tarpaulin. Same fabric, one shade down, so the two read as a set. */
     tarp: new THREE.MeshStandardMaterial({
       color: 0xbfb9a4, roughness: 0.97, metalness: 0.0,
+      // A tarpaulin is a coarser cloth than a tent wall and it is a smaller
+      // object, so it takes fewer threads across it, not more.
+      ...cloth(5, 5),
       side: THREE.DoubleSide, name: 'camp-tarp',
     }),
 
